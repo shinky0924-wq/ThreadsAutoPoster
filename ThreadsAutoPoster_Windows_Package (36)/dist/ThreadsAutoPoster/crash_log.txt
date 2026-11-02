@@ -1,0 +1,36 @@
+Traceback (most recent call last):
+  File "C:\Users\PC_User\Desktop\ThreadsAutoPoster_Windows_Package (36)\dist\ThreadsAutoPoster\threads_gui_app.py", line 1336, in <module>
+    app = ThreadsPosterGUI(root)
+          ^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\PC_User\Desktop\ThreadsAutoPoster_Windows_Package (36)\dist\ThreadsAutoPoster\threads_gui_app.py", line 768, in __init__
+    self.load_excel_data()
+  File "C:\Users\PC_User\Desktop\ThreadsAutoPoster_Windows_Package (36)\dist\ThreadsAutoPoster\threads_gui_app.py", line 933, in load_excel_data
+    resolved_img = resolve_image_path(raw_img, text_preview)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\PC_User\Desktop\ThreadsAutoPoster_Windows_Package (36)\dist\ThreadsAutoPoster\threads_gui_app.py", line 700, in resolve_image_path
+    matches = re.findall(r'([a-zA-Z0-9_-./\:]+.(?:png|jpg|jpeg|webp|gif))', str(post_text), re.IGNORECASE)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\PC_User\AppData\Local\Programs\Python\Python312\Lib\re\__init__.py", line 217, in findall
+    return _compile(pattern, flags).findall(string)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\PC_User\AppData\Local\Programs\Python\Python312\Lib\re\__init__.py", line 307, in _compile
+    p = _compiler.compile(pattern, flags)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\PC_User\AppData\Local\Programs\Python\Python312\Lib\re\_compiler.py", line 750, in compile
+    p = _parser.parse(p, flags)
+        ^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\PC_User\AppData\Local\Programs\Python\Python312\Lib\re\_parser.py", line 979, in parse
+    p = _parse_sub(source, state, flags & SRE_FLAG_VERBOSE, 0)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\PC_User\AppData\Local\Programs\Python\Python312\Lib\re\_parser.py", line 460, in _parse_sub
+    itemsappend(_parse(source, state, verbose, nested + 1,
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\PC_User\AppData\Local\Programs\Python\Python312\Lib\re\_parser.py", line 862, in _parse
+    p = _parse_sub(source, state, sub_verbose, nested + 1)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\PC_User\AppData\Local\Programs\Python\Python312\Lib\re\_parser.py", line 460, in _parse_sub
+    itemsappend(_parse(source, state, verbose, nested + 1,
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\PC_User\AppData\Local\Programs\Python\Python312\Lib\re\_parser.py", line 617, in _parse
+    raise source.error(msg, len(this) + 1 + len(that))
+re.error: bad character range _-. at position 11

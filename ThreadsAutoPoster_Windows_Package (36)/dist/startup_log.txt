@@ -1,0 +1,8 @@
+[2026-10-25 16:58:54] [PYTHON] Python script execution started. sys.executable: C:\Users\PC_User\AppData\Local\Programs\Python\Python312\python.exe
+[2026-10-25 16:58:54] [PYTHON] Python version: 3.12.10 | Working dir: C:\Users\PC_User\Desktop\ThreadsAutoPoster_Windows_Package (36)\dist
+[2026-10-25 16:58:54] [PYTHON] openpyxl library loaded successfully
+[2026-10-25 16:58:54] [PYTHON] Tkinter GUI library loaded successfully
+[2026-10-29 13:32:43] [PYTHON] Python script execution started. sys.executable: C:\Users\PC_User\AppData\Local\Programs\Python\Python312\python.exe
+[2026-10-29 13:32:43] [PYTHON] Python version: 3.12.10 | Working dir: C:\Users\PC_User\Desktop\ThreadsAutoPoster_Windows_Package (36)\dist
+[2026-10-29 13:32:44] [PYTHON] openpyxl library loaded successfully
+[2026-10-29 13:32:44] [PYTHON] Tkinter GUI library loaded successfully

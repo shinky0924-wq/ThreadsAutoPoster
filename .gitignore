@@ -1,0 +1,4 @@
+# 不要なキャッシュや長すぎる一時ファイルを無視する
+**/chrome_profiles/
+**/Sync Data/
+**/OptimizationGuideModelsManifest/

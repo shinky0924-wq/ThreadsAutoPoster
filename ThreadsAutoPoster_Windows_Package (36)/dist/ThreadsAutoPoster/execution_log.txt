@@ -1,0 +1,619 @@
+[2026-10-29 13:37:41] [INFO] アプリケーションを起動しました。
+[2026-10-29 13:37:41] [INFO] 実行ディレクトリ: C:\Users\PC_User\Desktop\ThreadsAutoPoster_Windows_Package (36)\dist\ThreadsAutoPoster
+[2026-10-29 13:37:41] [INFO] アカウント情報読み込み完了: 1件のアカウント設定を検出 (ID: @sll15802)
+[2026-10-29 13:37:41] [INFO] 投稿リスト 'sll15802.xlsx' 読み込み完了: 未投稿 24 件
+[2026-10-29 13:37:41] [INFO] [sll15802] sll15802.xlsx から設定を適用: 間隔=120〜360分, モード=ランダム, プロファイル=chrome_profiles/threads_main_account
+[2026-10-29 13:37:41] [INFO] プレビュー#1: [ポスト文章] 信太山新地
+https://osaka-shinodayamashin... | [画像なし]
+[2026-10-29 13:37:41] [INFO] プレビュー#2: [ポスト文章] 信太山新地
+https://osaka-shinodayamashin... | [画像なし]
+[2026-10-29 13:37:50] [INFO] アプリケーションを起動しました。
+[2026-10-29 13:37:50] [INFO] 実行ディレクトリ: C:\Users\PC_User\Desktop\ThreadsAutoPoster_Windows_Package (36)\dist\ThreadsAutoPoster
+[2026-10-29 13:37:50] [INFO] アカウント情報読み込み完了: 1件のアカウント設定を検出 (ID: @sll15802)
+[2026-10-29 13:37:50] [INFO] 投稿リスト 'sll15802.xlsx' 読み込み完了: 未投稿 24 件
+[2026-10-29 13:37:50] [INFO] [sll15802] sll15802.xlsx から設定を適用: 間隔=120〜360分, モード=ランダム, プロファイル=chrome_profiles/threads_main_account
+[2026-10-29 13:37:50] [INFO] プレビュー#1: [ポスト文章] 信太山新地
+https://osaka-shinodayamashin... | [画像なし]
+[2026-10-29 13:37:50] [INFO] プレビュー#2: [ポスト文章] 信太山新地
+https://osaka-shinodayamashin... | [画像なし]
+[2026-10-29 13:37:53] [INFO] 自動投稿スレッドを開始します...
+[2026-10-29 13:37:53] [sll15802] 【sll15802.xlsx 設定適用】ポスト間隔: 120〜360分 (7200〜21600秒ランダム) | モード: ランダム | プロファイル: chrome_profiles/threads_main_account (周回: 1)
+[2026-10-29 13:37:53] [sll15802] 【モード1: ランダム】未投稿 24 件をランダム順序で投稿します。
+[2026-10-29 13:37:53] [INFO] [sll15802] sessionidからユーザーID (47094044745) を検出しました。
+[2026-10-29 13:37:53] [SUCCESS] [sll15802] エクセルの sessionid (ユーザーID: 47094044745) をThreads/Instagramに自動注入しました。
+[2026-10-29 13:37:59] [SUCCESS] [sll15802] エクセルの sessionid で自動ログインに成功しました！（セッション認証済み (ユーザー: @sll15802)）
+[2026-10-29 13:37:59] [INFO] [sll15802] セッション状態を「アカウント情報.xlsx」と自動同期しました。
+[2026-10-29 13:37:59] [sll15802] Post #16 (91文字) を投稿中...
+[2026-10-29 13:37:59] [ERROR] [sll15802] Post #16 投稿エラー: Threadsの投稿入力欄が見つかりません。画面が開いているか確認してください。
+[2026-10-29 13:37:59] [INFO] [sll15802] 📸 エラー画面を保存しました: error_screenshots\error_sll15802_20261029_133759.png
+[2026-10-29 13:38:02] [sll15802] Post #24 (91文字) を投稿中...
+[2026-10-29 13:38:03] [ERROR] [sll15802] Post #24 投稿エラー: Threadsの投稿入力欄が見つかりません。画面が開いているか確認してください。
+[2026-10-29 13:38:03] [INFO] [sll15802] 📸 エラー画面を保存しました: error_screenshots\error_sll15802_20261029_133803.png
+[2026-10-29 13:38:06] [sll15802] Post #6 (87文字) を投稿中...
+[2026-10-29 13:38:06] [ERROR] [sll15802] Post #6 投稿エラー: Threadsの投稿入力欄が見つかりません。画面が開いているか確認してください。
+[2026-10-29 13:38:06] [INFO] [sll15802] 📸 エラー画面を保存しました: error_screenshots\error_sll15802_20261029_133806.png
+[2026-10-29 13:38:54] [INFO] アプリケーションを起動しました。
+[2026-10-29 13:38:54] [INFO] 実行ディレクトリ: C:\Users\PC_User\Desktop\ThreadsAutoPoster_Windows_Package (36)\dist\ThreadsAutoPoster
+[2026-10-29 13:38:54] [INFO] アカウント情報読み込み完了: 1件のアカウント設定を検出 (ID: @sll15802)
+[2026-10-29 13:38:54] [INFO] 投稿リスト 'sll15802.xlsx' 読み込み完了: 未投稿 21 件
+[2026-10-29 13:38:54] [INFO] [sll15802] sll15802.xlsx から設定を適用: 間隔=120〜360分, モード=ランダム, プロファイル=chrome_profiles/threads_main_account
+[2026-10-29 13:38:54] [INFO] プレビュー#1: [ポスト文章] 信太山新地
+https://osaka-shinodayamashin... | [画像なし]
+[2026-10-29 13:38:54] [INFO] プレビュー#2: [ポスト文章] 信太山新地
+https://osaka-shinodayamashin... | [画像なし]
+[2026-10-29 13:38:55] [INFO] 自動投稿スレッドを開始します...
+[2026-10-29 13:38:56] [sll15802] 【sll15802.xlsx 設定適用】ポスト間隔: 120〜360分 (7200〜21600秒ランダム) | モード: ランダム | プロファイル: chrome_profiles/threads_main_account (周回: 1)
+[2026-10-29 13:38:56] [sll15802] 【モード1: ランダム】未投稿 21 件をランダム順序で投稿します。
+[2026-10-29 13:38:56] [INFO] [sll15802] sessionidからユーザーID (47094044745) を検出しました。
+[2026-10-29 13:38:56] [SUCCESS] [sll15802] エクセルの sessionid (ユーザーID: 47094044745) をThreads/Instagramに自動注入しました。
+[2026-10-29 13:39:02] [SUCCESS] [sll15802] エクセルの sessionid で自動ログインに成功しました！（セッション認証済み (ユーザー: @sll15802)）
+[2026-10-29 13:39:02] [INFO] [sll15802] セッション状態を「アカウント情報.xlsx」と自動同期しました。
+[2026-10-29 13:39:02] [sll15802] Post #17 (88文字) を投稿中...
+[2026-10-29 13:39:02] [ERROR] [sll15802] Post #17 投稿エラー: Threadsの投稿入力欄が見つかりません。画面が開いているか確認してください。
+[2026-10-29 13:39:02] [INFO] [sll15802] 📸 エラー画面を保存しました: error_screenshots\error_sll15802_20261029_133902.png
+[2026-10-29 13:39:05] [sll15802] Post #3 (89文字) を投稿中...
+[2026-10-29 13:39:05] [ERROR] [sll15802] Post #3 投稿エラー: Threadsの投稿入力欄が見つかりません。画面が開いているか確認してください。
+[2026-10-29 13:39:05] [INFO] [sll15802] 📸 エラー画面を保存しました: error_screenshots\error_sll15802_20261029_133905.png
+[2026-10-29 13:39:08] [sll15802] Post #5 (91文字) を投稿中...
+[2026-10-29 13:39:08] [ERROR] [sll15802] Post #5 投稿エラー: Threadsの投稿入力欄が見つかりません。画面が開いているか確認してください。
+[2026-10-29 13:39:08] [INFO] [sll15802] 📸 エラー画面を保存しました: error_screenshots\error_sll15802_20261029_133908.png
+[2026-10-29 13:39:11] [sll15802] Post #18 (88文字) を投稿中...
+[2026-10-29 13:39:11] [ERROR] [sll15802] Post #18 投稿エラー: Threadsの投稿入力欄が見つかりません。画面が開いているか確認してください。
+[2026-10-29 13:39:11] [INFO] [sll15802] 📸 エラー画面を保存しました: error_screenshots\error_sll15802_20261029_133911.png
+[2026-10-29 13:39:12] [WARN] 停止リクエストを送信しました。現在の投稿完了後に停止します。
+[2026-10-29 13:39:15] [WARN] 停止リクエストにより自動投稿処理を終了しました。
+[2026-10-29 13:39:15] [INFO] アカウント情報読み込み完了: 1件のアカウント設定を検出 (ID: @sll15802)
+[2026-10-29 13:39:15] [INFO] 投稿リスト 'sll15802.xlsx' 読み込み完了: 未投稿 17 件
+[2026-10-29 13:39:15] [INFO] [sll15802] sll15802.xlsx から設定を適用: 間隔=120〜360分, モード=ランダム, プロファイル=chrome_profiles/threads_main_account
+[2026-10-29 13:39:15] [INFO] プレビュー#1: [ポスト文章] 信太山新地
+https://osaka-shinodayamashin... | [画像なし]
+[2026-10-29 13:39:15] [INFO] プレビュー#2: [ポスト文章] 信太山新地
+https://osaka-shinodayamashin... | [画像なし]
+[2026-10-29 13:39:30] [INFO] アプリケーションを起動しました。
+[2026-10-29 13:39:30] [INFO] 実行ディレクトリ: C:\Users\PC_User\Desktop\ThreadsAutoPoster_Windows_Package (36)\dist\ThreadsAutoPoster
+[2026-10-29 13:39:30] [INFO] アカウント情報読み込み完了: 1件のアカウント設定を検出 (ID: @sll15802)
+[2026-10-29 13:39:30] [INFO] 投稿リスト 'sll15802.xlsx' 読み込み完了: 未投稿 17 件
+[2026-10-29 13:39:30] [INFO] [sll15802] sll15802.xlsx から設定を適用: 間隔=120〜360分, モード=ランダム, プロファイル=chrome_profiles/threads_main_account
+[2026-10-29 13:39:30] [INFO] プレビュー#1: [ポスト文章] 信太山新地
+https://osaka-shinodayamashin... | [画像なし]
+[2026-10-29 13:39:30] [INFO] プレビュー#2: [ポスト文章] 信太山新地
+https://osaka-shinodayamashin... | [画像なし]
+[2026-10-29 13:39:32] [INFO] 自動投稿スレッドを開始します...
+[2026-10-29 13:39:32] [sll15802] 【sll15802.xlsx 設定適用】ポスト間隔: 120〜360分 (7200〜21600秒ランダム) | モード: ランダム | プロファイル: chrome_profiles/threads_main_account (周回: 1)
+[2026-10-29 13:39:32] [sll15802] 【モード1: ランダム】未投稿 17 件をランダム順序で投稿します。
+[2026-10-29 13:39:32] [INFO] [sll15802] sessionidからユーザーID (47094044745) を検出しました。
+[2026-10-29 13:39:32] [SUCCESS] [sll15802] エクセルの sessionid (ユーザーID: 47094044745) をThreads/Instagramに自動注入しました。
+[2026-10-29 13:39:38] [SUCCESS] [sll15802] エクセルの sessionid で自動ログインに成功しました！（セッション認証済み (ユーザー: @sll15802)）
+[2026-10-29 13:39:38] [INFO] [sll15802] セッション状態を「アカウント情報.xlsx」と自動同期しました。
+[2026-10-29 13:39:38] [sll15802] Post #2 (89文字) を投稿中...
+[2026-10-29 13:39:38] [ERROR] [sll15802] Post #2 投稿エラー: Threadsの投稿入力欄が見つかりません。画面が開いているか確認してください。
+[2026-10-29 13:39:38] [INFO] [sll15802] 📸 エラー画面を保存しました: error_screenshots\error_sll15802_20261029_133938.png
+[2026-10-29 13:39:40] [WARN] 停止リクエストを送信しました。現在の投稿完了後に停止します。
+[2026-10-29 13:39:41] [WARN] 停止リクエストにより自動投稿処理を終了しました。
+[2026-10-29 13:39:41] [INFO] アカウント情報読み込み完了: 1件のアカウント設定を検出 (ID: @sll15802)
+[2026-10-29 13:39:41] [INFO] 投稿リスト 'sll15802.xlsx' 読み込み完了: 未投稿 16 件
+[2026-10-29 13:39:41] [INFO] [sll15802] sll15802.xlsx から設定を適用: 間隔=120〜360分, モード=ランダム, プロファイル=chrome_profiles/threads_main_account
+[2026-10-29 13:39:41] [INFO] プレビュー#1: [ポスト文章] 信太山新地
+https://osaka-shinodayamashin... | [画像なし]
+[2026-10-29 13:39:41] [INFO] プレビュー#2: [ポスト文章] 信太山新地
+https://osaka-shinodayamashin... | [画像なし]
+[2026-10-29 13:43:46] [INFO] アプリケーションを起動しました。
+[2026-10-29 13:43:46] [INFO] 実行ディレクトリ: C:\Users\PC_User\Desktop\ThreadsAutoPoster_Windows_Package (36)\dist\ThreadsAutoPoster
+[2026-10-29 13:43:46] [INFO] アカウント情報読み込み完了: 1件のアカウント設定を検出 (ID: @sll15802)
+[2026-10-29 13:43:46] [INFO] 投稿リスト 'sll15802.xlsx' 読み込み完了: 未投稿 16 件
+[2026-10-29 13:43:46] [INFO] [sll15802] sll15802.xlsx から設定を適用: 間隔=120〜360分, モード=ランダム, プロファイル=chrome_profiles/threads_main_account
+[2026-10-29 13:43:46] [INFO] プレビュー#1: [ポスト文章] 信太山新地
+https://osaka-shinodayamashin... | [画像なし]
+[2026-10-29 13:43:46] [INFO] プレビュー#2: [ポスト文章] 信太山新地
+https://osaka-shinodayamashin... | [画像なし]
+[2026-10-29 13:43:47] [INFO] 自動投稿スレッドを開始します...
+[2026-10-29 13:43:48] [sll15802] 【sll15802.xlsx 設定適用】ポスト間隔: 120〜360分 (7200〜21600秒ランダム) | モード: ランダム | プロファイル: chrome_profiles/threads_main_account (周回: 1)
+[2026-10-29 13:43:48] [sll15802] 【モード1: ランダム】未投稿 16 件をランダム順序で投稿します。
+[2026-10-29 13:43:48] [INFO] [sll15802] sessionidからユーザーID (47094044745) を検出しました。
+[2026-10-29 13:43:48] [SUCCESS] [sll15802] エクセルの sessionid (ユーザーID: 47094044745) をThreads/Instagramに自動注入しました。
+[2026-10-29 13:43:53] [SUCCESS] [sll15802] エクセルの sessionid で自動ログインに成功しました！（セッション認証済み (ユーザー: @sll15802)）
+[2026-10-29 13:43:53] [INFO] [sll15802] セッション状態を「アカウント情報.xlsx」と自動同期しました。
+[2026-10-29 13:43:53] [sll15802] Post #7 (95文字) を投稿中...
+[2026-10-29 13:43:54] [sll15802] 「新しいスレッド」ボタンをクリックしました。
+[2026-10-29 13:44:09] [sll15802] 「投稿」ボタンをクリックしました。Threads送信処理を確認中...
+[2026-10-29 13:44:13] [SUCCESS] [sll15802] 投稿ダイアログが正常に閉じられ、投稿完了を確認しました。
+[2026-10-29 13:44:13] [SUCCESS] [sll15802] Post #7 投稿成功！Excel更新。
+[2026-10-29 13:44:13] [*] BAN防止のため 15886 秒 (約 264 分) 待機中...
+[2026-10-29 13:44:24] [INFO] アプリケーションを起動しました。
+[2026-10-29 13:44:24] [INFO] 実行ディレクトリ: C:\Users\PC_User\Desktop\ThreadsAutoPoster_Windows_Package (36)\dist\ThreadsAutoPoster
+[2026-10-29 13:44:24] [INFO] アカウント情報読み込み完了: 1件のアカウント設定を検出 (ID: @sll15802)
+[2026-10-29 13:44:24] [INFO] 投稿リスト 'sll15802.xlsx' 読み込み完了: 未投稿 15 件
+[2026-10-29 13:44:24] [INFO] [sll15802] sll15802.xlsx から設定を適用: 間隔=120〜360分, モード=ランダム, プロファイル=chrome_profiles/threads_main_account
+[2026-10-29 13:44:24] [INFO] プレビュー#1: [ポスト文章] 信太山新地
+https://osaka-shinodayamashin... | [画像なし]
+[2026-10-29 13:44:24] [INFO] プレビュー#2: [ポスト文章] 信太山新地
+https://osaka-shinodayamashin... | [画像なし]
+[2026-10-29 13:44:26] [INFO] 自動投稿スレッドを開始します...
+[2026-10-29 13:44:26] [sll15802] 【sll15802.xlsx 設定適用】ポスト間隔: 120〜360分 (7200〜21600秒ランダム) | モード: ランダム | プロファイル: chrome_profiles/threads_main_account (周回: 1)
+[2026-10-29 13:44:26] [sll15802] 【モード1: ランダム】未投稿 15 件をランダム順序で投稿します。
+[2026-10-29 13:44:26] [INFO] [sll15802] sessionidからユーザーID (47094044745) を検出しました。
+[2026-10-29 13:44:26] [SUCCESS] [sll15802] エクセルの sessionid (ユーザーID: 47094044745) をThreads/Instagramに自動注入しました。
+[2026-10-29 13:44:32] [SUCCESS] [sll15802] エクセルの sessionid で自動ログインに成功しました！（セッション認証済み (ユーザー: @sll15802)）
+[2026-10-29 13:44:32] [INFO] [sll15802] セッション状態を「アカウント情報.xlsx」と自動同期しました。
+[2026-10-29 13:44:32] [sll15802] Post #12 (95文字) を投稿中...
+[2026-10-29 13:44:33] [sll15802] 「新しいスレッド」ボタンをクリックしました。
+[2026-10-29 13:44:39] [WARN] 停止リクエストを送信しました。現在の投稿完了後に停止します。
+[2026-10-29 13:44:39] [ERROR] [sll15802] Post #12 投稿エラー: Threadsの投稿入力欄が見つかりません。画面が開いているか確認してください。
+[2026-10-29 13:44:39] [INFO] [sll15802] 📸 エラー画面を保存しました: error_screenshots\error_sll15802_20261029_134439.png
+[2026-10-29 13:44:42] [WARN] 停止リクエストにより自動投稿処理を終了しました。
+[2026-10-29 13:44:42] [INFO] アカウント情報読み込み完了: 1件のアカウント設定を検出 (ID: @sll15802)
+[2026-10-29 13:44:42] [INFO] 投稿リスト 'sll15802.xlsx' 読み込み完了: 未投稿 14 件
+[2026-10-29 13:44:42] [INFO] [sll15802] sll15802.xlsx から設定を適用: 間隔=120〜360分, モード=ランダム, プロファイル=chrome_profiles/threads_main_account
+[2026-10-29 13:44:42] [INFO] プレビュー#1: [ポスト文章] 信太山新地
+https://osaka-shinodayamashin... | [画像なし]
+[2026-10-29 13:44:42] [INFO] プレビュー#2: [ポスト文章] 信太山新地
+https://osaka-shinodayamashin... | [画像なし]
+[2026-10-29 13:45:19] [INFO] 自動投稿スレッドを開始します...
+[2026-10-29 13:45:20] [sll15802] 【sll15802.xlsx 設定適用】ポスト間隔: 120〜360分 (7200〜21600秒ランダム) | モード: ランダム | プロファイル: chrome_profiles/threads_main_account (周回: 1)
+[2026-10-29 13:45:20] [sll15802] 【モード1: ランダム】未投稿 14 件をランダム順序で投稿します。
+[2026-10-29 13:45:20] [INFO] [sll15802] sessionidからユーザーID (47094044745) を検出しました。
+[2026-10-29 13:45:20] [SUCCESS] [sll15802] エクセルの sessionid (ユーザーID: 47094044745) をThreads/Instagramに自動注入しました。
+[2026-10-29 13:45:26] [SUCCESS] [sll15802] エクセルの sessionid で自動ログインに成功しました！（セッション認証済み (ユーザー: @sll15802)）
+[2026-10-29 13:45:26] [INFO] [sll15802] セッション状態を「アカウント情報.xlsx」と自動同期しました。
+[2026-10-29 13:45:26] [sll15802] Post #4 (91文字) を投稿中...
+[2026-10-29 13:45:26] [sll15802] 「新しいスレッド」ボタンをクリックしました。
+[2026-10-29 13:45:35] [sll15802] 「投稿」ボタンをクリックしました。Threads送信処理を確認中...
+[2026-10-29 13:45:36] [ERROR] [sll15802] Post #4 投稿エラー: 投稿中…
+[2026-10-29 13:45:36] [ERROR] [sll15802] 画面上のメッセージ: 「投稿中…」
+[2026-10-29 13:45:36] [INFO] [sll15802] 📸 エラー画面を保存しました: error_screenshots\error_sll15802_20261029_134536.png
+[2026-10-29 13:45:39] [sll15802] Post #19 (89文字) を投稿中...
+[2026-10-29 13:45:44] [ERROR] [sll15802] Post #19 投稿エラー: Threadsの投稿入力欄が見つかりません。画面が開いているか確認してください。
+[2026-10-29 13:45:47] [sll15802] Post #13 (93文字) を投稿中...
+[2026-10-29 13:45:52] [ERROR] [sll15802] Post #13 投稿エラー: Threadsの投稿入力欄が見つかりません。画面が開いているか確認してください。
+[2026-10-29 13:45:55] [sll15802] Post #1 (95文字) を投稿中...
+[2026-10-29 13:46:00] [ERROR] [sll15802] Post #1 投稿エラー: Threadsの投稿入力欄が見つかりません。画面が開いているか確認してください。
+[2026-10-29 13:46:03] [sll15802] Post #23 (89文字) を投稿中...
+[2026-10-29 13:49:42] [INFO] アプリケーションを起動しました。
+[2026-10-29 13:49:42] [INFO] 実行ディレクトリ: C:\Users\PC_User\Desktop\ThreadsAutoPoster_Windows_Package (36)\dist\ThreadsAutoPoster
+[2026-10-29 13:49:42] [INFO] アカウント情報読み込み完了: 1件のアカウント設定を検出 (ID: @sll15802)
+[2026-10-29 13:49:42] [INFO] 投稿リスト 'sll15802.xlsx' 読み込み完了: 未投稿 10 件
+[2026-10-29 13:49:42] [INFO] [sll15802] sll15802.xlsx から設定を適用: 間隔=120〜360分, モード=ランダム, プロファイル=chrome_profiles/threads_main_account
+[2026-10-29 13:49:42] [INFO] プレビュー#1: [ポスト文章] 信太山新地
+https://osaka-shinodayamashin... | [画像なし]
+[2026-10-29 13:49:42] [INFO] プレビュー#2: [ポスト文章] 信太山新地
+https://osaka-shinodayamashin... | [画像なし]
+[2026-10-29 13:49:43] [INFO] 自動投稿スレッドを開始します...
+[2026-10-29 13:49:44] [sll15802] 【sll15802.xlsx 設定適用】ポスト間隔: 120〜360分 (7200〜21600秒ランダム) | モード: ランダム | プロファイル: chrome_profiles/threads_main_account (周回: 1)
+[2026-10-29 13:49:44] [sll15802] 【モード1: ランダム】未投稿 10 件をランダム順序で投稿します。
+[2026-10-29 13:49:44] [INFO] [sll15802] sessionidからユーザーID (47094044745) を検出しました。
+[2026-10-29 13:49:44] [SUCCESS] [sll15802] エクセルの sessionid (ユーザーID: 47094044745) をThreads/Instagramに自動注入しました。
+[2026-10-29 13:49:50] [SUCCESS] [sll15802] エクセルの sessionid で自動ログインに成功しました！（セッション認証済み (ユーザー: @sll15802)）
+[2026-10-29 13:49:50] [INFO] [sll15802] セッション状態を「アカウント情報.xlsx」と自動同期しました。
+[2026-10-29 13:49:50] [sll15802] Post #14 (97文字) を投稿中...
+[2026-10-29 13:49:50] [sll15802] 別のページにいるためホーム(https://www.threads.net/)へ戻ります...
+[2026-10-29 13:49:53] [sll15802] 左下の「＋ 新しいスレッド」ボタンをクリックしました。
+[2026-10-29 13:50:01] [ERROR] [sll15802] Post #14 投稿エラー: 左下の「新しいスレッド」をクリックしましたが、新規投稿モーダルが開きませんでした。他人のポストに誤爆しないよう処理を安全に中断しました。
+[2026-10-29 13:50:01] [INFO] [sll15802] 📸 エラー画面を保存しました: error_screenshots\error_sll15802_20261029_135001.png
+[2026-10-29 13:50:04] [sll15802] Post #10 (97文字) を投稿中...
+[2026-10-29 13:50:04] [sll15802] 別のページにいるためホーム(https://www.threads.net/)へ戻ります...
+[2026-10-29 13:50:07] [sll15802] 左下の「＋ 新しいスレッド」ボタンをクリックしました。
+[2026-10-29 13:50:16] [ERROR] [sll15802] Post #10 投稿エラー: 左下の「新しいスレッド」をクリックしましたが、新規投稿モーダルが開きませんでした。他人のポストに誤爆しないよう処理を安全に中断しました。
+[2026-10-29 13:50:16] [INFO] [sll15802] 📸 エラー画面を保存しました: error_screenshots\error_sll15802_20261029_135016.png
+[2026-10-29 13:50:19] [sll15802] Post #9 (92文字) を投稿中...
+[2026-10-29 13:50:19] [sll15802] 別のページにいるためホーム(https://www.threads.net/)へ戻ります...
+[2026-10-29 13:50:22] [sll15802] 左下の「＋ 新しいスレッド」ボタンをクリックしました。
+[2026-10-29 13:50:30] [ERROR] [sll15802] Post #9 投稿エラー: 左下の「新しいスレッド」をクリックしましたが、新規投稿モーダルが開きませんでした。他人のポストに誤爆しないよう処理を安全に中断しました。
+[2026-10-29 13:50:33] [sll15802] Post #20 (88文字) を投稿中...
+[2026-10-29 13:50:33] [sll15802] 別のページにいるためホーム(https://www.threads.net/)へ戻ります...
+[2026-10-29 13:50:40] [ERROR] [sll15802] Post #20 投稿エラー: 左下の「新しいスレッド」をクリックしましたが、新規投稿モーダルが開きませんでした。他人のポストに誤爆しないよう処理を安全に中断しました。
+[2026-10-29 13:50:43] [sll15802] Post #11 (91文字) を投稿中...
+[2026-10-29 13:50:43] [sll15802] 別のページにいるためホーム(https://www.threads.net/)へ戻ります...
+[2026-10-29 13:50:50] [ERROR] [sll15802] Post #11 投稿エラー: 左下の「新しいスレッド」をクリックしましたが、新規投稿モーダルが開きませんでした。他人のポストに誤爆しないよう処理を安全に中断しました。
+[2026-10-29 13:50:53] [sll15802] Post #8 (98文字) を投稿中...
+[2026-10-29 13:50:53] [sll15802] 別のページにいるためホーム(https://www.threads.net/)へ戻ります...
+[2026-10-29 13:51:00] [ERROR] [sll15802] Post #8 投稿エラー: 左下の「新しいスレッド」をクリックしましたが、新規投稿モーダルが開きませんでした。他人のポストに誤爆しないよう処理を安全に中断しました。
+[2026-10-29 13:51:03] [sll15802] Post #21 (90文字) を投稿中...
+[2026-10-29 13:51:03] [sll15802] 別のページにいるためホーム(https://www.threads.net/)へ戻ります...
+[2026-10-29 13:51:10] [ERROR] [sll15802] Post #21 投稿エラー: 左下の「新しいスレッド」をクリックしましたが、新規投稿モーダルが開きませんでした。他人のポストに誤爆しないよう処理を安全に中断しました。
+[2026-10-29 13:51:13] [sll15802] Post #23 (89文字) を投稿中...
+[2026-10-29 13:51:13] [sll15802] 別のページにいるためホーム(https://www.threads.net/)へ戻ります...
+[2026-10-29 13:51:20] [ERROR] [sll15802] Post #23 投稿エラー: 左下の「新しいスレッド」をクリックしましたが、新規投稿モーダルが開きませんでした。他人のポストに誤爆しないよう処理を安全に中断しました。
+[2026-10-29 13:51:23] [sll15802] Post #22 (91文字) を投稿中...
+[2026-10-29 13:51:23] [sll15802] 別のページにいるためホーム(https://www.threads.net/)へ戻ります...
+[2026-10-29 13:51:30] [ERROR] [sll15802] Post #22 投稿エラー: 左下の「新しいスレッド」をクリックしましたが、新規投稿モーダルが開きませんでした。他人のポストに誤爆しないよう処理を安全に中断しました。
+[2026-10-29 13:51:33] [sll15802] Post #15 (90文字) を投稿中...
+[2026-10-29 13:51:33] [sll15802] 別のページにいるためホーム(https://www.threads.net/)へ戻ります...
+[2026-10-29 13:51:40] [ERROR] [sll15802] Post #15 投稿エラー: 左下の「新しいスレッド」をクリックしましたが、新規投稿モーダルが開きませんでした。他人のポストに誤爆しないよう処理を安全に中断しました。
+[2026-10-29 13:51:43] [SUCCESS] 🎉 [sll15802] 'sll15802.xlsx' の全ポスト(24件)の投稿が完了しました！自動ループ機能により全件を『未投稿』にリセットし、最初から周回を継続します。
+[2026-10-29 13:51:43] [INFO] アカウント情報読み込み完了: 1件のアカウント設定を検出 (ID: @sll15802)
+[2026-10-29 13:51:43] [INFO] 投稿リスト 'sll15802.xlsx' 読み込み完了: 未投稿 24 件
+[2026-10-29 13:51:43] [INFO] [sll15802] sll15802.xlsx から設定を適用: 間隔=120〜360分, モード=ランダム, プロファイル=chrome_profiles/threads_main_account
+[2026-10-29 13:51:44] [INFO] プレビュー#1: [ポスト文章] 信太山新地
+https://osaka-shinodayamashin... | [画像なし]
+[2026-10-29 13:51:44] [INFO] プレビュー#2: [ポスト文章] 信太山新地
+https://osaka-shinodayamashin... | [画像なし]
+[2026-10-29 13:51:44] [INFO] アカウント情報読み込み完了: 1件のアカウント設定を検出 (ID: @sll15802)
+[2026-10-29 13:51:44] [INFO] 投稿リスト 'sll15802.xlsx' 読み込み完了: 未投稿 24 件
+[2026-10-29 13:51:44] [INFO] [sll15802] sll15802.xlsx から設定を適用: 間隔=120〜360分, モード=ランダム, プロファイル=chrome_profiles/threads_main_account
+[2026-10-29 13:51:44] [INFO] プレビュー#1: [ポスト文章] 信太山新地
+https://osaka-shinodayamashin... | [画像なし]
+[2026-10-29 13:51:44] [INFO] プレビュー#2: [ポスト文章] 信太山新地
+https://osaka-shinodayamashin... | [画像なし]
+[2026-10-29 13:51:44] ============================================================
+[2026-10-29 13:51:44] [INFO] 🔁 【周回サイクル 2 周目】自動投稿ループを開始します
+[2026-10-29 13:51:44] ============================================================
+[2026-10-29 13:51:44] [sll15802] 【sll15802.xlsx 設定適用】ポスト間隔: 120〜360分 (7200〜21600秒ランダム) | モード: ランダム | プロファイル: chrome_profiles/threads_main_account (周回: 2)
+[2026-10-29 13:51:44] [sll15802] 【モード1: ランダム】未投稿 24 件をランダム順序で投稿します。
+[2026-10-29 13:51:44] [INFO] [sll15802] sessionidからユーザーID (47094044745) を検出しました。
+[2026-10-29 13:51:44] [SUCCESS] [sll15802] エクセルの sessionid (ユーザーID: 47094044745) をThreads/Instagramに自動注入しました。
+[2026-10-29 13:51:50] [SUCCESS] [sll15802] エクセルの sessionid で自動ログインに成功しました！（セッション認証済み (ユーザー: @sll15802)）
+[2026-10-29 13:51:50] [INFO] [sll15802] セッション状態を「アカウント情報.xlsx」と自動同期しました。
+[2026-10-29 13:51:50] [sll15802] Post #21 (90文字) を投稿中...
+[2026-10-29 13:51:50] [sll15802] 別のページにいるためホーム(https://www.threads.net/)へ戻ります...
+[2026-10-29 13:51:55] [sll15802] 左下の「＋ 新しいスレッド」ボタンをクリックしました。
+[2026-10-29 13:52:03] [ERROR] [sll15802] Post #21 投稿エラー: 左下の「新しいスレッド」をクリックしましたが、新規投稿モーダルが開きませんでした。他人のポストに誤爆しないよう処理を安全に中断しました。
+[2026-10-29 13:52:03] [INFO] [sll15802] 📸 エラー画面を保存しました: error_screenshots\error_sll15802_20261029_135203.png
+[2026-10-29 13:52:06] [sll15802] Post #23 (89文字) を投稿中...
+[2026-10-29 13:52:06] [sll15802] 別のページにいるためホーム(https://www.threads.net/)へ戻ります...
+[2026-10-29 13:52:09] [sll15802] 左下の「＋ 新しいスレッド」ボタンをクリックしました。
+[2026-10-29 13:52:17] [ERROR] [sll15802] Post #23 投稿エラー: 左下の「新しいスレッド」をクリックしましたが、新規投稿モーダルが開きませんでした。他人のポストに誤爆しないよう処理を安全に中断しました。
+[2026-10-29 13:52:17] [INFO] [sll15802] 📸 エラー画面を保存しました: error_screenshots\error_sll15802_20261029_135217.png
+[2026-10-29 13:52:20] [sll15802] Post #16 (91文字) を投稿中...
+[2026-10-29 13:52:20] [sll15802] 別のページにいるためホーム(https://www.threads.net/)へ戻ります...
+[2026-10-29 13:52:23] [sll15802] 左下の「＋ 新しいスレッド」ボタンをクリックしました。
+[2026-10-29 13:52:31] [ERROR] [sll15802] Post #16 投稿エラー: 左下の「新しいスレッド」をクリックしましたが、新規投稿モーダルが開きませんでした。他人のポストに誤爆しないよう処理を安全に中断しました。
+[2026-10-29 13:52:31] [INFO] [sll15802] 📸 エラー画面を保存しました: error_screenshots\error_sll15802_20261029_135231.png
+[2026-10-29 13:52:34] [sll15802] Post #11 (91文字) を投稿中...
+[2026-10-29 13:52:34] [sll15802] 別のページにいるためホーム(https://www.threads.net/)へ戻ります...
+[2026-10-29 13:54:26] [INFO] アプリケーションを起動しました。
+[2026-10-29 13:54:26] [INFO] 実行ディレクトリ: C:\Users\PC_User\Desktop\ThreadsAutoPoster_Windows_Package (36)\dist\ThreadsAutoPoster
+[2026-10-29 13:54:26] [INFO] アカウント情報読み込み完了: 1件のアカウント設定を検出 (ID: @sll15802)
+[2026-10-29 13:54:26] [INFO] 投稿リスト 'sll15802.xlsx' 読み込み完了: 未投稿 21 件
+[2026-10-29 13:54:26] [INFO] [sll15802] sll15802.xlsx から設定を適用: 間隔=120〜360分, モード=ランダム, プロファイル=chrome_profiles/threads_main_account
+[2026-10-29 13:54:26] [INFO] プレビュー#1: [ポスト文章] 信太山新地
+https://osaka-shinodayamashin... | [画像なし]
+[2026-10-29 13:54:26] [INFO] プレビュー#2: [ポスト文章] 信太山新地
+https://osaka-shinodayamashin... | [画像なし]
+[2026-10-29 13:54:27] [INFO] 自動投稿スレッドを開始します...
+[2026-10-29 13:54:28] [sll15802] 【sll15802.xlsx 設定適用】ポスト間隔: 120〜360分 (7200〜21600秒ランダム) | モード: ランダム | プロファイル: chrome_profiles/threads_main_account (周回: 1)
+[2026-10-29 13:54:28] [sll15802] 【モード1: ランダム】未投稿 21 件をランダム順序で投稿します。
+[2026-10-29 13:54:28] [INFO] [sll15802] sessionidからユーザーID (47094044745) を検出しました。
+[2026-10-29 13:54:28] [SUCCESS] [sll15802] エクセルの sessionid (ユーザーID: 47094044745) をThreads/Instagramに自動注入しました。
+[2026-10-29 13:54:35] [SUCCESS] [sll15802] エクセルの sessionid で自動ログインに成功しました！（セッション認証済み (ユーザー: @sll15802)）
+[2026-10-29 13:54:35] [INFO] [sll15802] セッション状態を「アカウント情報.xlsx」と自動同期しました。
+[2026-10-29 13:54:35] [sll15802] Post #4 (91文字) を投稿中...
+[2026-10-29 13:54:35] [sll15802] 現在のページ(https://www.threads.com)からホーム(https://www.threads.net/)へ戻ります...
+[2026-10-29 13:54:38] [sll15802] 左下の「＋ 新しいスレッド」ボタンをクリックします...
+[2026-10-29 13:54:46] [sll15802] 「投稿」ボタンをクリックしました。Threads送信処理を確認中...
+[2026-10-29 13:55:17] [SUCCESS] [sll15802] 投稿ダイアログが正常に閉じられ、投稿完了を確認しました。
+[2026-10-29 13:55:17] [SUCCESS] [sll15802] Post #4 投稿成功！Excel更新。
+[2026-10-29 13:55:17] [*] BAN防止のため 21005 秒 (約 350 分) 待機中...
+[2026-10-29 14:09:39] [INFO] アプリケーションを起動しました。
+[2026-10-29 14:09:39] [INFO] 実行ディレクトリ: C:\Users\PC_User\Desktop\ThreadsAutoPoster_Windows_Package (36)\dist\ThreadsAutoPoster
+[2026-10-29 14:09:39] [INFO] アカウント情報読み込み完了: 1件のアカウント設定を検出 (ID: @sll15802)
+[2026-10-29 14:09:39] [INFO] 投稿リスト 'sll15802.xlsx' 読み込み完了: 未投稿 24 件
+[2026-10-29 14:09:39] [INFO] [sll15802] sll15802.xlsx から設定を適用: 間隔=120〜360分, モード=ランダム, プロファイル=コミュニティまたはトピック
+[2026-10-29 14:09:39] [INFO] プレビュー#1: [ポスト文章] 信太山新地
+https://osaka-shinodayamashin... | [画像なし]
+[2026-10-29 14:09:39] [INFO] プレビュー#2: [ポスト文章] 信太山新地
+https://osaka-shinodayamashin... | [画像なし]
+[2026-10-29 14:09:41] [INFO] 自動投稿スレッドを開始します...
+[2026-10-29 14:09:41] [sll15802] 【sll15802.xlsx 設定適用】ポスト間隔: 120〜360分 (7200〜21600秒ランダム) | モード: ランダム | プロファイル: コミュニティまたはトピック (周回: 1)
+[2026-10-29 14:09:41] [sll15802] 【モード1: ランダム】未投稿 24 件をランダム順序で投稿します。
+[2026-10-29 14:09:42] [INFO] [sll15802] sessionidからユーザーID (47094044745) を検出しました。
+[2026-10-29 14:09:42] [SUCCESS] [sll15802] エクセルの sessionid (ユーザーID: 47094044745) をThreads/Instagramに自動注入しました。
+[2026-10-29 14:09:48] [SUCCESS] [sll15802] エクセルの sessionid で自動ログインに成功しました！（セッション認証済み (ユーザー: @sll15802)）
+[2026-10-29 14:09:48] [INFO] [sll15802] セッション状態を「アカウント情報.xlsx」と自動同期しました。
+[2026-10-29 14:09:48] [sll15802] Post #19 (89文字) を投稿中...
+[2026-10-29 14:09:48] [sll15802] 現在のページ(https://www.threads.com)からホーム(https://www.threads.net/)へ戻ります...
+[2026-10-29 14:09:51] [sll15802] 左下の「＋ 新しいスレッド」ボタンをクリックします...
+[2026-10-29 14:09:57] [*] コミュニティ/トピック「#1」を設定中...
+[2026-10-29 14:09:58] [INFO] コミュニティ/トピック「#1」を投稿末尾にタグ付けしました。
+[2026-10-29 14:10:00] [sll15802] 画面上のオプションメニューを閉じて「投稿」ボタンを押せるようにします...
+[2026-10-29 14:10:00] [sll15802] 「投稿」ボタンをクリックしました。Threads送信処理を確認中...
+[2026-10-30 12:51:43] [INFO] アプリケーションを起動しました。
+[2026-10-30 12:51:43] [INFO] 実行ディレクトリ: C:\Users\PC_User\Desktop\ThreadsAutoPoster_Windows_Package (36)\dist\ThreadsAutoPoster
+[2026-10-30 12:51:43] [INFO] アカウント情報読み込み完了: 1件のアカウント設定を検出 (ID: @sll15802)
+[2026-10-30 12:51:43] [INFO] 投稿リスト 'sll15802.xlsx' 読み込み完了: 未投稿 24 件
+[2026-10-30 12:51:43] [INFO] [sll15802] sll15802.xlsx から設定を適用: 間隔=120〜360分, モード=ランダム, プロファイル=コミュニティまたはトピック
+[2026-10-30 12:51:43] [INFO] プレビュー#1: [ポスト文章] 信太山新地
+https://osaka-shinodayamashin... | [画像なし]
+[2026-10-30 12:51:43] [INFO] プレビュー#2: [ポスト文章] 信太山新地
+https://osaka-shinodayamashin... | [画像なし]
+[2026-10-30 12:51:44] [INFO] 自動投稿スレッドを開始します...
+[2026-10-30 12:51:47] [sll15802] 【sll15802.xlsx 設定適用】ポスト間隔: 120〜360分 (7200〜21600秒ランダム) | モード: ランダム | プロファイル: コミュニティまたはトピック (周回: 1)
+[2026-10-30 12:51:47] [sll15802] 【モード1: ランダム】未投稿 24 件をランダム順序で投稿します。
+[2026-10-30 12:51:47] [INFO] [sll15802] sessionidからユーザーID (47094044745) を検出しました。
+[2026-10-30 12:51:47] [SUCCESS] [sll15802] エクセルの sessionid (ユーザーID: 47094044745) をThreads/Instagramに自動注入しました。
+[2026-10-30 12:51:48] [WARN] 停止リクエストを送信しました。現在の投稿完了後に停止します。
+[2026-10-30 12:51:52] [INFO] 自動投稿スレッドを開始します...
+[2026-10-30 12:51:52] [sll15802] 【sll15802.xlsx 設定適用】ポスト間隔: 120〜360分 (7200〜21600秒ランダム) | モード: ランダム | プロファイル: コミュニティまたはトピック (周回: 1)
+[2026-10-30 12:51:52] [sll15802] 【モード1: ランダム】未投稿 24 件をランダム順序で投稿します。
+[2026-10-30 12:51:53] [ERROR] 致命的エラー: BrowserType.launch_persistent_context: Target page, context or browser has been closed
+Browser logs:
+
+<launching> C:\Program Files\Google\Chrome\Application\chrome.exe --disable-field-trial-config --disable-background-networking --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-back-forward-cache --disable-breakpad --disable-client-side-phishing-detection --disable-component-extensions-with-background-pages --disable-component-update --no-default-browser-check --disable-default-apps --disable-dev-shm-usage --disable-edgeupdater --disable-extensions --disable-features=AvoidUnnecessaryBeforeUnloadCheckSync,DestroyProfileOnBrowserClose,DialMediaRouteProvider,GlobalMediaControls,HttpsUpgrades,LensOverlay,MediaRouter,PaintHolding,ThirdPartyStoragePartitioning,BlockOriginHeaderModificationOnRedirect,AvoidCorsURLLoaderRestartOnRedirect,Translate,AutoDeElevate,OptimizationHints,NetworkTimeServiceQuerying,AimEnabled,msForceBrowserSignIn,msEdgeUpdateLaunchServicesPreferredVersion --enable-features=CDPScreenshotNewSurface --allow-pre-commit-input --disable-hang-monitor --disable-ipc-flooding-protection --disable-popup-blocking --disable-prompt-on-repost --disable-renderer-backgrounding --disable-updater-scheduler --force-color-profile=srgb --metrics-recording-only --no-first-run --password-store=basic --use-mock-keychain --no-service-autorun --export-tagged-pdf --disable-search-engine-choice-screen --unsafely-disable-devtools-self-xss-warnings --edge-skip-compat-layer-relaunch --disable-infobars --disable-search-engine-choice-screen --disable-sync --enable-unsafe-swiftshader --no-sandbox --disable-blink-features=AutomationControlled --lang=ja-JP --user-data-dir=C:\Users\PC_User\Desktop\ThreadsAutoPoster_Windows_Package (36)\dist\ThreadsAutoPoster\コミュニティまたはトピック --remote-debugging-pipe about:blank
+<launched> pid=23344
+[pid=23344][out] �����̃u���E�U �Z�b�V�����ŊJ���Ă��܂��B
+Call log:
+  - <launching> C:\Program Files\Google\Chrome\Application\chrome.exe --disable-field-trial-config --disable-background-networking --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-back-forward-cache --disable-breakpad --disable-client-side-phishing-detection --disable-component-extensions-with-background-pages --disable-component-update --no-default-browser-check --disable-default-apps --disable-dev-shm-usage --disable-edgeupdater --disable-extensions --disable-features=AvoidUnnecessaryBeforeUnloadCheckSync,DestroyProfileOnBrowserClose,DialMediaRouteProvider,GlobalMediaControls,HttpsUpgrades,LensOverlay,MediaRouter,PaintHolding,ThirdPartyStoragePartitioning,BlockOriginHeaderModificationOnRedirect,AvoidCorsURLLoaderRestartOnRedirect,Translate,AutoDeElevate,OptimizationHints,NetworkTimeServiceQuerying,AimEnabled,msForceBrowserSignIn,msEdgeUpdateLaunchServicesPreferredVersion --enable-features=CDPScreenshotNewSurface --allow-pre-commit-input --disable-hang-monitor --disable-ipc-flooding-protection --disable-popup-blocking --disable-prompt-on-repost --disable-renderer-backgrounding --disable-updater-scheduler --force-color-profile=srgb --metrics-recording-only --no-first-run --password-store=basic --use-mock-keychain --no-service-autorun --export-tagged-pdf --disable-search-engine-choice-screen --unsafely-disable-devtools-self-xss-warnings --edge-skip-compat-layer-relaunch --disable-infobars --disable-search-engine-choice-screen --disable-sync --enable-unsafe-swiftshader --no-sandbox --disable-blink-features=AutomationControlled --lang=ja-JP --user-data-dir=C:\Users\PC_User\Desktop\ThreadsAutoPoster_Windows_Package (36)\dist\ThreadsAutoPoster\コミュニティまたはトピック --remote-debugging-pipe about:blank
+  - <launched> pid=23344
+  - [pid=23344][out] �����̃u���E�U �Z�b�V�����ŊJ���Ă��܂��B
+  - [pid=23344] <gracefully close start>
+  - [pid=23344] <kill>
+  - [pid=23344] <will force kill>
+  - [pid=23344] <process did exit: exitCode=0, signal=null>
+  - [pid=23344] starting temporary directories cleanup
+  - [pid=23344] finished temporary directories cleanup
+  - [pid=23344] <gracefully close end>
+
+[2026-10-30 12:51:53] [INFO] アカウント情報読み込み完了: 1件のアカウント設定を検出 (ID: @sll15802)
+[2026-10-30 12:51:53] [INFO] 投稿リスト 'sll15802.xlsx' 読み込み完了: 未投稿 24 件
+[2026-10-30 12:51:53] [INFO] [sll15802] sll15802.xlsx から設定を適用: 間隔=120〜360分, モード=ランダム, プロファイル=コミュニティまたはトピック
+[2026-10-30 12:51:53] [INFO] プレビュー#1: [ポスト文章] 信太山新地
+https://osaka-shinodayamashin... | [画像なし]
+[2026-10-30 12:51:53] [INFO] プレビュー#2: [ポスト文章] 信太山新地
+https://osaka-shinodayamashin... | [画像なし]
+[2026-10-30 12:51:53] [SUCCESS] [sll15802] エクセルの sessionid で自動ログインに成功しました！（セッション認証済み (ユーザー: @sll15802)）
+[2026-10-30 12:51:53] [INFO] [sll15802] セッション状態を「アカウント情報.xlsx」と自動同期しました。
+[2026-10-30 12:51:54] [WARN] 停止リクエストにより自動投稿処理を終了しました。
+[2026-10-30 12:51:54] [INFO] アカウント情報読み込み完了: 1件のアカウント設定を検出 (ID: @sll15802)
+[2026-10-30 12:51:54] [INFO] 投稿リスト 'sll15802.xlsx' 読み込み完了: 未投稿 24 件
+[2026-10-30 12:51:54] [INFO] [sll15802] sll15802.xlsx から設定を適用: 間隔=120〜360分, モード=ランダム, プロファイル=コミュニティまたはトピック
+[2026-10-30 12:51:54] [INFO] プレビュー#1: [ポスト文章] 信太山新地
+https://osaka-shinodayamashin... | [画像なし]
+[2026-10-30 12:51:54] [INFO] プレビュー#2: [ポスト文章] 信太山新地
+https://osaka-shinodayamashin... | [画像なし]
+[2026-10-30 12:51:56] [INFO] 自動投稿スレッドを開始します...
+[2026-10-30 12:51:56] [sll15802] 【sll15802.xlsx 設定適用】ポスト間隔: 120〜360分 (7200〜21600秒ランダム) | モード: ランダム | プロファイル: コミュニティまたはトピック (周回: 1)
+[2026-10-30 12:51:56] [sll15802] 【モード1: ランダム】未投稿 24 件をランダム順序で投稿します。
+[2026-10-30 12:51:56] [INFO] [sll15802] sessionidからユーザーID (47094044745) を検出しました。
+[2026-10-30 12:51:56] [SUCCESS] [sll15802] エクセルの sessionid (ユーザーID: 47094044745) をThreads/Instagramに自動注入しました。
+[2026-10-30 12:52:02] [SUCCESS] [sll15802] エクセルの sessionid で自動ログインに成功しました！（セッション認証済み (ユーザー: @sll15802)）
+[2026-10-30 12:52:02] [INFO] [sll15802] セッション状態を「アカウント情報.xlsx」と自動同期しました。
+[2026-10-30 12:52:02] [sll15802] Post #18 (88文字) を投稿中...
+[2026-10-30 12:52:02] [sll15802] 現在のページ(https://www.threads.com)からホーム(https://www.threads.net/)へ戻ります...
+[2026-10-30 12:52:05] [sll15802] 左下の「＋ 新しいスレッド」ボタンをクリックします...
+[2026-10-30 12:52:11] [*] コミュニティ/トピック「#1」を設定中...
+[2026-10-30 12:52:11] [INFO] コミュニティ/トピック「#1」を投稿末尾にタグ付けしました。
+[2026-10-30 12:52:11] [WARN] 停止リクエストを送信しました。現在の投稿完了後に停止します。
+[2026-10-30 12:52:13] [sll15802] 画面上のオプションメニューを閉じて「投稿」ボタンを押せるようにします...
+[2026-10-30 12:52:13] [sll15802] 「投稿」ボタンをクリックしました。Threads送信処理を確認中...
+[2026-10-30 12:52:39] [sll15802] 送信ボタンを再押下します...
+[2026-10-30 12:52:46] [sll15802] 送信ボタンを再押下します...
+[2026-10-30 12:53:03] [ERROR] [sll15802] Post #18 投稿エラー: sll15802
+[2026-10-30 12:53:03] [ERROR] [sll15802] 画面上のメッセージ: 「sll15802」
+[2026-10-30 12:53:03] [ERROR] [sll15802] 画面上のメッセージ: 「最近どう？」
+[2026-10-30 12:53:03] [ERROR] [sll15802] 画面上のメッセージ: 「スレッドに追加」
+[2026-10-30 12:53:03] [ERROR] [sll15802] 画面上のメッセージ: 「投稿オプション」
+[2026-10-30 12:53:03] [ERROR] [sll15802] 画面上のメッセージ: 「Threadsの友達」
+[2026-10-30 12:53:03] [INFO] [sll15802] 📸 エラー画面を保存しました: error_screenshots\error_sll15802_20261030_125303.png
+[2026-10-30 12:53:06] [WARN] 停止リクエストにより自動投稿処理を終了しました。
+[2026-10-30 12:53:06] [INFO] アカウント情報読み込み完了: 1件のアカウント設定を検出 (ID: @sll15802)
+[2026-10-30 12:53:06] [INFO] 投稿リスト 'sll15802.xlsx' 読み込み完了: 未投稿 23 件
+[2026-10-30 12:53:06] [INFO] [sll15802] sll15802.xlsx から設定を適用: 間隔=120〜360分, モード=ランダム, プロファイル=コミュニティまたはトピック
+[2026-10-30 12:53:06] [INFO] プレビュー#1: [ポスト文章] 信太山新地
+https://osaka-shinodayamashin... | [画像なし]
+[2026-10-30 12:53:06] [INFO] プレビュー#2: [ポスト文章] 信太山新地
+https://osaka-shinodayamashin... | [画像なし]
+[2026-10-30 13:12:50] [INFO] アプリケーションを起動しました。
+[2026-10-30 13:12:50] [INFO] 実行ディレクトリ: C:\Users\PC_User\Desktop\ThreadsAutoPoster_Windows_Package (36)\dist\ThreadsAutoPoster
+[2026-10-30 13:12:50] [INFO] アカウント情報読み込み完了: 1件のアカウント設定を検出 (ID: @sll15802)
+[2026-10-30 13:12:50] [INFO] 投稿リスト 'sll15802.xlsx' 読み込み完了: 未投稿 23 件
+[2026-10-30 13:12:50] [INFO] [sll15802] sll15802.xlsx から設定を適用: 間隔=120〜360分, モード=ランダム, プロファイル=コミュニティまたはトピック
+[2026-10-30 13:12:50] [INFO] プレビュー#1: [ポスト文章] 信太山新地
+https://osaka-shinodayamashin... | [画像なし]
+[2026-10-30 13:12:50] [INFO] プレビュー#2: [ポスト文章] 信太山新地
+https://osaka-shinodayamashin... | [画像なし]
+[2026-10-30 13:12:51] [INFO] 自動投稿スレッドを開始します...
+[2026-10-30 13:12:51] [sll15802] 【sll15802.xlsx 設定適用】ポスト間隔: 120〜360分 (7200〜21600秒ランダム) | モード: ランダム | プロファイル: コミュニティまたはトピック (周回: 1)
+[2026-10-30 13:12:51] [sll15802] 【モード1: ランダム】未投稿 23 件をランダム順序で投稿します。
+[2026-10-30 13:12:52] [INFO] [sll15802] sessionidからユーザーID (47094044745) を検出しました。
+[2026-10-30 13:12:52] [SUCCESS] [sll15802] エクセルの sessionid (ユーザーID: 47094044745) をThreads/Instagramに自動注入しました。
+[2026-10-30 13:12:57] [SUCCESS] [sll15802] エクセルの sessionid で自動ログインに成功しました！（セッション認証済み (ユーザー: @sll15802)）
+[2026-10-30 13:12:57] [INFO] [sll15802] セッション状態を「アカウント情報.xlsx」と自動同期しました。
+[2026-10-30 13:12:57] [sll15802] Post #15 (90文字, トピック: 「信太山新地」) を投稿中...
+[2026-10-30 13:12:57] [sll15802] 現在のページ(https://www.threads.com)からホーム(https://www.threads.net/)へ戻ります...
+[2026-10-30 13:13:00] [sll15802] 左下の「＋ 新しいスレッド」ボタンをクリックします...
+[2026-10-30 13:13:07] [*] アカウント名右側の「コミュニティまたはトピック」に「信太山新地」を設定します...
+[2026-10-30 13:13:09] [SUCCESS] コミュニティ/トピック「信太山新地」をアカウント名の右側の設定欄に正常に適用しました。
+[2026-10-30 13:13:10] [ERROR] [sll15802] Post #15 投稿エラー: sll15802
+[2026-10-30 13:13:10] [ERROR] [sll15802] 画面上のメッセージ: 「sll15802」
+[2026-10-30 13:13:10] [ERROR] [sll15802] 画面上のメッセージ: 「信太山新地」
+[2026-10-30 13:13:10] [ERROR] [sll15802] 画面上のメッセージ: 「https://osaka-shinodayamashinchivip.pages.dev/blog/shinodayamashinchi-mental-support」
+[2026-10-30 13:13:10] [ERROR] [sll15802] 画面上のメッセージ: 「osaka-shinodayamashinchivip.pages.dev」
+[2026-10-30 13:13:10] [ERROR] [sll15802] 画面上のメッセージ: 「信太山新地 【心に寄り添うサポート】悩みは一人で抱え込まないで！現役キャストが教える女性スタッフの頼り方」
+[2026-10-30 13:13:10] [ERROR] [sll15802] 画面上のメッセージ: 「スレッドに追加」
+[2026-10-30 13:13:10] [ERROR] [sll15802] 画面上のメッセージ: 「投稿オプション」
+[2026-10-30 13:13:10] [ERROR] [sll15802] 画面上のメッセージ: 「Threadsの友達」
+[2026-10-30 13:13:10] [INFO] [sll15802] 📸 エラー画面を保存しました: error_screenshots\error_sll15802_20261030_131309.png
+[2026-10-30 13:13:13] [sll15802] Post #23 (89文字, トピック: 「信太山新地」) を投稿中...
+[2026-10-30 13:13:13] [sll15802] 現在のページ(https://www.threads.com)からホーム(https://www.threads.net/)へ戻ります...
+[2026-10-30 13:13:16] [sll15802] 左下の「＋ 新しいスレッド」ボタンをクリックします...
+[2026-10-30 13:13:22] [*] アカウント名右側の「コミュニティまたはトピック」に「信太山新地」を設定します...
+[2026-10-30 13:13:24] [SUCCESS] コミュニティ/トピック「信太山新地」をアカウント名の右側の設定欄に正常に適用しました。
+[2026-10-30 13:13:24] [ERROR] [sll15802] Post #23 投稿エラー: sll15802
+[2026-10-30 13:13:24] [ERROR] [sll15802] 画面上のメッセージ: 「sll15802」
+[2026-10-30 13:13:24] [ERROR] [sll15802] 画面上のメッセージ: 「信太山新地」
+[2026-10-30 13:13:25] [ERROR] [sll15802] 画面上のメッセージ: 「https://osaka-shinodayamashinchivip.pages.dev/blog/shinodayamashinchi-weekend-shift」
+[2026-10-30 13:13:25] [ERROR] [sll15802] 画面上のメッセージ: 「osaka-shinodayamashinchivip.pages.dev」
+[2026-10-30 13:13:25] [ERROR] [sll15802] 画面上のメッセージ: 「信太山新地 【副業・OL・学生さんへ】週1日・短時間勤務でも効率的に高収入を稼ぐ賢いシフト設計テクニック」
+[2026-10-30 13:13:25] [ERROR] [sll15802] 画面上のメッセージ: 「スレッドに追加」
+[2026-10-30 13:13:25] [ERROR] [sll15802] 画面上のメッセージ: 「投稿オプション」
+[2026-10-30 13:13:25] [ERROR] [sll15802] 画面上のメッセージ: 「Threadsの友達」
+[2026-10-30 13:13:25] [INFO] [sll15802] 📸 エラー画面を保存しました: error_screenshots\error_sll15802_20261030_131324.png
+[2026-10-30 13:13:28] [sll15802] Post #16 (91文字, トピック: 「信太山新地」) を投稿中...
+[2026-10-30 13:13:28] [sll15802] 現在のページ(https://www.threads.com)からホーム(https://www.threads.net/)へ戻ります...
+[2026-10-30 13:13:31] [sll15802] 左下の「＋ 新しいスレッド」ボタンをクリックします...
+[2026-10-30 13:13:36] [*] アカウント名右側の「コミュニティまたはトピック」に「信太山新地」を設定します...
+[2026-10-30 13:13:38] [SUCCESS] コミュニティ/トピック「信太山新地」をアカウント名の右側の設定欄に正常に適用しました。
+[2026-10-30 13:13:39] [ERROR] [sll15802] Post #16 投稿エラー: sll15802
+[2026-10-30 13:13:39] [ERROR] [sll15802] 画面上のメッセージ: 「sll15802」
+[2026-10-30 13:13:39] [ERROR] [sll15802] 画面上のメッセージ: 「信太山新地」
+[2026-10-30 13:13:39] [ERROR] [sll15802] 画面上のメッセージ: 「https://osaka-shinodayamashinchivip.pages.dev/blog/shinodayamashinchi-search-keywords」
+[2026-10-30 13:13:39] [ERROR] [sll15802] 画面上のメッセージ: 「osaka-shinodayamashinchivip.pages.dev」
+[2026-10-30 13:13:39] [ERROR] [sll15802] 画面上のメッセージ: 「信太山新地 【徹底分析】信太山新地で働きたい女性が検索するワードとは？不安と疑問を先回り解決！」
+[2026-10-30 13:13:39] [ERROR] [sll15802] 画面上のメッセージ: 「スレッドに追加」
+[2026-10-30 13:13:39] [ERROR] [sll15802] 画面上のメッセージ: 「投稿オプション」
+[2026-10-30 13:13:39] [ERROR] [sll15802] 画面上のメッセージ: 「Threadsの友達」
+[2026-10-30 13:13:39] [INFO] [sll15802] 📸 エラー画面を保存しました: error_screenshots\error_sll15802_20261030_131338.png
+[2026-10-30 13:13:42] [sll15802] Post #19 (89文字, トピック: 「信太山新地」) を投稿中...
+[2026-10-30 13:13:42] [sll15802] 現在のページ(https://www.threads.com)からホーム(https://www.threads.net/)へ戻ります...
+[2026-10-30 13:13:45] [sll15802] 左下の「＋ 新しいスレッド」ボタンをクリックします...
+[2026-10-30 13:25:11] [INFO] アプリケーションを起動しました。
+[2026-10-30 13:25:11] [INFO] 実行ディレクトリ: C:\Users\PC_User\Desktop\ThreadsAutoPoster_Windows_Package (36)\dist\ThreadsAutoPoster
+[2026-10-30 13:25:11] [INFO] アカウント情報読み込み完了: 1件のアカウント設定を検出 (ID: @sll15802)
+[2026-10-30 13:25:11] [INFO] 投稿リスト 'sll15802.xlsx' 読み込み完了: 未投稿 20 件
+[2026-10-30 13:25:11] [INFO] [sll15802] sll15802.xlsx から設定を適用: 間隔=120〜360分, モード=ランダム, プロファイル=コミュニティまたはトピック
+[2026-10-30 13:25:11] [INFO] プレビュー#1: [ポスト文章] 信太山新地
+https://osaka-shinodayamashin... | [画像なし]
+[2026-10-30 13:25:11] [INFO] プレビュー#2: [ポスト文章] 信太山新地
+https://osaka-shinodayamashin... | [画像なし]
+[2026-10-30 13:25:12] [INFO] 自動投稿スレッドを開始します...
+[2026-10-30 13:25:12] [sll15802] 【sll15802.xlsx 設定適用】ポスト間隔: 120〜360分 (7200〜21600秒ランダム) | モード: ランダム | プロファイル: コミュニティまたはトピック (周回: 1)
+[2026-10-30 13:25:13] [sll15802] 【モード1: ランダム】未投稿 20 件をランダム順序で投稿します。
+[2026-10-30 13:25:13] [INFO] [sll15802] sessionidからユーザーID (47094044745) を検出しました。
+[2026-10-30 13:25:13] [SUCCESS] [sll15802] エクセルの sessionid (ユーザーID: 47094044745) をThreads/Instagramに自動注入しました。
+[2026-10-30 13:25:18] [SUCCESS] [sll15802] エクセルの sessionid で自動ログインに成功しました！（セッション認証済み (ユーザー: @sll15802)）
+[2026-10-30 13:25:18] [INFO] [sll15802] セッション状態を「アカウント情報.xlsx」と自動同期しました。
+[2026-10-30 13:25:18] [sll15802] Post #5 (91文字, トピック: 「信太山新地」) を投稿中...
+[2026-10-30 13:25:18] [sll15802] 現在のページ(https://www.threads.com)からホーム(https://www.threads.net/)へ戻ります...
+[2026-10-30 13:25:22] [sll15802] 左下の「＋ 新しいスレッド」ボタンをクリックします...
+[2026-10-30 13:25:27] [*] アカウント名右側の「コミュニティまたはトピック」に「信太山新地」を設定します...
+[2026-10-30 13:25:29] [SUCCESS] コミュニティ/トピック「信太山新地」をアカウント名の右側の設定欄に正常に適用しました。
+[2026-10-30 13:25:31] [sll15802] 「投稿」ボタンをクリックしました。Threads送信処理を確認中...
+[2026-10-30 13:25:32] [SUCCESS] [sll15802] 🎉 画面下部の黒い通知バー（'div[role="alert"]:has-text("投稿")'）を確認し、投稿完了しました！
+[2026-10-30 13:25:32] [SUCCESS] [sll15802] Post #5 投稿成功！Excel更新。
+[2026-10-30 13:25:32] [*] BAN防止のため 10990 秒 (約 183 分) 待機中...
+[2026-10-30 13:42:28] [INFO] アプリケーションを起動しました。
+[2026-10-30 13:42:28] [INFO] 実行ディレクトリ: C:\Users\PC_User\Desktop\ThreadsAutoPoster_Windows_Package (36)\dist\ThreadsAutoPoster
+[2026-10-30 13:42:28] [INFO] アカウント情報読み込み完了: 1件のアカウント設定を検出 (ID: @sll15802)
+[2026-10-30 13:42:28] [INFO] 投稿リスト 'sll15802.xlsx' 読み込み完了: 未投稿 19 件
+[2026-10-30 13:42:28] [INFO] [sll15802] sll15802.xlsx から設定を適用: 間隔=120〜360分, モード=ランダム, プロファイル=コミュニティまたはトピック
+[2026-10-30 13:42:28] [INFO] プレビュー#1: [ポスト文章] 信太山新地
+https://osaka-shinodayamashin... | [画像なし]
+[2026-10-30 13:42:28] [INFO] プレビュー#2: [ポスト文章] 信太山新地
+https://osaka-shinodayamashin... | [画像なし]
+[2026-10-30 13:42:29] [INFO] 自動投稿スレッドを開始します...
+[2026-10-30 13:42:30] =================================================================
+[2026-10-30 13:42:30] [INFO] 🚀 【提案1: 1窓・順番交代ローテーション】システム稼働開始
+[2026-10-30 13:42:30] [INFO] 📋 対象アカウント数: 1 件
+[2026-10-30 13:42:30] [INFO] 💡 動作仕様: 常に1ブラウザのみ起動 ➔ 投稿後ブラウザ完全終了＆メモリ即座解放 ➔ 待機順に次アカウント実行
+[2026-10-30 13:42:30] [INFO] ⚡ 【提案2: 画像・動画通信ブロック】有効: タイムライン画像/動画/リールを遮断（メモリ50-70%削減・CPU静音化）
+[2026-10-30 13:42:30] =================================================================
+[2026-10-30 13:42:30] -------------------------------------------------------
+[2026-10-30 13:42:30] [INFO] 🪟 【1窓ローテーション】@sll15802 の実行番が来ました（他待機中: 0 アカウント）。ブラウザを1窓のみ起動します。
+[2026-10-30 13:42:30] [sll15802] 【モード1: ランダム】未投稿 19 件中から1件を選択して投稿します。
+[2026-10-30 13:42:30] [INFO] ⚡ 【提案2: メディア通信遮断】有効: タイムラインの画像・動画・リール読み込みを自動ブロック（メモリ50-70%削減・CPUファン静音化）
+[2026-10-30 13:42:30] [INFO] [sll15802] sessionidからユーザーID (47094044745) を検出しました。
+[2026-10-30 13:42:30] [SUCCESS] [sll15802] エクセルの sessionid (ユーザーID: 47094044745) をThreads/Instagramに自動注入しました。
+[2026-10-30 13:42:37] [SUCCESS] [sll15802] エクセルの sessionid で自動ログインに成功しました！（セッション認証済み (ユーザー: @sll15802)）
+[2026-10-30 13:42:37] [INFO] [sll15802] セッション状態を「アカウント情報.xlsx」と自動同期しました。
+[2026-10-30 13:42:37] [sll15802] Post #13 (93文字, トピック: 「信太山新地」) を投稿中...
+[2026-10-30 13:42:37] [sll15802] 現在のページ(https://www.threads.com)からホーム(https://www.threads.net/)へ戻ります...
+[2026-10-30 13:42:40] [sll15802] 左下の「＋ 新しいスレッド」ボタンをクリックします...
+[2026-10-30 13:42:47] [*] アカウント名右側の「コミュニティまたはトピック」に「信太山新地」を設定します...
+[2026-10-30 13:42:48] [SUCCESS] コミュニティ/トピック「信太山新地」をアカウント名の右側の設定欄に正常に適用しました。
+[2026-10-30 13:42:50] [sll15802] 「投稿」ボタンをクリックしました。Threads送信処理を確認中...
+[2026-10-30 13:42:51] [SUCCESS] [sll15802] 🎉 画面下部の黒い通知バー（'div[role="alert"]:has-text("投稿")'）を確認し、投稿完了しました！
+[2026-10-30 13:42:51] [SUCCESS] [sll15802] Post #13 投稿成功！Excel更新。
+[2026-10-30 13:42:51] [INFO] 🌿 @sll15802 の処理完了。ブラウザを完全終了しメモリを解放しました。次回実行予定: 18:36:40 (約293分後)
+[2026-10-30 13:42:51] [INFO] アカウント情報読み込み完了: 1件のアカウント設定を検出 (ID: @sll15802)
+[2026-10-30 13:42:51] [INFO] 投稿リスト 'sll15802.xlsx' 読み込み完了: 未投稿 18 件
+[2026-10-30 13:42:51] [INFO] [sll15802] sll15802.xlsx から設定を適用: 間隔=120〜360分, モード=ランダム, プロファイル=コミュニティまたはトピック
+[2026-10-30 13:42:51] [INFO] プレビュー#1: [ポスト文章] 信太山新地
+https://osaka-shinodayamashin... | [画像なし]
+[2026-10-30 13:42:51] [INFO] プレビュー#2: [ポスト文章] 信太山新地
+https://osaka-shinodayamashin... | [画像なし]
+[2026-10-31 15:13:39] [INFO] アプリケーションを起動しました。
+[2026-10-31 15:13:39] [INFO] 実行ディレクトリ: C:\Users\PC_User\Desktop\ThreadsAutoPoster_Windows_Package (36)\dist\ThreadsAutoPoster
+[2026-10-31 15:13:39] [INFO] アカウント情報読み込み完了: 1件のアカウント設定を検出 (ID: @sll15802)
+[2026-10-31 15:13:39] [INFO] 投稿リスト 'sll15802.xlsx' 読み込み完了: 未投稿 18 件
+[2026-10-31 15:13:39] [INFO] [sll15802] sll15802.xlsx から設定を適用: 間隔=120〜360分, モード=ランダム, プロファイル=コミュニティまたはトピック
+[2026-10-31 15:13:39] [INFO] プレビュー#1: [ポスト文章] 信太山新地
+https://osaka-shinodayamashin... | [画像なし]
+[2026-10-31 15:13:39] [INFO] プレビュー#2: [ポスト文章] 信太山新地
+https://osaka-shinodayamashin... | [画像なし]
+[2026-10-31 15:13:42] [INFO] 自動投稿スレッドを開始します...
+[2026-10-31 15:13:45] =================================================================
+[2026-10-31 15:13:45] [INFO] 🚀 【提案1: 1窓・順番交代ローテーション】システム稼働開始
+[2026-10-31 15:13:45] [INFO] 📋 対象アカウント数: 1 件
+[2026-10-31 15:13:45] [INFO] 💡 動作仕様: 常に1ブラウザのみ起動 ➔ 投稿後ブラウザ完全終了＆メモリ即座解放 ➔ 待機順に次アカウント実行
+[2026-10-31 15:13:45] [INFO] ⚡ 【提案2: 画像・動画通信ブロック】有効: タイムライン画像/動画/リールを遮断（メモリ50-70%削減・CPU静音化）
+[2026-10-31 15:13:45] [INFO] 🕵️‍♂️ 【新機能1: ステルス巡回】有効: 投稿前におすすめフィードを自然に閲覧（人間らしい行動模倣・BAN対策）
+[2026-10-31 15:13:45] [INFO] 🧹 【新機能2: 自動プロファイル初期化】有効: Meta画面警告や連続エラー検知時にCookie/指紋を自動完全リセット
+[2026-10-31 15:13:45] [INFO] 🎯 【新機能3: トピックA/Bテスト】有効: 複数トピック候補を投稿ごとに自動均等ローテーション
+[2026-10-31 15:13:45] =================================================================
+[2026-10-31 15:13:45] -------------------------------------------------------
+[2026-10-31 15:13:45] [INFO] 🪟 【1窓ローテーション】@sll15802 の実行番が来ました（他待機中: 0 アカウント）。ブラウザを1窓のみ起動します。
+[2026-10-31 15:13:45] [sll15802] 【モード1: ランダム】未投稿 18 件中から1件を選択して投稿します。
+[2026-10-31 15:13:46] [INFO] ⚡ 【提案2: メディア通信遮断】有効: タイムラインの画像・動画・リール読み込みを自動ブロック（メモリ50-70%削減・CPUファン静音化）
+[2026-10-31 15:13:46] [INFO] [sll15802] sessionidからユーザーID (47094044745) を検出しました。
+[2026-10-31 15:13:46] [SUCCESS] [sll15802] エクセルの sessionid (ユーザーID: 47094044745) をThreads/Instagramに自動注入しました。
+[2026-10-31 15:13:53] [SUCCESS] [sll15802] エクセルの sessionid で自動ログインに成功しました！（セッション認証済み (ユーザー: @sll15802)）
+[2026-10-31 15:13:53] [INFO] [sll15802] セッション状態を「アカウント情報.xlsx」と自動同期しました。
+[2026-10-31 15:13:53] [sll15802] Post #7 (95文字, トピック: 「信太山新地」) を投稿中...
+[2026-10-31 15:13:53] [sll15802] 現在のページ(https://www.threads.com)からホーム(https://www.threads.net/)へ戻ります...
+[2026-10-31 15:14:13] [sll15802] 🕵️‍♂️ 【ステルス巡回】おすすめタイムラインを閲覧中（人間らしい操作ログを生成）...
+[2026-10-31 15:14:24] [sll15802] 👁️‍🗨️ ステルス巡回完了（正常な閲覧ログ記録済）。投稿フローに移行します。
+[2026-10-31 15:14:24] [sll15802] 左下の「＋ 新しいスレッド」ボタンをクリックします...
+[2026-10-31 15:14:30] [*] アカウント名右側の「コミュニティまたはトピック」に「信太山新地」を設定します...
+[2026-10-31 15:14:32] [SUCCESS] コミュニティ/トピック「信太山新地」をアカウント名の右側の設定欄に正常に適用しました。
+[2026-10-31 15:14:34] [sll15802] 「投稿」ボタンをクリックしました。Threads送信処理を確認中...
+[2026-10-31 15:14:35] [SUCCESS] [sll15802] 🎉 投稿モーダルが閉じ、下部の黒バー完了通知を確認しました！
+[2026-10-31 15:14:35] [SUCCESS] [sll15802] Post #7 投稿成功！Excel更新 (トピック: 「信太山新地」)。
+[2026-10-31 15:14:35] [INFO] 🌿 @sll15802 の処理完了。ブラウザを完全終了しメモリを解放しました。次回実行予定: 18:51:42 (約217分後)
+[2026-10-31 15:14:35] [INFO] アカウント情報読み込み完了: 1件のアカウント設定を検出 (ID: @sll15802)
+[2026-10-31 15:14:36] [INFO] 投稿リスト 'sll15802.xlsx' 読み込み完了: 未投稿 17 件
+[2026-10-31 15:14:36] [INFO] [sll15802] sll15802.xlsx から設定を適用: 間隔=120〜360分, モード=ランダム, プロファイル=コミュニティまたはトピック
+[2026-10-31 15:14:36] [INFO] プレビュー#1: [ポスト文章] 信太山新地
+https://osaka-shinodayamashin... | [画像なし]
+[2026-10-31 15:14:36] [INFO] プレビュー#2: [ポスト文章] 信太山新地
+https://osaka-shinodayamashin... | [画像なし]
+[2026-11-01 01:47:08] [INFO] アプリケーションを起動しました。
+[2026-11-01 01:47:08] [INFO] 実行ディレクトリ: C:\Users\PC_User\Desktop\ThreadsAutoPoster_Windows_Package (36)\dist\ThreadsAutoPoster
+[2026-11-01 01:47:09] [INFO] アカウント情報読み込み完了: 1件のアカウント設定を検出 (ID: @sll15802)
+[2026-11-01 01:47:09] [INFO] 投稿リスト 'sll15802.xlsx' 読み込み完了: 未投稿 24 件
+[2026-11-01 01:47:09] [INFO] [sll15802] sll15802.xlsx から設定を適用: 間隔=120〜360分, モード=ランダム, プロファイル=コミュニティまたはトピック
+[2026-11-01 01:47:09] [INFO] プレビュー#1: [ポスト文章] 信太山新地
+https://osaka-shinodayamashin... | [画像: image.png]
+[2026-11-01 01:47:09] [INFO] プレビュー#2: [ポスト文章] 信太山新地
+https://osaka-shinodayamashin... | [画像: image2.png]
+[2026-11-01 17:25:05] [INFO] アプリケーションを起動しました。
+[2026-11-01 17:25:05] [INFO] 実行ディレクトリ: C:\Users\PC_User\Desktop\ThreadsAutoPoster_Windows_Package (36)\dist\ThreadsAutoPoster
+[2026-11-01 17:25:05] [INFO] アカウント情報読み込み完了: 1件のアカウント設定を検出 (ID: @jhtwj2)
+[2026-11-01 17:25:05] [INFO] 投稿リスト 'jhtwj2.xlsx' 読み込み完了: 未投稿 24 件
+[2026-11-01 17:25:05] [INFO] [jhtwj2] jhtwj2.xlsx から設定を適用: 間隔=120〜360分, モード=ランダム, プロファイル=コミュニティまたはトピック
+[2026-11-01 17:25:05] [INFO] プレビュー#1: [ポスト文章] 信太山新地
+https://osaka-shinodayamashin... | [画像: image.png]
+[2026-11-01 17:25:05] [INFO] プレビュー#2: [ポスト文章] 信太山新地
+https://osaka-shinodayamashin... | [画像: image2.png]
+[2026-11-01 17:25:13] [INFO] 自動投稿スレッドを開始します...
+[2026-11-01 17:25:14] =================================================================
+[2026-11-01 17:25:14] [INFO] 🚀 【提案1: 1窓・順番交代ローテーション】システム稼働開始
+[2026-11-01 17:25:14] [INFO] 📋 対象アカウント数: 1 件
+[2026-11-01 17:25:14] [INFO] 💡 動作仕様: 常に1ブラウザのみ起動 ➔ 投稿後ブラウザ完全終了＆メモリ即座解放 ➔ 待機順に次アカウント実行
+[2026-11-01 17:25:14] [INFO] ⚡ 【提案2: 画像・動画通信ブロック】有効: タイムライン画像/動画/リールを遮断（メモリ50-70%削減・CPU静音化）
+[2026-11-01 17:25:14] [INFO] 🕵️‍♂️ 【新機能1: ステルス巡回】有効: 投稿前におすすめフィードを自然に閲覧（人間らしい行動模倣・BAN対策）
+[2026-11-01 17:25:14] [INFO] 🧹 【新機能2: 自動プロファイル初期化】有効: Meta画面警告や連続エラー検知時にCookie/指紋を自動完全リセット
+[2026-11-01 17:25:14] [INFO] 🎯 【新機能3: トピックA/Bテスト】有効: 複数トピック候補を投稿ごとに自動均等ローテーション
+[2026-11-01 17:25:14] [INFO] 🌅 【日常つぶやき・あいさつ枠】有効: 朝・昼・夕・夜枠の最優先投稿（スピンタックス自動展開・動的日付置換・30日クールダウン＆ランダム選出）
+[2026-11-01 17:25:14] =================================================================
+[2026-11-01 17:25:14] -------------------------------------------------------
+[2026-11-01 17:25:14] [INFO] 🪟 【1窓ローテーション】@jhtwj2 の実行番が来ました（他待機中: 0 アカウント）。ブラウザを1窓のみ起動します。
+[2026-11-01 17:25:14] [jhtwj2] 【モード1: ランダム】未投稿 24 件中から1件を選択して投稿します。
+[2026-11-01 17:25:15] [INFO] ⚡ 【提案2: メディア通信遮断】有効: タイムラインの画像・動画・リール読み込みを自動ブロック（メモリ50-70%削減・CPUファン静音化）
+[2026-11-01 17:25:15] [INFO] [jhtwj2] sessionidからユーザーID (59443198637) を検出しました。
+[2026-11-01 17:25:15] [SUCCESS] [jhtwj2] エクセルの sessionid (ユーザーID: 59443198637) をThreads/Instagramに自動注入しました。
+[2026-11-01 17:25:22] [SUCCESS] [jhtwj2] エクセルの sessionid で自動ログインに成功しました！（セッション認証済み (ユーザー: @jhtwj2)）
+[2026-11-01 17:25:22] [INFO] [jhtwj2] セッション状態を「アカウント情報.xlsx」と自動同期しました。
+[2026-11-01 17:25:22] [jhtwj2] Post #6 (87文字, トピック: 「信太山新地」) を投稿中...
+[2026-11-01 17:25:22] [jhtwj2] 現在のページ(https://www.threads.com)からホーム(https://www.threads.net/)へ戻ります...
+[2026-11-01 17:25:25] [jhtwj2] 🕵️‍♂️ 【ステルス巡回】おすすめタイムラインを閲覧中（人間らしい操作ログを生成）...
+[2026-11-01 17:25:35] [jhtwj2] 👁️‍🗨️ ステルス巡回完了（正常な閲覧ログ記録済）。投稿フローに移行します。
+[2026-11-01 17:25:35] [jhtwj2] 左下の「＋ 新しいスレッド」ボタンをクリックします...
+[2026-11-01 17:25:38] [ERROR] [jhtwj2] Post #6 投稿エラー: Locator.press_sequentially: Target page, context or browser has been closed
+C...
+[2026-11-01 17:25:38] [INFO] 🌿 @jhtwj2 の処理完了。ブラウザを完全終了しメモリを解放しました。次回実行予定: 17:30:38 (約5分後)
+[2026-11-01 17:25:38] [INFO] アカウント情報読み込み完了: 1件のアカウント設定を検出 (ID: @jhtwj2)
+[2026-11-01 17:25:38] [INFO] 投稿リスト 'jhtwj2.xlsx' 読み込み完了: 未投稿 23 件
+[2026-11-01 17:25:38] [INFO] [jhtwj2] jhtwj2.xlsx から設定を適用: 間隔=120〜360分, モード=ランダム, プロファイル=コミュニティまたはトピック
+[2026-11-01 17:25:38] [INFO] プレビュー#1: [ポスト文章] 信太山新地
+https://osaka-shinodayamashin... | [画像: image.png]
+[2026-11-01 17:25:38] [INFO] プレビュー#2: [ポスト文章] 信太山新地
+https://osaka-shinodayamashin... | [画像: image2.png]
