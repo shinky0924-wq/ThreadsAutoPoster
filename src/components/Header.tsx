@@ -9,7 +9,8 @@ import {
   Upload, 
   Trash2,
   Clock,
-  Sparkles
+  Sparkles,
+  FileCode2
 } from 'lucide-react';
 
 interface HeaderProps {
@@ -27,6 +28,7 @@ interface HeaderProps {
   onExportExcel: () => void;
   onImportExcel: (file: File) => void;
   onClearLogs: () => void;
+  onDownloadPyScript: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -44,6 +46,7 @@ export const Header: React.FC<HeaderProps> = ({
   onExportExcel,
   onImportExcel,
   onClearLogs,
+  onDownloadPyScript,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -169,6 +172,15 @@ export const Header: React.FC<HeaderProps> = ({
 
           {/* Excel & Management Controls */}
           <div className="flex items-center gap-1.5 flex-wrap">
+            <button
+              onClick={onDownloadPyScript}
+              className="flex items-center gap-1 px-3 py-1.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white text-xs font-bold rounded-md shadow transition-all cursor-pointer border border-indigo-400/40"
+              title="最新の threads_gui_app.py を直接ダウンロード (HTML混入なし)"
+            >
+              <FileCode2 className="w-3.5 h-3.5" />
+              <span>⬇️ threads_gui_app.py</span>
+            </button>
+
             <button
               onClick={onResetToUnposted}
               className="flex items-center gap-1 px-2.5 py-1.5 bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 text-xs font-medium rounded-md transition-colors cursor-pointer"

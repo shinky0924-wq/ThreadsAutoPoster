@@ -17,6 +17,7 @@ import { SessionModal } from './components/SessionModal';
 import { exportAccountWorkbook, exportAccountsConfigWorkbook, parseExcelFile } from './utils/excelUtils';
 import { parseSpintax, resolveImagePath, extractUserIdFromToken } from './utils/spintax';
 import { DownloadCenter } from './components/DownloadCenter';
+import { RAW_THREADS_GUI_APP_PY } from './data/rawScript';
 import { 
   FileSpreadsheet, 
   Smartphone, 
@@ -482,6 +483,24 @@ export default function App() {
     }
   };
 
+  // Direct client-side download of pure Python script (zero HTML proxy interference)
+  const handleDirectDownloadPyScript = () => {
+    try {
+      const blob = new Blob([RAW_THREADS_GUI_APP_PY], { type: 'text/x-python;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'threads_gui_app.py';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      addLog('SUCCESS', '📥 threads_gui_app.py (最新版 231KB) のクリーンダウンロードを実行しました！');
+    } catch (err: any) {
+      addLog('ERROR', `ダウンロード失敗: ${err.message}`);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col font-sans selection:bg-emerald-900 selection:text-white">
       {/* Top Header & Toolbar */}
@@ -500,6 +519,7 @@ export default function App() {
         onExportExcel={handleExportExcel}
         onImportExcel={handleImportExcel}
         onClearLogs={() => setLogs([])}
+        onDownloadPyScript={handleDirectDownloadPyScript}
       />
 
       {/* Main Container */}
