@@ -2,3 +2,14 @@
 **/chrome_profiles/
 **/Sync Data/
 **/OptimizationGuideModelsManifest/
+
+# Web App build & dependencies
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+bun.lock

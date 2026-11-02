@@ -1,0 +1,6 @@
+{
+  "name": "Threads AutoPoster Studio",
+  "description": "Meta Threads 自動投稿システム・アカウント管理、投稿スケジュール、Excel入出力、日常挨拶枠、BAN防止ステルス機能完備のWebダッシュボード",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
