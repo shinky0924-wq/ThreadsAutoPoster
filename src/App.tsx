@@ -333,6 +333,86 @@ export default function App() {
     addLog('INFO', `🔁 @${currentAccount.id} の全投稿ステータスを『未投稿』にリセットしました。`);
   };
 
+  // Clear all posts for current account
+  const handleClearAllPosts = () => {
+    const prevCount = (accountPosts[currentAccount.id] || []).length;
+    setAccountPosts((prev) => ({
+      ...prev,
+      [currentAccount.id]: [],
+    }));
+    addLog('WARN', `🗑️ @${currentAccount.id} の既存ポスト（${prevCount}件）を全件削除しました。`);
+  };
+
+  // Bulk add posts (supporting 100+ items at once)
+  const handleBulkAddPosts = (newItems: Omit<PostItem, 'id'>[], replaceExisting: boolean) => {
+    if (replaceExisting) {
+      const formatted: PostItem[] = newItems.map((p, idx) => ({
+        ...p,
+        id: idx + 1,
+      }));
+      setAccountPosts((prev) => ({
+        ...prev,
+        [currentAccount.id]: formatted,
+      }));
+      addLog('SUCCESS', `🚀 @${currentAccount.id} のポストを全件入れ替えし、新規 ${formatted.length} 件を一括登録しました！`);
+    } else {
+      const existing = accountPosts[currentAccount.id] || [];
+      const startId = existing.reduce((m, p) => Math.max(m, p.id), 0);
+      const formatted: PostItem[] = newItems.map((p, idx) => ({
+        ...p,
+        id: startId + idx + 1,
+      }));
+      setAccountPosts((prev) => ({
+        ...prev,
+        [currentAccount.id]: [...existing, ...formatted],
+      }));
+      addLog('SUCCESS', `🚀 @${currentAccount.id} に新規 ${formatted.length} 件のポストを追加しました！（合計 ${existing.length + formatted.length} 件）`);
+    }
+  };
+
+  // Apply Anti-Freeze Spintax to all daily slots
+  const handleApplyAntiFreezeSpintax = () => {
+    const secureSlots: DailyGreetingSlot[] = [
+      {
+        id: 'secure_morning_1',
+        slotName: '朝枠',
+        timeRange: '7:00-9:00',
+        text: '{おはようございます☀️|皆さんおはようございます！☕️|良い朝ですね🌿|今朝もすっきり目覚めました✨} {今日もいい天気！|本日も元気に|ぼちぼちマイペースで|気合い入れて}頑張りましょう〜\n\n素敵な{1日|一日|日}になりますように✨ ({today})',
+        enabled: true,
+      },
+      {
+        id: 'secure_morning_2',
+        slotName: '朝枠',
+        timeRange: '7:00-9:00',
+        text: '{おはようございます|朝のコーヒータイム☕️|朝活スタート！} 朝から{しっかりエネルギー補給|ストレッチして|準備万端で}気合い入れてます💪 {今日も良い出会いがありますように|本日も無理せずいきましょう}！',
+        enabled: true,
+      },
+      {
+        id: 'secure_lunch_1',
+        slotName: '昼枠',
+        timeRange: '12:00-13:30',
+        text: '{やっとお昼休憩！🍙|お昼ご飯タイムです✨|午後からも頑張ろう〜} 今日は{一段とバタバタしてる💦|比較的落ち着いてるかも🍵|あっという間に時間が過ぎる！}\n\n美味しいもの食べて午後も乗り切ろう〜！皆さんはお昼何食べましたか？',
+        enabled: true,
+      },
+      {
+        id: 'secure_night_1',
+        slotName: '夜枠',
+        timeRange: '21:00-23:30',
+        text: '{今日も1日本当に忙しかった〜！|本日もお疲れ様でした🌙|あっという間に夜ですね🍵} お風呂入ってゆっくり{温まります|リフレッシュします|休みます}。\n\n皆さんも{暖かくして|無理せず}ゆっくり休んでくださいね✨',
+        enabled: true,
+      },
+      {
+        id: 'secure_night_2',
+        slotName: '夜枠',
+        timeRange: '21:00-23:30',
+        text: '{今日のタスクがひと段落しました🌙|夜風が心地いい時間帯ですね|今日も充実した1日でした✨}\n\n明日も{いい日になりますように|素敵な1日にしていきましょう}。温かくしておやすみなさい🛌 ({date})',
+        enabled: true,
+      },
+    ];
+    setDailySlots(secureSlots);
+    addLog('SUCCESS', '🛡️【凍結防止】全日常挨拶枠に何百通りも自動分散する高精度スピンタックスと動的日付を一括適用しました！');
+  };
+
   // Restore defaults
   const handleReloadDefaultData = () => {
     setAccounts(initialAccounts);
@@ -519,6 +599,7 @@ export default function App() {
           {activeTab === 'posts' && (
             <PostsTable
               posts={currentPosts}
+              currentAccountId={currentAccount.id}
               onUpdatePost={(updated) => {
                 setAccountPosts((prev) => ({
                   ...prev,
@@ -544,6 +625,8 @@ export default function App() {
                 }));
                 addLog('SUCCESS', `[${currentAccount.id}] 新規 Post #${post.id} を追加しました。`);
               }}
+              onClearAllPosts={handleClearAllPosts}
+              onBulkAddPosts={handleBulkAddPosts}
               onPostSingle={async (p) => {
                 await executeSinglePost(p);
               }}
@@ -583,6 +666,7 @@ export default function App() {
                 setDailySlots((prev) => prev.filter((s) => s.id !== id));
                 addLog('INFO', `日常枠を削除しました。`);
               }}
+              onApplyAntiFreezeSpintax={handleApplyAntiFreezeSpintax}
             />
           )}
 
