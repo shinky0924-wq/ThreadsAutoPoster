@@ -16,6 +16,7 @@ import { ConsoleLogs } from './components/ConsoleLogs';
 import { SessionModal } from './components/SessionModal';
 import { exportAccountWorkbook, exportAccountsConfigWorkbook, parseExcelFile } from './utils/excelUtils';
 import { parseSpintax, resolveImagePath, extractUserIdFromToken } from './utils/spintax';
+import { DownloadCenter } from './components/DownloadCenter';
 import { 
   FileSpreadsheet, 
   Smartphone, 
@@ -24,7 +25,8 @@ import {
   Users, 
   Download, 
   FileText,
-  AlertCircle
+  AlertCircle,
+  Package
 } from 'lucide-react';
 
 export default function App() {
@@ -80,7 +82,7 @@ export default function App() {
   const [isStealthing, setIsStealthing] = useState(false);
   const [statusText, setStatusText] = useState('待機中 (Excel読込済)');
   const [countdownSeconds, setCountdownSeconds] = useState(0);
-  const [activeTab, setActiveTab] = useState<'posts' | 'preview' | 'daily' | 'logs' | 'accounts'>('posts');
+  const [activeTab, setActiveTab] = useState<'posts' | 'preview' | 'daily' | 'logs' | 'accounts' | 'downloads'>('posts');
   const [sessionModalOpen, setSessionModalOpen] = useState(false);
 
   // Sync to localStorage
@@ -592,6 +594,18 @@ export default function App() {
             <Users className="w-3.5 h-3.5 text-teal-400" />
             <span>アカウント & Excel一括</span>
           </button>
+
+          <button
+            onClick={() => setActiveTab('downloads')}
+            className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg font-medium transition-all cursor-pointer whitespace-nowrap ${
+              activeTab === 'downloads'
+                ? 'bg-indigo-600 text-white font-bold shadow-md border border-indigo-500'
+                : 'text-indigo-300 hover:text-white hover:bg-indigo-950/60 border border-indigo-500/40'
+            }`}
+          >
+            <Package className="w-3.5 h-3.5 text-indigo-300" />
+            <span>📦 Windows更新ダウンロード</span>
+          </button>
         </div>
 
         {/* Tab Content Views */}
@@ -786,6 +800,10 @@ export default function App() {
                 </div>
               </div>
             </div>
+          )}
+
+          {activeTab === 'downloads' && (
+            <DownloadCenter />
           )}
         </div>
       </main>

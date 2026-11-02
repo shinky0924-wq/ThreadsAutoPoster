@@ -1840,6 +1840,9 @@ class ThreadsPosterGUI:
         btn_open_posts = tk.Button(toolbar, text="📊 投稿Excelを開く", font=("Segoe UI", 9), bg="#262626", fg="#ffffff", padx=8, pady=5, relief="flat", cursor="hand2", command=self.open_posts_excel)
         btn_open_posts.pack(side="left", padx=3)
 
+        btn_bulk_add = tk.Button(toolbar, text="📋 100件一括追加・削除", font=("Segoe UI", 9, "bold"), bg="#4f46e5", fg="#ffffff", padx=8, pady=5, relief="flat", cursor="hand2", command=self.open_bulk_post_manager)
+        btn_bulk_add.pack(side="left", padx=3)
+
         btn_open_daily = tk.Button(toolbar, text="🌅 日常ポスト設定", font=("Segoe UI", 9, "bold"), bg="#15803d", fg="#ffffff", padx=8, pady=5, relief="flat", cursor="hand2", command=self.open_daily_posts_excel)
         btn_open_daily.pack(side="left", padx=3)
 
@@ -2247,6 +2250,233 @@ class ThreadsPosterGUI:
             os.startfile(self.account_config_path)
         else:
             messagebox.showwarning("警告", f"'{self.account_config_path}' が存在しません。")
+
+    def open_bulk_post_manager(self):
+        """【EXE対応】アカウント選択、既存ツイートの全件削除、新規100件一括登録GUIダイアログ"""
+        all_accounts = read_excel_records(self.account_config_path)
+        valid_accounts = [
+            str(acc.get("アカウントID") or acc.get("アカウント名") or "").strip()
+            for acc in all_accounts
+            if str(acc.get("アカウントID") or acc.get("アカウント名") or "").strip() != ""
+        ]
+        if not valid_accounts:
+            messagebox.showwarning("警告", "アカウント情報.xlsx に有効なアカウントが見つかりません。")
+            return
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title("【EXE投稿管理】アカウント別 既存ツイート削除 & 100件一括追加")
+        dialog.geometry("760x700")
+        dialog.configure(bg="#18181b")
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        hdr = tk.Frame(dialog, bg="#09090b", padx=16, pady=12)
+        hdr.pack(fill="x")
+        tk.Label(hdr, text="📋 投稿一括管理 & 100件一括登録 (EXE)", font=("Segoe UI", 12, "bold"), fg="#ffffff", bg="#09090b").pack(side="left")
+
+        sel_frame = tk.Frame(dialog, bg="#18181b", padx=16, pady=8)
+        sel_frame.pack(fill="x")
+        tk.Label(sel_frame, text="対象アカウント:", font=("Segoe UI", 9, "bold"), fg="#a1a1aa", bg="#18181b").pack(side="left")
+
+        var_selected_acc = tk.StringVar(value=valid_accounts[0])
+        cmb_acc = ttk.Combobox(sel_frame, textvariable=var_selected_acc, values=valid_accounts, state="readonly", width=18)
+        cmb_acc.pack(side="left", padx=8)
+
+        lbl_post_count = tk.Label(sel_frame, text="読込中...", font=("Segoe UI", 9), fg="#38bdf8", bg="#18181b")
+        lbl_post_count.pack(side="left", padx=8)
+
+        def refresh_count(*args):
+            acc_id = var_selected_acc.get().strip()
+            p_file = self._find_posts_file(acc_id)
+            if p_file and os.path.exists(p_file):
+                records = read_excel_records(p_file)
+                unposted = len([r for r in records if self._is_unposted_item(r)])
+                lbl_post_count.config(text=f"登録数: {len(records)} 件 (未投稿: {unposted} 件)")
+            else:
+                lbl_post_count.config(text="ファイル未検出")
+
+        var_selected_acc.trace_add("write", refresh_count)
+        refresh_count()
+
+        act_frame = tk.Frame(dialog, bg="#18181b", padx=16, pady=4)
+        act_frame.pack(fill="x")
+
+        def delete_all_posts():
+            acc_id = var_selected_acc.get().strip()
+            p_file = self._find_posts_file(acc_id)
+            if not p_file or not os.path.exists(p_file):
+                messagebox.showwarning("エラー", f"'{acc_id}.xlsx' が見つかりません。")
+                return
+            if not messagebox.askyesno("全件削除の確認", f"@{acc_id} の登録済みポストを全件削除しますか？\n\n（※設定シートおよび日常ポストシートは安全に保持されます）"):
+                return
+            try:
+                import openpyxl
+                wb = openpyxl.load_workbook(p_file)
+                post_sheet = None
+                for sname in wb.sheetnames:
+                    if any(k in sname for k in ["投稿", "ポスト", "post"]):
+                        post_sheet = wb[sname]
+                        break
+                if post_sheet:
+                    max_r = post_sheet.max_row
+                    if max_r > 1:
+                        post_sheet.delete_rows(2, max_r - 1)
+                    wb.save(p_file)
+                    wb.close()
+                    refresh_count()
+                    self.load_excel_data()
+                    self.log(f"[WARN] 🗑️ @{acc_id} の既存ツイートを全件削除しました。")
+                    messagebox.showinfo("完了", f"@{acc_id} のツイートを全件削除しました。")
+            except Exception as ex:
+                messagebox.showerror("エラー", f"削除失敗: {ex}")
+
+        btn_del = tk.Button(act_frame, text="🗑️ 選択アカウントの全ツイートを削除", bg="#7f1d1d", fg="#fca5a5", font=("Segoe UI", 9, "bold"), padx=10, pady=4, relief="flat", cursor="hand2", command=delete_all_posts)
+        btn_del.pack(side="left")
+
+        def insert_100_samples():
+            topics = ["信太山新地", "大阪求人", "高収入バイト", "ナイトワーク安心ナビ"]
+            hooks = [
+                "【完全保証】安心して働ける環境を徹底紹介！",
+                "高収入とプライバシー保護を両立できる働き方ガイド✨",
+                "未経験から始めるための面接・体験入社Q&Aまとめ🍙",
+                "シフトの自由度と給与システムを徹底比較！",
+                "寮完備・即日入居サポートありの人気店舗特集🏢",
+                "働きやすい環境づくりとスタッフのサポート体制について🍵",
+                "短期集中・週末のみでもOK！自分に合ったワークスタイル見学🌿",
+                "よくある質問と安心ルールの徹底解説まとめ💡"
+            ]
+            urls = [
+                "https://osaka-shinodayamashinchivip.pages.dev/blog/osaka-shinodayama-high-guarantee-guide",
+                "https://osaka-shinodayamashinchivip.pages.dev/blog/shinodayamashinchi-salary-system",
+                "https://osaka-shinodayamashinchivip.pages.dev/blog/shinodayamashinchi-privacy-guide",
+                "https://osaka-shinodayamashinchivip.pages.dev/blog/shinodayamashinchi-housing-support"
+            ]
+            samples = []
+            for i in range(1, 101):
+                t = topics[(i - 1) % len(topics)]
+                h = hooks[(i - 1) % len(hooks)]
+                u = urls[(i - 1) % len(urls)]
+                samples.append(f"{t} #{i}\n{h}\n{u}")
+            txt_box.delete("1.0", "end")
+            txt_box.insert("1.0", "\n\n".join(samples))
+            update_item_count()
+
+        btn_sample = tk.Button(act_frame, text="✨ 100件サンプル自動生成", bg="#374151", fg="#fde047", font=("Segoe UI", 9), padx=10, pady=4, relief="flat", cursor="hand2", command=insert_100_samples)
+        btn_sample.pack(side="right")
+
+        mid_frame = tk.Frame(dialog, bg="#18181b", padx=16, pady=6)
+        mid_frame.pack(fill="both", expand=True)
+        lbl_info = tk.Label(mid_frame, text="投稿文章貼り付け (空行または改行区切りで1ポストずつ自動認識・100件以上対応):", font=("Segoe UI", 9, "bold"), fg="#e4e4e7", bg="#18181b")
+        lbl_info.pack(anchor="w", pady=(0, 4))
+
+        lbl_detect = tk.Label(mid_frame, text="検出件数: 0 件", font=("Segoe UI", 9, "bold"), fg="#34d399", bg="#18181b")
+        lbl_detect.pack(anchor="e", pady=(0, 2))
+
+        txt_box = scrolledtext.ScrolledText(mid_frame, wrap="word", bg="#09090b", fg="#f4f4f5", font=("Consolas", 9), relief="solid", bd=1)
+        txt_box.pack(fill="both", expand=True)
+
+        def update_item_count(event=None):
+            raw = txt_box.get("1.0", "end").strip()
+            if not raw:
+                lbl_detect.config(text="検出件数: 0 件")
+                return []
+            import re
+            pattern = chr(10) + r"\s*" + chr(10)
+            parts = [p.strip() for p in re.split(pattern, raw) if p.strip()]
+            if len(parts) <= 1 and chr(10) in raw:
+                lines_list = [l.strip() for l in raw.split(chr(10)) if l.strip()]
+                if len(lines_list) > 5:
+                    parts = lines_list
+            lbl_detect.config(text=f"検出件数: {len(parts)} 件")
+            return parts
+        txt_box.bind("<KeyRelease>", update_item_count)
+
+        opt_frame = tk.Frame(dialog, bg="#18181b", padx=16, pady=8)
+        opt_frame.pack(fill="x")
+
+        tk.Label(opt_frame, text="トピック:", font=("Segoe UI", 9), fg="#a1a1aa", bg="#18181b").pack(side="left")
+        entry_topic = tk.Entry(opt_frame, bg="#27272a", fg="#ffffff", font=("Segoe UI", 9), width=14, relief="flat")
+        entry_topic.insert(0, "信太山新地")
+        entry_topic.pack(side="left", padx=(4, 12))
+
+        tk.Label(opt_frame, text="画像添付:", font=("Segoe UI", 9), fg="#a1a1aa", bg="#18181b").pack(side="left")
+        var_img_opt = tk.StringVar(value="alternate")
+        cmb_img = ttk.Combobox(opt_frame, textvariable=var_img_opt, values=["alternate", "image.png", "image2.png", "none"], state="readonly", width=12)
+        cmb_img.pack(side="left", padx=(4, 12))
+
+        var_replace_existing = tk.BooleanVar(value=True)
+        chk_repl = tk.Checkbutton(opt_frame, text="既存ツイートを削除して完全入れ替え", variable=var_replace_existing, bg="#18181b", fg="#fb7185", selectcolor="#09090b", font=("Segoe UI", 9), cursor="hand2")
+        chk_repl.pack(side="left")
+
+        btm_bar = tk.Frame(dialog, bg="#09090b", padx=16, pady=10)
+        btm_bar.pack(fill="x")
+
+        def save_and_apply():
+            items = update_item_count()
+            if not items:
+                messagebox.showwarning("警告", "投稿文章が入力されていません。")
+                return
+            acc_id = var_selected_acc.get().strip()
+            p_file = self._find_posts_file(acc_id)
+            if not p_file or not os.path.exists(p_file):
+                messagebox.showerror("エラー", f"'{acc_id}.xlsx' が見つかりません。")
+                return
+            try:
+                import openpyxl
+                wb = openpyxl.load_workbook(p_file)
+                post_sheet = None
+                for sname in wb.sheetnames:
+                    if any(k in sname for k in ["投稿", "ポスト", "post"]):
+                        post_sheet = wb[sname]
+                        break
+                if not post_sheet:
+                    post_sheet = wb.create_sheet(title="投稿リスト")
+                    post_sheet.append(["ID", "ポスト文章", "コミュニティまたはトピック", "画像ファイルパス", "ステータス", "投稿完了日時", "エラー内容"])
+
+                if var_replace_existing.get():
+                    max_r = post_sheet.max_row
+                    if max_r > 1:
+                        post_sheet.delete_rows(2, max_r - 1)
+                    start_id = 1
+                else:
+                    start_id = post_sheet.max_row
+
+                topic_val = entry_topic.get().strip() or "信太山新地"
+                img_rule = var_img_opt.get()
+
+                for idx, text_item in enumerate(items, start=start_id):
+                    if img_rule == "alternate":
+                        img_val = "image.png" if idx % 2 == 1 else "image2.png"
+                    elif img_rule == "image.png":
+                        img_val = "image.png"
+                    elif img_rule == "image2.png":
+                        img_val = "image2.png"
+                    else:
+                        img_val = ""
+
+                    post_sheet.append([
+                        idx,
+                        text_item,
+                        topic_val,
+                        img_val,
+                        "未投稿",
+                        "",
+                        ""
+                    ])
+
+                wb.save(p_file)
+                wb.close()
+                self.load_excel_data()
+                self.log(f"[SUCCESS] 🚀 @{acc_id} のExcelに新規 {len(items)} 件のポストを一括登録しました！")
+                messagebox.showinfo("保存完了", f"@{acc_id} のExcelに {len(items)} 件のポストを正常に登録しました！\n\nアプリ画面の設定・待機ポストに即時反映されています。")
+                dialog.destroy()
+            except Exception as e:
+                messagebox.showerror("保存エラー", f"Excelの書き込みに失敗しました: {e}")
+
+        btn_save = tk.Button(btm_bar, text="💾 選択アカウントのExcelに一括保存して即座に反映", bg="#10b981", fg="#ffffff", font=("Segoe UI", 10, "bold"), padx=16, pady=6, relief="flat", cursor="hand2", command=save_and_apply)
+        btn_save.pack(side="right")
+        tk.Button(btm_bar, text="閉じる", bg="#27272a", fg="#ffffff", font=("Segoe UI", 9), padx=12, pady=6, relief="flat", cursor="hand2", command=dialog.destroy).pack(side="right", padx=8)
+
 
     def open_posts_excel(self):
         all_accounts = read_excel_records(self.account_config_path)
