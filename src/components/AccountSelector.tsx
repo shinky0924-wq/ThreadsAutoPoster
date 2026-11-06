@@ -412,7 +412,7 @@ export const AccountSelector: React.FC<AccountSelectorProps> = ({
                 <span>永続Chromeプロファイル</span>
               </span>
               <span className="text-[10px] text-emerald-400 font-semibold">
-                sessionid不要
+                sessionid連携
               </span>
             </div>
             <div className="flex items-center gap-1.5">
@@ -422,7 +422,7 @@ export const AccountSelector: React.FC<AccountSelectorProps> = ({
               </span>
             </div>
             <div className="text-[11px] text-zinc-400 mt-1">
-              ID・PWログイン情報を永続保持 (強制ログアウト防止)
+              sessionidから自動生成 (HTTP 429回避・永続保持)
             </div>
           </div>
 

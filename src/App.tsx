@@ -615,11 +615,10 @@ export default function App() {
               <span>🐍 threads_gui_app.py</span>
             </button>
 
-            {/* Download Button 2 */}
             <button
               onClick={handleExportAccountsConfig}
               className="flex items-center gap-2 px-4 py-3 bg-gradient-to-r from-sky-600 to-blue-600 hover:from-sky-500 hover:to-blue-500 text-white font-bold rounded-xl shadow-lg hover:shadow-sky-900/50 text-sm cursor-pointer transition-all active:scale-95 border border-sky-400/50"
-              title="ID/PW/sessionid列を撤廃した最新のアカウント情報.xlsx を直接ダウンロード"
+              title="sessionid・プロファイル永続化対応の最新のアカウント情報.xlsx を直接ダウンロード"
             >
               <Download className="w-4 h-4" />
               <span>📊 アカウント情報.xlsx</span>
@@ -850,7 +849,8 @@ export default function App() {
                     <tr>
                       <th className="py-2.5 px-3">アカウントID</th>
                       <th className="py-2.5 px-3">状態 (有効/無効)</th>
-                      <th className="py-2.5 px-3">Chromeプロファイル (永続ログイン)</th>
+                      <th className="py-2.5 px-3">sessionid (セッションCookie)</th>
+                      <th className="py-2.5 px-3">Chromeプロファイル (永続化)</th>
                       <th className="py-2.5 px-3">待機間隔</th>
                       <th className="py-2.5 px-3">未投稿 / 総数</th>
                       <th className="py-2.5 px-3 text-right">Excel出力</th>
@@ -885,6 +885,15 @@ export default function App() {
                             >
                               {isAccActive ? '● 有効' : '🔴 停止中'}
                             </button>
+                          </td>
+                          <td className="py-2.5 px-3 font-mono text-[11px] text-zinc-400">
+                            {acc.authToken && !acc.authToken.startsWith('ここに') ? (
+                              <span className="text-emerald-400 font-semibold" title={acc.authToken}>
+                                {acc.authToken.length > 20 ? `${acc.authToken.slice(0, 18)}...` : acc.authToken}
+                              </span>
+                            ) : (
+                              <span className="text-zinc-600">未設定</span>
+                            )}
                           </td>
                           <td className="py-2.5 px-3 font-mono text-zinc-300">
                             <span className="px-2 py-0.5 rounded bg-zinc-950 border border-zinc-700 text-indigo-300 text-[11px]">

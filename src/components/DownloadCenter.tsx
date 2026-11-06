@@ -95,7 +95,7 @@ export const DownloadCenter: React.FC<DownloadCenterProps> = ({ accounts = [] })
       } else {
         downloadExcelFile('/download/アカウント情報.xlsx', 'アカウント情報.xlsx');
       }
-      setDownloadSuccess('アカウント情報.xlsx (ID/PW・sessionid不要・プロファイル連携版) のダウンロードを開始しました！');
+      setDownloadSuccess('アカウント情報.xlsx (sessionid・プロファイル連携版) のダウンロードを開始しました！');
       setTimeout(() => setDownloadSuccess(null), 4000);
     } catch (err: any) {
       console.error(err);
@@ -141,11 +141,11 @@ export const DownloadCenter: React.FC<DownloadCenterProps> = ({ accounts = [] })
                 <h4 className="text-base font-bold text-white flex items-center gap-2">
                   profile_launcher.py (アプリ名: profile_luncher)
                   <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-700 font-mono">
-                    NEW 永続化ツール
+                    HTTP 429完全回避
                   </span>
                 </h4>
                 <p className="text-zinc-300 text-xs">
-                  exe/スクリプト起動 ➔ プロファイル名入力 ➔ 専用Chrome起動 ➔ ID/PWでログインして閉じるだけ！
+                  sessionid入力 ➔ ワンクリックでChromeプロファイル自動生成＆永続化 ➔ ログイン画面を経由せずホームへ直行！
                 </p>
               </div>
             </div>
@@ -174,21 +174,21 @@ export const DownloadCenter: React.FC<DownloadCenterProps> = ({ accounts = [] })
         {/* Feature Highlights Grid */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5 pt-2">
           <div className="p-2.5 rounded-lg bg-zinc-900/90 border border-zinc-800 text-zinc-300">
-            <div className="font-bold text-violet-300 mb-0.5">① sessionid不要・永久保存</div>
+            <div className="font-bold text-violet-300 mb-0.5">① HTTP ERROR 429を完全回避</div>
             <div className="text-[11px] text-zinc-400">
-              Cookie・IndexedDBトークンがローカルフォルダに完全保持され、Metaの定期強制ログアウトを防ぎます。
+              VPS環境等でログインフォーム入力時に起きるMetaレートリミットをバイパスし、即時ログイン状態を確立。
             </div>
           </div>
           <div className="p-2.5 rounded-lg bg-zinc-900/90 border border-zinc-800 text-zinc-300">
             <div className="font-bold text-sky-300 mb-0.5">② 複数アカウント完全分離</div>
             <div className="text-[11px] text-zinc-400">
-              <code className="text-white">chrome_profiles/sll15802</code> 等、アカウントごとに独立した環境で誤爆や混ざりを防止。
+              <code className="text-white">chrome_profiles/sll15802</code> 等、アカウントごとに独立したプロファイルで安全管理。
             </div>
           </div>
           <div className="p-2.5 rounded-lg bg-zinc-900/90 border border-zinc-800 text-zinc-300">
-            <div className="font-bold text-emerald-300 mb-0.5">③ Excelワンクリック登録</div>
+            <div className="font-bold text-emerald-300 mb-0.5">③ sessionid ＆ Excel自動連携</div>
             <div className="text-[11px] text-zinc-400">
-              ツール内の「📋 アカウント情報.xlsxに登録」ボタンで、ID・PWを一切書かずに安全にExcel連携。
+              ワンクリックで「アカウント情報.xlsx」にsessionidとプロファイル名を同時登録・同期。
             </div>
           </div>
         </div>

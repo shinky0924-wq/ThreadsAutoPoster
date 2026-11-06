@@ -67,49 +67,59 @@ export const SessionModal: React.FC<SessionModalProps> = ({
           </div>
         </div>
 
-        {/* Notice about SessionID Logout issues */}
-        <div className="p-3.5 rounded-xl bg-amber-950/40 border border-amber-800/80 space-y-1.5 text-zinc-200">
-          <div className="font-bold text-amber-300 flex items-center gap-1.5">
-            <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
-            <span>なぜsessionid入力ではなく「プロファイル永続化」が必要なのか？</span>
+        {/* Notice about HTTP 429 & SessionID to Profile */}
+        <div className="p-3.5 rounded-xl bg-violet-950/40 border border-violet-800/80 space-y-1.5 text-zinc-200">
+          <div className="font-bold text-violet-300 flex items-center gap-1.5">
+            <ShieldCheck className="w-4 h-4 text-violet-400 shrink-0" />
+            <span>【HTTP ERROR 429 回避】sessionidからプロファイル自動生成・永続保存</span>
           </div>
           <p className="text-zinc-300 text-[11px] leading-relaxed">
-            Meta（Instagram/Threads）は定期的にセッションCookie（sessionid）を強制ローテーション・無効化するため、手動コピペしたsessionidは数時間〜数日で使えなくなり強制ログアウトされます。<br />
-            <strong>「profile_launcher」で作成した専用Chromeプロファイル</strong>は、IndexedDB・ローカルストレージ・正規端末Cookieを完全保存するため、<strong>ID・PWで一度ログインするだけで永続的にログイン状態を維持</strong>できます。
+            VPS等の同一IPからID/PWで何度もログインしようとすると、Metaのレートリミットにより「<strong>HTTP ERROR 429</strong>」や「後ほどもう一度実行してください」が発生します。<br />
+            ブラウザで取得した <code className="text-emerald-400 font-mono">sessionid</code> を入力してプロファイル化することで、ログイン画面を一切介さずThreadsにログイン済み状態で永続接続できます。
           </p>
         </div>
 
-        {/* 3-Step Simple Guide */}
+        {/* Quick sessionid input */}
         <div className="p-3.5 rounded-xl bg-zinc-950 border border-zinc-800 space-y-2">
-          <span className="font-bold text-violet-300 block text-[11px] flex items-center gap-1.5">
-            <Info className="w-4 h-4 text-violet-400" />
-            【かんたん3ステップ】profile_launcherの使い方:
-          </span>
-          <ol className="list-decimal list-inside space-y-1.5 text-zinc-300 leading-relaxed pl-1 text-[11px]">
-            <li>
-              下のボタンから <code className="text-violet-300 font-mono">profile_launcher.py</code> をダウンロードして起動。
-            </li>
-            <li>
-              プロファイル名に <code className="text-emerald-400 font-mono">{accountId}</code> を指定して「<strong>🚀 Chromeを起動</strong>」をクリック。
-            </li>
-            <li>
-              開いたChromeでThreadsにID/PWで1回通常ログインし、ウィンドウを閉じるだけで保存完了！
-            </li>
-          </ol>
+          <label className="font-bold text-zinc-300 block text-[11px]">
+            sessionid（セッションCookie）:
+          </label>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={tokenInput}
+              onChange={(e) => setTokenInput(e.target.value)}
+              placeholder="例: 47094044745%3AXyZ..."
+              className="flex-1 bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-white font-mono text-xs focus:outline-none focus:border-violet-500"
+            />
+            <button
+              onClick={() => {
+                onSaveToken(tokenInput);
+                onClose();
+              }}
+              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg cursor-pointer text-xs flex items-center gap-1.5 shrink-0"
+            >
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              <span>保存して適用</span>
+            </button>
+          </div>
+          <p className="text-[10px] text-zinc-500">
+            ※保存すると「アカウント情報.xlsx」に即座に反映され、threads_gui_appおよびprofile_launcherと同期されます。
+          </p>
         </div>
 
-        {/* Download profile_launcher.py button */}
-        <div className="flex items-center justify-between p-3 rounded-xl bg-violet-950/30 border border-violet-800/50">
+        {/* profile_launcher download */}
+        <div className="flex items-center justify-between p-3 rounded-xl bg-zinc-950 border border-zinc-800">
           <div>
-            <div className="font-bold text-white text-xs">profile_launcher.py</div>
-            <div className="text-[11px] text-zinc-400">プロファイル作成・ログイン永続化GUIツール</div>
+            <div className="font-bold text-white text-xs">profile_launcher.py (推奨ツール)</div>
+            <div className="text-[11px] text-zinc-400">ワンクリックでsessionidからChromeプロファイルを生成・永続化</div>
           </div>
           <button
             onClick={handleDownloadLauncher}
-            className="flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white font-bold rounded-lg shadow cursor-pointer text-xs"
+            className="flex items-center gap-1.5 px-4 py-2 bg-violet-600 hover:bg-violet-500 text-white font-bold rounded-lg cursor-pointer text-xs shrink-0"
           >
             <Download className="w-3.5 h-3.5" />
-            <span>ツールをダウンロード</span>
+            <span>ツールDL</span>
           </button>
         </div>
 

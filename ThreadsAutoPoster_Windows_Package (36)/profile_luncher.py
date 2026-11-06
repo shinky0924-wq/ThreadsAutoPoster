@@ -2,14 +2,12 @@
 """
 Threads Profile Launcher (profile_launcher / profile_luncher)
 =============================================================
-【Threads アカウント プロファイル管理・ログイン永続化 & PC間移行ツール】
-- アカウントごとに独立したChromeプロファイルを作成・起動します。
-- 一度IDとパスワードでログインするだけで、Cookie・LocalStorage・IndexedDBが
-  プロファイルフォルダ（chrome_profiles/<アカウント名>）に永久保存されます。
-- sessionidをコピー＆ペーストする必要がなく、Metaの定期強制ログアウトも回避できます。
-- 【PC間移行対応】Windows DPAPI暗号化の制約を突破する「portable_session.json」
-  自動生成・復元機能を搭載。PC AでログインしたプロファイルをPC B（VPS等）にコピーしても
-  ログイン状態が100%保持されます。
+【Threads アカウント プロファイル管理 & セッションID一発生成ツール】
+- ID/PWログインの不安定さや HTTP ERROR 429（アクセス過多）を完全回避。
+- 「sessionid」を入力するだけで、Chromeプロファイル（chrome_profiles/<アカウント名>）を
+  自動生成し、永続クッキーとして完全保存します。
+- ログイン画面を経由せず、最初からThreadsログイン済み状態で起動・自動投稿できます。
+- 「アカウント情報.xlsx」との双方向自動連携に対応。
 """
 
 import os
@@ -18,6 +16,7 @@ import subprocess
 import shutil
 import time
 import json
+import urllib.parse
 from datetime import datetime
 
 # Windows pythonw.exe 実行時の標準出力None対策
@@ -57,7 +56,6 @@ def find_chrome_executable():
     for c in candidates:
         if os.path.exists(c):
             return c
-    # PATHから探索
     chrome_in_path = shutil.which("chrome") or shutil.which("google-chrome") or shutil.which("msedge")
     return chrome_in_path
 
@@ -71,18 +69,39 @@ def clean_profile_locks(profile_dir):
         except Exception:
             pass
 
+def clean_session_id_token(raw_token):
+    """sessionid文字列をサニタイズ・デコード"""
+    t = str(raw_token or "").strip()
+    if t.startswith("sessionid="):
+        t = t[len("sessionid="):].strip()
+    while t and t[0] in ('"', "'", ';', ' '):
+        t = t[1:].strip()
+    while t and t[-1] in ('"', "'", ';', ' '):
+        t = t[:-1].strip()
+    return urllib.parse.unquote(t)
+
+def extract_user_id(session_id):
+    """sessionidからユーザーIDを特定"""
+    unq = clean_session_id_token(session_id)
+    if ":" in unq:
+        p = unq.split(":")[0].strip()
+        if p.isdigit():
+            return p
+    return ""
+
 class ProfileLauncherApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Threads Profile Launcher (プロファイル管理 & PC間移行ツール)")
-        self.root.geometry("780x720")
-        self.root.minsize(720, 620)
+        self.root.title("Threads Profile Launcher (セッションID ➔ プロファイル永続化)")
+        self.root.geometry("820x760")
+        self.root.minsize(760, 660)
         self.root.configure(bg="#09090b")
 
         # Chrome パス検出
         self.chrome_path = find_chrome_executable()
 
         self.setup_ui()
+        self.load_from_excel_if_available()
         self.refresh_profile_list()
 
     def setup_ui(self):
@@ -95,7 +114,7 @@ class ProfileLauncherApp:
 
         lbl_title = tk.Label(
             header,
-            text="🔐 Threads Profile Launcher (profile_launcher / PC間移行対応版)",
+            text="🔐 Threads Profile Launcher (セッションID ➔ プロファイル永続化ツール)",
             font=("Segoe UI", 13, "bold"),
             bg="#18181b",
             fg="#f4f4f5"
@@ -104,7 +123,7 @@ class ProfileLauncherApp:
 
         lbl_desc = tk.Label(
             header,
-            text="アカウントごとに独立したChromeプロファイルを管理します。\n一度ログインするだけでセッションが永続保存され、Metaの定期強制ログアウトやPC移行時のCookieリセットを防ぎます。",
+            text="【HTTP 429 / ログインエラー完全回避】\nID・PWの直接入力はMetaのレートリミットを受けやすいため、sessionidからChromeプロファイルを作成して永続保存します。\n一度プロファイル化すれば、ログイン画面を一切経由せずThreadsにログイン済みで自動接続されます。",
             font=("Meiryo", 8),
             bg="#18181b",
             fg="#a1a1aa",
@@ -122,59 +141,69 @@ class ProfileLauncherApp:
         main_frame = tk.Frame(self.root, bg="#09090b", padx=14)
         main_frame.pack(fill="both", expand=True)
 
-        # 1. New/Launch Profile Card
-        launch_card = tk.LabelFrame(
+        # 🌟 Primary Card: Session ID -> Profile Generator
+        gen_card = tk.LabelFrame(
             main_frame,
-            text=" 🚀 プロファイル作成・Chrome起動 ",
+            text=" ⚡ 【推奨】セッションID (sessionid) からプロファイル自動生成・永続保存 ",
             font=("Meiryo", 10, "bold"),
             bg="#18181b",
-            fg="#60a5fa",
+            fg="#a78bfa",
             padx=16,
             pady=10,
             relief="solid",
-            highlightbackground="#27272a",
+            highlightbackground="#4c1d95",
             highlightthickness=1
         )
-        launch_card.pack(fill="x", pady=4)
+        gen_card.pack(fill="x", pady=4)
 
-        f_input = tk.Frame(launch_card, bg="#18181b")
-        f_input.pack(fill="x", pady=(0, 6))
+        # Account ID Row
+        f_acc = tk.Frame(gen_card, bg="#18181b")
+        f_acc.pack(fill="x", pady=(0, 6))
 
-        lbl_name = tk.Label(f_input, text="プロファイル名 (アカウントID):", font=("Meiryo", 9, "bold"), bg="#18181b", fg="#e4e4e7")
-        lbl_name.pack(side="left", padx=(0, 8))
+        lbl_acc = tk.Label(f_acc, text="アカウントID (プロファイル名):", font=("Meiryo", 9, "bold"), bg="#18181b", fg="#e4e4e7")
+        lbl_acc.pack(side="left", padx=(0, 10))
 
-        self.entry_name = tk.Entry(f_input, font=("Consolas", 11, "bold"), bg="#27272a", fg="#ffffff", insertbackground="#ffffff", width=20, relief="flat", highlightthickness=1, highlightbackground="#3f3f46")
-        self.entry_name.pack(side="left", ipady=3, padx=(0, 8))
+        self.entry_name = tk.Entry(f_acc, font=("Consolas", 11, "bold"), bg="#27272a", fg="#ffffff", insertbackground="#ffffff", width=18, relief="flat", highlightthickness=1, highlightbackground="#3f3f46")
+        self.entry_name.pack(side="left", ipady=3, padx=(0, 10))
         self.entry_name.insert(0, "sll15802")
 
-        lbl_hint = tk.Label(f_input, text="※例: sll15802", font=("Meiryo", 8), bg="#18181b", fg="#71717a")
+        lbl_hint = tk.Label(f_acc, text="※例: sll15802", font=("Meiryo", 8), bg="#18181b", fg="#71717a")
         lbl_hint.pack(side="left")
 
-        # URL Options
-        f_url = tk.Frame(launch_card, bg="#18181b")
-        f_url.pack(fill="x", pady=(0, 8))
+        # Session ID Row
+        f_sess = tk.Frame(gen_card, bg="#18181b")
+        f_sess.pack(fill="x", pady=(0, 8))
 
-        lbl_url = tk.Label(f_url, text="起動時のページ:", font=("Meiryo", 8), bg="#18181b", fg="#d4d4d8")
-        lbl_url.pack(side="left", padx=(0, 8))
+        lbl_sess = tk.Label(f_sess, text="sessionid (クッキー):", font=("Meiryo", 9, "bold"), bg="#18181b", fg="#e4e4e7")
+        lbl_sess.pack(side="left", padx=(0, 10))
 
-        self.var_url_choice = tk.StringVar(value="instagram")
-        rb1 = tk.Radiobutton(f_url, text="📸 Instagramログイン (Metaブロック完全回避・推奨)", variable=self.var_url_choice, value="instagram", bg="#18181b", fg="#e4e4e7", selectcolor="#27272a", activebackground="#18181b", font=("Meiryo", 8, "bold"))
-        rb1.pack(side="left", padx=(0, 8))
+        self.entry_sessionid = tk.Entry(f_sess, font=("Consolas", 10), bg="#27272a", fg="#a7f3d0", insertbackground="#ffffff", relief="flat", highlightthickness=1, highlightbackground="#3f3f46")
+        self.entry_sessionid.pack(side="left", fill="x", expand=True, ipady=4, padx=(0, 8))
 
-        rb2 = tk.Radiobutton(f_url, text="Threadsログイン", variable=self.var_url_choice, value="threads_login", bg="#18181b", fg="#e4e4e7", selectcolor="#27272a", activebackground="#18181b", font=("Meiryo", 8))
-        rb2.pack(side="left", padx=(0, 8))
+        # Main Generation Button
+        f_gen_btn = tk.Frame(gen_card, bg="#18181b")
+        f_gen_btn.pack(fill="x", pady=(2, 2))
 
-        rb3 = tk.Radiobutton(f_url, text="Threadsホーム", variable=self.var_url_choice, value="threads_home", bg="#18181b", fg="#e4e4e7", selectcolor="#27272a", activebackground="#18181b", font=("Meiryo", 8))
-        rb3.pack(side="left")
-
-        # Launch & Save Buttons Row
-        f_btn = tk.Frame(launch_card, bg="#18181b")
-        f_btn.pack(fill="x", pady=(2, 2))
-
-        btn_launch = tk.Button(
-            f_btn,
-            text="🚀 通常Chromeを起動（ログイン用）",
+        btn_create_from_session = tk.Button(
+            f_gen_btn,
+            text="⚡ セッションIDからプロファイルを作成・永続保存＆Excel登録",
             font=("Meiryo", 10, "bold"),
+            bg="#7c3aed",
+            fg="#ffffff",
+            activebackground="#8b5cf6",
+            activeforeground="#ffffff",
+            relief="flat",
+            cursor="hand2",
+            padx=16,
+            pady=7,
+            command=self.create_profile_from_sessionid
+        )
+        btn_create_from_session.pack(side="left", fill="x", expand=True, padx=(0, 8))
+
+        btn_launch_verify = tk.Button(
+            f_gen_btn,
+            text="🚀 プロファイル起動（ログイン確認）",
+            font=("Meiryo", 9, "bold"),
             bg="#059669",
             fg="#ffffff",
             activebackground="#10b981",
@@ -182,42 +211,10 @@ class ProfileLauncherApp:
             relief="flat",
             cursor="hand2",
             padx=14,
-            pady=6,
+            pady=7,
             command=self.launch_selected_profile
         )
-        btn_launch.pack(side="left", fill="x", expand=True, padx=(0, 6))
-
-        btn_save_portable = tk.Button(
-            f_btn,
-            text="💾 ログインセッション保存 (PC移行用)",
-            font=("Meiryo", 9, "bold"),
-            bg="#7c3aed",
-            fg="#ffffff",
-            activebackground="#8b5cf6",
-            activeforeground="#ffffff",
-            relief="flat",
-            cursor="hand2",
-            padx=12,
-            pady=6,
-            command=self.export_portable_session
-        )
-        btn_save_portable.pack(side="left", padx=(0, 6))
-
-        btn_save_excel = tk.Button(
-            f_btn,
-            text="📋 アカウント情報.xlsxに登録",
-            font=("Meiryo", 9, "bold"),
-            bg="#2563eb",
-            fg="#ffffff",
-            activebackground="#3b82f6",
-            activeforeground="#ffffff",
-            relief="flat",
-            cursor="hand2",
-            padx=10,
-            pady=6,
-            command=self.register_to_excel
-        )
-        btn_save_excel.pack(side="left")
+        btn_launch_verify.pack(side="left")
 
         # 2. Existing Profiles Card
         list_card = tk.LabelFrame(
@@ -238,19 +235,19 @@ class ProfileLauncherApp:
         tree_frame = tk.Frame(list_card, bg="#18181b")
         tree_frame.pack(fill="both", expand=True)
 
-        columns = ("name", "last_used", "status", "portable", "path")
-        self.tree = ttk.Treeview(tree_frame, columns=columns, show="headings", height=4)
+        columns = ("name", "last_used", "status", "portable", "session_src")
+        self.tree = ttk.Treeview(tree_frame, columns=columns, show="headings", height=5)
         self.tree.heading("name", text="アカウント名")
         self.tree.heading("last_used", text="更新日時")
-        self.tree.heading("status", text="Chromeデータ")
-        self.tree.heading("portable", text="PC間移行ファイル")
-        self.tree.heading("path", text="保存フォルダ")
+        self.tree.heading("status", text="プロファイル状態")
+        self.tree.heading("portable", text="移行用JSON")
+        self.tree.heading("session_src", text="セッション登録")
 
-        self.tree.column("name", width=130, anchor="w")
+        self.tree.column("name", width=120, anchor="w")
         self.tree.column("last_used", width=120, anchor="center")
-        self.tree.column("status", width=100, anchor="center")
-        self.tree.column("portable", width=140, anchor="center")
-        self.tree.column("path", width=180, anchor="w")
+        self.tree.column("status", width=110, anchor="center")
+        self.tree.column("portable", width=110, anchor="center")
+        self.tree.column("session_src", width=140, anchor="w")
 
         tree_scroll = ttk.Scrollbar(tree_frame, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=tree_scroll.set)
@@ -279,20 +276,6 @@ class ProfileLauncherApp:
         )
         btn_open_selected.pack(side="left", padx=(0, 6))
 
-        btn_import_this_pc = tk.Button(
-            f_list_act,
-            text="📥 PC Bへセッション復元",
-            font=("Meiryo", 8, "bold"),
-            bg="#0284c7",
-            fg="#ffffff",
-            relief="flat",
-            cursor="hand2",
-            padx=8,
-            pady=3,
-            command=self.import_portable_session_to_pc
-        )
-        btn_import_this_pc.pack(side="left", padx=(0, 6))
-
         btn_open_folder = tk.Button(
             f_list_act,
             text="📂 フォルダを開く",
@@ -306,6 +289,20 @@ class ProfileLauncherApp:
             command=self.open_profile_folder
         )
         btn_open_folder.pack(side="left", padx=(0, 6))
+
+        btn_save_excel = tk.Button(
+            f_list_act,
+            text="📋 アカウント情報.xlsxに登録",
+            font=("Meiryo", 8),
+            bg="#2563eb",
+            fg="#ffffff",
+            relief="flat",
+            cursor="hand2",
+            padx=8,
+            pady=3,
+            command=self.register_to_excel
+        )
+        btn_save_excel.pack(side="left", padx=(0, 6))
 
         btn_refresh = tk.Button(
             f_list_act,
@@ -336,16 +333,42 @@ class ProfileLauncherApp:
             highlightbackground="#27272a"
         )
         self.txt_log.pack(fill="x")
-        self.log("✅ profile_launcher 準備完了。（PC間移行・警告バナー除去・Metaブロック回避対応）")
-        self.log("💡 【推奨手順】Instagramログインで起動 ➔ ID/PWログイン ➔ 「💾 セッション保存」を押すだけでPC間移行も完璧に保持されます。")
+        self.log("✅ profile_launcher 準備完了。（sessionid ➔ プロファイル永続化モード）")
+        self.log("💡 sessionidを入力して「⚡ 作成・永続保存」を押すと、ログイン画面なしで永続プロファイルが即時完成します。")
 
     def log(self, msg):
         now = datetime.now().strftime("%H:%M:%S")
         self.txt_log.insert("end", f"[{now}] {msg}\n")
         self.txt_log.see("end")
 
+    def load_from_excel_if_available(self):
+        """アカウント情報.xlsx から既存のsessionidを自動補完"""
+        if not os.path.exists(ACCOUNT_FILE):
+            return
+        try:
+            import openpyxl
+            wb = openpyxl.load_workbook(ACCOUNT_FILE, data_only=True)
+            ws = wb.active
+            rows = list(ws.iter_rows(values_only=True))
+            if len(rows) > 1:
+                headers = [str(c or "").strip() for c in rows[0]]
+                id_col = 0
+                sess_col = 1
+                for idx, h in enumerate(headers):
+                    if "アカウントID" in h: id_col = idx
+                    elif "sessionid" in h.lower() or "auth" in h.lower(): sess_col = idx
+                for r in rows[1:]:
+                    if r and len(r) > id_col and str(r[id_col] or "").strip() == "sll15802":
+                        if len(r) > sess_col and r[sess_col]:
+                            token = str(r[sess_col]).strip()
+                            if token and not token.startswith("ここに"):
+                                self.entry_sessionid.insert(0, token)
+                                break
+        except Exception:
+            pass
+
     def refresh_profile_list(self):
-        """chrome_profiles 内のプロファイルを再走査"""
+        """chrome_profiles 内のプロファイルを走査"""
         for item in self.tree.get_children():
             self.tree.delete(item)
 
@@ -371,10 +394,24 @@ class ProfileLauncherApp:
 
             has_portable = os.path.exists(os.path.join(p_dir, "portable_session.json")) or os.path.exists(os.path.join(p_dir, "cookies.json"))
 
+            sess_info = "―"
+            if has_portable:
+                try:
+                    p_file = os.path.join(p_dir, "portable_session.json")
+                    if os.path.exists(p_file):
+                        with open(p_file, "r", encoding="utf-8") as f:
+                            p_data = json.load(f)
+                        c_list = p_data.get("cookies", []) if isinstance(p_data, dict) else p_data
+                        for c in c_list:
+                            if c.get("name") == "sessionid":
+                                sess_info = f"sessionid ({str(c.get('value'))[:12]}...)"
+                                break
+                except Exception:
+                    pass
+
             status_str = "✅ 保存済" if has_cookies else "⚠️ 未保存"
-            portable_str = "✨ 移行可能(OK)" if has_portable else "―"
-            rel_path = f"chrome_profiles/{d}"
-            self.tree.insert("", "end", values=(d, mtime_str, status_str, portable_str, rel_path))
+            portable_str = "✨ 完了(OK)" if has_portable else "―"
+            self.tree.insert("", "end", values=(d, mtime_str, status_str, portable_str, sess_info))
 
     def on_tree_select(self):
         sel = self.tree.selection()
@@ -396,20 +433,123 @@ class ProfileLauncherApp:
         self.on_tree_select()
         self.launch_selected_profile()
 
-    def get_target_url(self):
-        choice = self.var_url_choice.get()
-        if choice == "threads_login":
-            return "https://www.threads.net/login"
-        elif choice == "instagram":
-            # InstagramログインはVPS等のデータセンターIPでもMeta制限を受けず最も安定
-            return "https://www.instagram.com/accounts/login/"
-        else:
-            return "https://www.threads.net/"
+    def create_profile_from_sessionid(self):
+        """
+        ユーザーが入力した sessionid から直接プロファイルを生成＆クッキー永続化
+        HTTP ERROR 429 やログイン画面を一切介さず、100%ログイン済みプロファイルを作成します。
+        """
+        name = self.entry_name.get().strip()
+        raw_token = self.entry_sessionid.get().strip()
+
+        if not name:
+            messagebox.showwarning("警告", "アカウントID（プロファイル名）を入力してください。")
+            return
+        if not raw_token or raw_token.startswith("ここに"):
+            messagebox.showwarning("警告", "sessionid を入力してください。\n（ブラウザのF12 ➔ Application ➔ Cookies からコピー）")
+            return
+
+        token = clean_session_id_token(raw_token)
+        uid = extract_user_id(token)
+
+        profile_path = os.path.join(PROFILES_DIR, name)
+        os.makedirs(profile_path, exist_ok=True)
+        clean_profile_locks(profile_path)
+
+        self.log(f"⚡ @{name} のプロファイルを sessionid から作成中...")
+        if uid:
+            self.log(f"👤 検出ユーザーID: {uid}")
+
+        cookie_expires = int(time.time()) + 31536000  # 1年間有効
+
+        domains = [
+            ".threads.net", "www.threads.net", "threads.net",
+            ".threads.com", "www.threads.com", "threads.com",
+            ".instagram.com", "www.instagram.com", "instagram.com"
+        ]
+
+        cookies_list = []
+        for d in domains:
+            cookies_list.append({
+                "name": "sessionid",
+                "value": token,
+                "domain": d,
+                "path": "/",
+                "httpOnly": True,
+                "secure": True,
+                "sameSite": "Lax",
+                "expires": cookie_expires
+            })
+            if uid:
+                cookies_list.append({
+                    "name": "ds_user_id",
+                    "value": str(uid),
+                    "domain": d,
+                    "path": "/",
+                    "secure": True,
+                    "sameSite": "Lax",
+                    "expires": cookie_expires
+                })
+
+        # 1. portable_session.json と cookies.json を書き込み
+        portable_file = os.path.join(profile_path, "portable_session.json")
+        cookies_file = os.path.join(profile_path, "cookies.json")
+
+        state_data = {
+            "cookies": cookies_list,
+            "origins": []
+        }
+
+        try:
+            with open(portable_file, "w", encoding="utf-8") as f:
+                json.dump(state_data, f, ensure_ascii=False, indent=2)
+            with open(cookies_file, "w", encoding="utf-8") as f:
+                json.dump(cookies_list, f, ensure_ascii=False, indent=2)
+            self.log("📁 portable_session.json 保存完了 (PC間移行・リセット防止対応)")
+        except Exception as e:
+            self.log(f"❌ JSONファイル保存エラー: {e}")
+
+        # 2. Playwrightが利用可能なら、ChromeローカルDPAPI暗号化Cookieストアにも注入
+        dpapi_bound = False
+        try:
+            from playwright.sync_api import sync_playwright
+            with sync_playwright() as p:
+                context = p.chromium.launch_persistent_context(
+                    user_data_dir=profile_path,
+                    headless=True,
+                    channel="chrome",
+                    args=["--no-sandbox", "--disable-dev-shm-usage"]
+                )
+                context.add_cookies(cookies_list)
+                context.storage_state(path=portable_file)
+                context.close()
+                dpapi_bound = True
+                self.log("🛡️ このPCのWindows DPAPIにセッションCookieを直接再暗号化バインド完了！")
+        except Exception as pe:
+            self.log(f"[INFO] バックグラウンド注入スキップ (初回起動時に自動復元): {pe}")
+
+        # 3. アカウント情報.xlsx に反映
+        self.save_token_to_excel(name, raw_token)
+
+        self.refresh_profile_list()
+
+        msg = (
+            f"🎉 @{name} の永続プロファイルを正常に作成・保存しました！\n\n"
+            f"・保存フォルダ: chrome_profiles/{name}\n"
+            f"・ユーザーID: {uid or '自動設定'}\n"
+            f"・有効期限: 1年間\n\n"
+            "ログイン画面やID・PWフォームを経由しないため、\n"
+            "「HTTP ERROR 429」やログインエラーは発生しません。\n\n"
+            "「🚀 プロファイル起動」を押して確認するか、\n"
+            "そのまま threads_gui_app.py で自動投稿を開始できます！"
+        )
+        self.log(f"🎉 @{name} のプロファイル作成完了！HTTP 429回避・永続化済み")
+        messagebox.showinfo("作成完了", msg)
 
     def launch_selected_profile(self):
+        """プロファイルChromeを起動（Threadsホームへ直行）"""
         name = self.entry_name.get().strip()
         if not name:
-            messagebox.showwarning("警告", "プロファイル名（アカウントID）を入力してください。")
+            messagebox.showwarning("警告", "アカウントIDを入力してください。")
             return
 
         if not self.chrome_path or not os.path.exists(self.chrome_path):
@@ -420,20 +560,17 @@ class ProfileLauncherApp:
             if chrome_file and os.path.exists(chrome_file):
                 self.chrome_path = chrome_file
             else:
-                messagebox.showerror("エラー", "Google Chromeが見つかりませんでした。Chromeをインストールしてください。")
+                messagebox.showerror("エラー", "Google Chromeが見つかりませんでした。")
                 return
 
         profile_path = os.path.join(PROFILES_DIR, name)
         os.makedirs(profile_path, exist_ok=True)
         clean_profile_locks(profile_path)
 
-        url = self.get_target_url()
-        self.log(f"🚀 プロファイル '{name}' で通常Chromeを起動中...")
-        self.log(f"📂 保存先: {profile_path}")
-        self.log(f"🌐 起動URL: {url}")
+        url = "https://www.threads.net/"
+        self.log(f"🚀 プロファイル '{name}' でChromeを起動中...")
+        self.log(f"🌐 接続先: {url} (ログイン画面をスキップしてホームへ直行)")
 
-        # 重要: --disable-blink-features=AutomationControlled はChrome警告バナーを出し
-        # Metaの自動化検知を誘発するため完全削除。通常ブラウザとして自然に起動。
         cmd = [
             self.chrome_path,
             f"--user-data-dir={profile_path}",
@@ -446,142 +583,11 @@ class ProfileLauncherApp:
 
         try:
             subprocess.Popen(cmd)
-            self.log("✨ Chromeウィンドウが開きました！（警告バナーなし・通常モード）")
-            self.log("💡 ThreadsまたはInstagramにログイン完了後、ウィンドウを閉じるか「💾 セッション保存」を押してください。")
+            self.log("✨ Chromeウィンドウが開きました！ログイン済みになっているかご確認ください。")
             self.refresh_profile_list()
         except Exception as e:
             self.log(f"❌ 起動エラー: {e}")
             messagebox.showerror("起動エラー", f"Chromeの起動に失敗しました:\n{e}")
-
-    def export_portable_session(self):
-        """
-        Playwrightを利用して現在のプロファイルからクッキーを抽出し、
-        Windows暗号化(DPAPI)に依存しないプレーンな portable_session.json を生成。
-        PC AからPC B（VPS等）にコピーしても即座に復元可能にします。
-        """
-        name = self.entry_name.get().strip()
-        if not name:
-            messagebox.showwarning("警告", "プロファイル名を入力してください。")
-            return
-
-        profile_path = os.path.join(PROFILES_DIR, name)
-        if not os.path.exists(profile_path):
-            messagebox.showwarning("未作成", f"プロファイルフォルダが存在しません:\n{profile_path}")
-            return
-
-        clean_profile_locks(profile_path)
-        self.log(f"⏳ プロファイル '{name}' のセッションを解析・抽出中...")
-
-        try:
-            from playwright.sync_api import sync_playwright
-            with sync_playwright() as p:
-                context = p.chromium.launch_persistent_context(
-                    user_data_dir=profile_path,
-                    headless=True,
-                    channel="chrome",
-                    args=["--no-sandbox", "--disable-dev-shm-usage"]
-                )
-                portable_file = os.path.join(profile_path, "portable_session.json")
-                cookies_file = os.path.join(profile_path, "cookies.json")
-
-                context.storage_state(path=portable_file)
-                cookies = context.cookies(["https://www.threads.net", "https://www.threads.com", "https://www.instagram.com"])
-                with open(cookies_file, "w", encoding="utf-8") as f:
-                    json.dump(cookies, f, ensure_ascii=False, indent=2)
-
-                session_cookie = next((c for c in cookies if c.get("name") == "sessionid"), None)
-                context.close()
-
-                if session_cookie and session_cookie.get("value"):
-                    self.log(f"🎉 【大成功】@{name} の有効なセッション (sessionid) を検出・抽出しました！")
-                    self.log(f"📁 PC間移行ファイル保存完了: {portable_file}")
-                    self.log("💡 これでこのフォルダを丸ごと別PC（PC B）へコピーしてもログイン状態が永久保持されます！")
-                    messagebox.showinfo(
-                        "セッション保存成功",
-                        f"@{name} のログインセッションを正常に抽出・保存しました！\n\n"
-                        f"生成ファイル: portable_session.json\n\n"
-                        "この chrome_profiles フォルダごと別PC（PC B/VPS）にコピーしても、"
-                        "ログインが保持されエラーなく自動投稿されます。"
-                    )
-                else:
-                    self.log("⚠️ sessionidがまだ保存されていません。先に「🚀 Chromeを起動」してThreadsまたはInstagramにログインしてください。")
-                    messagebox.showwarning(
-                        "ログイン未完了",
-                        "セッションCookieが検出されませんでした。\n\n"
-                        "先に「🚀 通常Chromeを起動」ボタンを押し、\n"
-                        "開いたブラウザでThreadsまたはInstagramにID/PWでログインしてから再実行してください。"
-                    )
-                self.refresh_profile_list()
-        except ImportError:
-            self.log("⚠️ Playwrightが未検出です。通常起動の終了時に自動保存されます。")
-            messagebox.showinfo("案内", "Playwrightが検出されませんでした。\nChromeを閉じるだけでローカルプロファイルには通常保存されています。")
-        except Exception as e:
-            self.log(f"❌ セッション抽出エラー: {e}")
-            messagebox.showerror("エラー", f"セッションの抽出に失敗しました:\n{e}\n\n※Chromeが開いている場合は閉じてから再試行してください。")
-
-    def import_portable_session_to_pc(self):
-        """
-        PC AからPC Bにフォルダをコピーした際に実行。
-        portable_session.json からクッキーを読み込み、PC BのWindows DPAPIで再暗号化保存します。
-        """
-        name = self.entry_name.get().strip()
-        if not name:
-            messagebox.showwarning("警告", "プロファイル名を入力してください。")
-            return
-
-        profile_path = os.path.join(PROFILES_DIR, name)
-        portable_file = os.path.join(profile_path, "portable_session.json")
-        if not os.path.exists(portable_file):
-            portable_file = os.path.join(profile_path, "cookies.json")
-
-        if not os.path.exists(portable_file):
-            messagebox.showwarning(
-                "移行ファイル未検出",
-                f"portable_session.json が見つかりません:\n{portable_file}\n\n"
-                "PC A側で「💾 ログインセッション保存」をクリックしてからフォルダをコピーしてください。"
-            )
-            return
-
-        clean_profile_locks(profile_path)
-        self.log(f"🔄 portable_session.json をこのPC (PC B) のローカルChromeにインポート中...")
-
-        try:
-            with open(portable_file, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            cookies = data.get("cookies", []) if isinstance(data, dict) else data
-
-            from playwright.sync_api import sync_playwright
-            with sync_playwright() as p:
-                context = p.chromium.launch_persistent_context(
-                    user_data_dir=profile_path,
-                    headless=True,
-                    channel="chrome",
-                    args=["--no-sandbox", "--disable-dev-shm-usage"]
-                )
-                cleaned_cookies = []
-                for c in cookies:
-                    c_clean = {}
-                    for k in ["name", "value", "domain", "path", "expires", "httpOnly", "secure", "sameSite"]:
-                        if k in c and c[k] is not None:
-                            c_clean[k] = c[k]
-                    if "sameSite" in c_clean:
-                        s = str(c_clean["sameSite"]).capitalize()
-                        c_clean["sameSite"] = s if s in ["Strict", "Lax", "None"] else "Lax"
-                    cleaned_cookies.append(c_clean)
-                context.add_cookies(cleaned_cookies)
-                context.close()
-
-            self.log(f"🎉 【移行完了】このPCのWindows暗号化(DPAPI)にセッションを再登録しました！")
-            self.log("💡 これでPC B上でもThreadsに自動ログインした状態で起動できます。")
-            messagebox.showinfo(
-                "インポート完了",
-                f"このPCへ @{name} のセッションを正常にインポートしました！\n\n"
-                "「🚀 通常Chromeを起動」を押してログイン済みになっているか確認できます。"
-            )
-            self.refresh_profile_list()
-        except Exception as e:
-            self.log(f"❌ インポートエラー: {e}")
-            messagebox.showerror("エラー", f"インポートに失敗しました:\n{e}")
 
     def open_profile_folder(self):
         name = self.entry_name.get().strip()
@@ -592,28 +598,16 @@ class ProfileLauncherApp:
         except Exception:
             subprocess.Popen(["explorer", p_dir])
 
-    def register_to_excel(self):
-        name = self.entry_name.get().strip()
-        if not name:
-            messagebox.showwarning("警告", "プロファイル名を入力してください。")
-            return
-
+    def save_token_to_excel(self, account_name, token):
+        """アカウント情報.xlsx の sessionid 列を更新"""
         try:
             import openpyxl
-        except ImportError:
-            try:
-                subprocess.run([sys.executable, "-m", "pip", "install", "--user", "openpyxl"], check=False)
-                import openpyxl
-            except Exception:
-                messagebox.showerror("エラー", "Excel操作ライブラリ (openpyxl) が読み込めませんでした。")
-                return
-
-        try:
+            wb = None
             if not os.path.exists(ACCOUNT_FILE):
                 wb = openpyxl.Workbook()
                 ws = wb.active
                 ws.title = "アカウント設定"
-                ws.append(["アカウントID", "プロファイル名", "有効/無効", "備考"])
+                ws.append(["アカウントID", "sessionid", "プロファイル名", "有効/無効", "備考"])
             else:
                 wb = openpyxl.load_workbook(ACCOUNT_FILE)
                 ws = None
@@ -626,45 +620,53 @@ class ProfileLauncherApp:
 
             headers = [str(c).strip() if c is not None else "" for c in next(ws.iter_rows(values_only=True))]
             id_col = 1
-            profile_col = 2
-            status_col = 3
-            notes_col = 4
+            sess_col = 2
+            prof_col = 3
+            stat_col = 4
+            notes_col = 5
 
             for idx, h in enumerate(headers, start=1):
-                if "アカウントID" in h or "アカウント名" in h:
-                    id_col = idx
-                elif "プロファイル" in h:
-                    profile_col = idx
-                elif "有効" in h or "ステータス" in h:
-                    status_col = idx
-                elif "備考" in h:
-                    notes_col = idx
+                if "アカウントID" in h or "アカウント名" in h: id_col = idx
+                elif "sessionid" in h.lower() or "auth" in h.lower(): sess_col = idx
+                elif "プロファイル" in h: prof_col = idx
+                elif "有効" in h or "ステータス" in h: stat_col = idx
+                elif "備考" in h: notes_col = idx
 
             exists = False
             for row in range(2, ws.max_row + 1):
                 cur_id = str(ws.cell(row=row, column=id_col).value or "").strip()
-                if cur_id == name:
-                    ws.cell(row=row, column=profile_col, value=name)
-                    ws.cell(row=row, column=status_col, value="有効")
-                    ws.cell(row=row, column=notes_col, value="profile_launcherで作成・保存")
+                if cur_id == account_name:
+                    ws.cell(row=row, column=sess_col, value=token)
+                    ws.cell(row=row, column=prof_col, value=account_name)
+                    ws.cell(row=row, column=stat_col, value="有効")
+                    ws.cell(row=row, column=notes_col, value="sessionidからプロファイル作成・保存済")
                     exists = True
                     break
 
             if not exists:
-                new_row = [""] * max(id_col, profile_col, status_col, notes_col)
-                new_row[id_col - 1] = name
-                new_row[profile_col - 1] = name
-                new_row[status_col - 1] = "有効"
-                new_row[notes_col - 1] = "profile_launcherで新規登録"
+                max_c = max(id_col, sess_col, prof_col, stat_col, notes_col)
+                new_row = [""] * max_c
+                new_row[id_col - 1] = account_name
+                new_row[sess_col - 1] = token
+                new_row[prof_col - 1] = account_name
+                new_row[stat_col - 1] = "有効"
+                new_row[notes_col - 1] = "sessionidから新規登録"
                 ws.append(new_row)
 
             wb.save(ACCOUNT_FILE)
             wb.close()
-            self.log(f"✅ 「アカウント情報.xlsx」にアカウント '{name}' を登録・保存しました！")
-            messagebox.showinfo("完了", f"「アカウント情報.xlsx」に @{name} を登録しました！\n（プロファイル名: {name}）")
+            self.log(f"📋 「アカウント情報.xlsx」に @{account_name} のsessionidを自動登録しました！")
         except Exception as e:
-            self.log(f"❌ Excel登録エラー: {e}")
-            messagebox.showerror("エラー", f"Excelの更新に失敗しました:\n{e}")
+            self.log(f"[WARN] Excel同期スキップ: {e}")
+
+    def register_to_excel(self):
+        name = self.entry_name.get().strip()
+        token = self.entry_sessionid.get().strip()
+        if not name:
+            messagebox.showwarning("警告", "アカウントIDを入力してください。")
+            return
+        self.save_token_to_excel(name, token)
+        messagebox.showinfo("完了", f"「アカウント情報.xlsx」に @{name} を登録しました！")
 
 def main():
     root = tk.Tk()

@@ -858,8 +858,27 @@ def test_session_id_online(token):
 def inject_session_cookies(context, raw_token, account_name, log_func=print):
     token = str(raw_token or "").strip()
     if not token or token.lower() in ["nan", "none", ""] or token.startswith("ここに"):
-        # プロファイル永続化モード（推奨・profile_launcherでID/PWログイン済み）
-        return True
+        # プロファイルフォルダ (chrome_profiles/{account_name}/portable_session.json) に sessionid があれば読み込む
+        prof_dirs = [
+            os.path.join(BASE_DIR, "chrome_profiles", account_name),
+            os.path.join(os.getcwd(), "chrome_profiles", account_name)
+        ]
+        for pdir in prof_dirs:
+            pjson = os.path.join(pdir, "portable_session.json")
+            if os.path.exists(pjson):
+                try:
+                    with open(pjson, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                        t = data.get("sessionid", "").strip()
+                        if t:
+                            token = t
+                            log_func(f"[INFO] [{account_name}] プロファイル永続化ファイル (portable_session.json) から sessionid を自動読み込みしました。")
+                            break
+                except Exception:
+                    pass
+        if not token:
+            # プロファイル永続化モード（Chrome既存Cookieストアを使用）
+            return True
     
     if token.startswith("sessionid="):
         token = token[len("sessionid="):].strip()
@@ -1036,10 +1055,14 @@ def safe_goto_threads(page, context, session_token, account_name, log_func=print
             page.goto("https://www.threads.net/", timeout=timeout, wait_until="domcontentloaded")
             time.sleep(2.5)
 
-            # 画面内に ERR_TOO_MANY_REDIRECTS やリダイレクトループ文言が表示されていないか検査
+            # 画面内に ERR_TOO_MANY_REDIRECTS やリダイレクトループ文言、HTTP 429 を検査
             try:
                 page_content = page.content()
-                if any(k in page_content for k in [
+                if "HTTP ERROR 429" in page_content or "429 Too Many Requests" in page_content:
+                    redirect_detected = True
+                    log_func(f"[WARN] ⏳ [{account_name}] Metaアクセス頻度制限 (HTTP ERROR 429) を検知しました。制限解除のため15秒間待機します...")
+                    time.sleep(15)
+                elif any(k in page_content for k in [
                     "ERR_TOO_MANY_REDIRECTS",
                     "リダイレクトが繰り返し行われました",
                     "Cookie を削除してみてください",
