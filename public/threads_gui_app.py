@@ -983,6 +983,19 @@ def inject_session_cookies(context, raw_token, account_name, log_func=print):
         except Exception:
             pass
 
+    # プロファイルフォルダに portable_session.json が無ければ自動初期生成
+    try:
+        pdir = os.path.join(BASE_DIR, "chrome_profiles", account_name)
+        os.makedirs(pdir, exist_ok=True)
+        pfile = os.path.join(pdir, "portable_session.json")
+        if not os.path.exists(pfile):
+            state_data = {"cookies": cookies_to_add, "origins": []}
+            with open(pfile, "w", encoding="utf-8") as f:
+                json.dump(state_data, f, ensure_ascii=False, indent=2)
+            log_func(f"[INFO] [{account_name}] ✨ プロファイルフォルダ (chrome_profiles/{account_name}) と永続セッションを自動生成しました！")
+    except Exception as pe:
+        log_func(f"[DEBUG] 自動プロファイルファイル生成: {pe}")
+
     log_func(f"[SUCCESS] [{account_name}] sessionid (ユーザーID: {ds_user_id or '未特定'}) を永続Cookie (有効期限1年) として自動注入しました。")
     return True
 
