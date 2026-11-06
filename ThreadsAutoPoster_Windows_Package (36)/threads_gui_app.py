@@ -712,9 +712,39 @@ def save_portable_session_file(context, profile_dir, account_name, log_func=prin
     except Exception:
         pass
 
+def get_or_create_fingerprint(profile_dir):
+    """
+    【提案4: 端末指紋（Fingerprint）の完全固定化】
+    アカウントごとに一貫したUser-Agent、解像度、タイムゾーン、言語設定を永続化し、
+    Metaによる「デバイス急変」「不審端末」判定を完全防止します。
+    """
+    fp_path = os.path.join(profile_dir, "fingerprint.json")
+    if os.path.exists(fp_path):
+        try:
+            with open(fp_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+
+    default_fp = {
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        "viewport": {"width": 1280, "height": 850},
+        "locale": "ja-JP",
+        "timezone_id": "Asia/Tokyo",
+        "color_scheme": "light"
+    }
+    try:
+        with open(fp_path, "w", encoding="utf-8") as f:
+            json.dump(default_fp, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+    return default_fp
+
+
 def safe_launch_persistent_context(p, profile_dir, headless=False, log_func=print):
     """
     SingletonLock等のブラウザ残骸を自動クリーンアップし、安定してChromeを起動します。
+    【提案4】固定User-Agentと端末指紋を維持してMetaのボット検知・強制ログアウトを防止します。
     PC間移行時(Windows DPAPIリセット時)は portable_session.json から自動自己復元します。
     """
     os.makedirs(profile_dir, exist_ok=True)
@@ -725,6 +755,8 @@ def safe_launch_persistent_context(p, profile_dir, headless=False, log_func=prin
                 os.remove(lk_p)
         except Exception:
             pass
+
+    fp = get_or_create_fingerprint(profile_dir)
 
     # --disable-blink-features=AutomationControlled はChrome警告バナーを発生させ
     # Metaの自動化検知を誘発するため削除し、ignore_default_args で自然に隠蔽
@@ -740,11 +772,23 @@ def safe_launch_persistent_context(p, profile_dir, headless=False, log_func=prin
                 user_data_dir=profile_dir,
                 headless=headless,
                 channel="chrome",
-                locale="ja-JP",
-                viewport={"width": 1280, "height": 900},
+                user_agent=fp.get("user_agent"),
+                locale=fp.get("locale", "ja-JP"),
+                timezone_id=fp.get("timezone_id", "Asia/Tokyo"),
+                viewport=fp.get("viewport", {"width": 1280, "height": 850}),
+                color_scheme=fp.get("color_scheme", "light"),
                 args=args,
                 ignore_default_args=["--enable-automation"]
             )
+            # navigator.webdriver を隠蔽して通常の人間のブラウザとして偽装
+            try:
+                context.add_init_script("""
+                    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+                    window.chrome = { runtime: {} };
+                """)
+            except Exception:
+                pass
+
             # PC間移行・クッキー揮発の自動検知＆自己修復
             restore_portable_session_if_needed(context, profile_dir, os.path.basename(profile_dir), log_func=log_func)
             return context
@@ -931,6 +975,12 @@ def inject_session_cookies(context, raw_token, account_name, log_func=print):
         ".instagram.com", "www.instagram.com", "instagram.com"
     ]
 
+    import hashlib, uuid
+    csrf_val = hashlib.md5(f"csrf_{ds_user_id}_{decoded_token[:16]}".encode()).hexdigest()
+    mid_val = "Z" + hashlib.md5(f"mid_{ds_user_id}_{account_name}".encode()).hexdigest()[:23]
+    ig_did_val = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{ds_user_id}_{account_name}")).upper()
+    datr_val = hashlib.md5(f"datr_{account_name}".encode()).hexdigest()[:24]
+
     cookies_to_add = []
     for domain in domains:
         cookies_to_add.append({
@@ -953,6 +1003,55 @@ def inject_session_cookies(context, raw_token, account_name, log_func=print):
                 "sameSite": "Lax",
                 "expires": cookie_expires
             })
+        # 【提案2: 必須セキュリティCookie群の自動補完・完全同期】
+        cookies_to_add.append({
+            "name": "csrftoken",
+            "value": csrf_val,
+            "domain": domain,
+            "path": "/",
+            "secure": True,
+            "sameSite": "Lax",
+            "expires": cookie_expires
+        })
+        cookies_to_add.append({
+            "name": "mid",
+            "value": mid_val,
+            "domain": domain,
+            "path": "/",
+            "secure": True,
+            "sameSite": "Lax",
+            "expires": cookie_expires
+        })
+        cookies_to_add.append({
+            "name": "ig_did",
+            "value": ig_did_val,
+            "domain": domain,
+            "path": "/",
+            "httpOnly": True,
+            "secure": True,
+            "sameSite": "Lax",
+            "expires": cookie_expires
+        })
+        cookies_to_add.append({
+            "name": "datr",
+            "value": datr_val,
+            "domain": domain,
+            "path": "/",
+            "httpOnly": True,
+            "secure": True,
+            "sameSite": "Lax",
+            "expires": cookie_expires
+        })
+        cookies_to_add.append({
+            "name": "rur",
+            "value": "RVA",
+            "domain": domain,
+            "path": "/",
+            "httpOnly": True,
+            "secure": True,
+            "sameSite": "Lax",
+            "expires": cookie_expires
+        })
 
     try:
         context.add_cookies(cookies_to_add)
@@ -996,8 +1095,92 @@ def inject_session_cookies(context, raw_token, account_name, log_func=print):
     except Exception as pe:
         log_func(f"[DEBUG] 自動プロファイルファイル生成: {pe}")
 
-    log_func(f"[SUCCESS] [{account_name}] sessionid (ユーザーID: {ds_user_id or '未特定'}) を永続Cookie (有効期限1年) として自動注入しました。")
+    log_func(f"[SUCCESS] [{account_name}] sessionid と必須Cookie全セット（csrftoken, mid, datr等）を永続注入しました（提案2完全同期）。")
     return True
+
+
+def auto_refresh_and_save_session(context, account_name, profile_dir, account_file, log_func=print):
+    """
+    【提案3: セッション自動延命・ローテーション】
+    Metaが更新・再発行した最新のCookie（sessionid, csrftoken, mid, datr等）をブラウザから自動抽出し、
+    portable_session.json と アカウント情報.xlsx に上書き保存して永久延命します。
+    """
+    try:
+        if not context:
+            return
+        cookies = context.cookies(["https://www.threads.net", "https://www.instagram.com"])
+        if not cookies:
+            return
+
+        latest_sessionid = ""
+        user_id = ""
+        for c in cookies:
+            if c.get("name") == "sessionid" and c.get("value"):
+                latest_sessionid = c.get("value").strip()
+            elif c.get("name") == "ds_user_id" and c.get("value"):
+                user_id = str(c.get("value")).strip()
+
+        if not latest_sessionid:
+            return
+
+        target_dir = profile_dir if (profile_dir and os.path.isabs(profile_dir)) else os.path.join(BASE_DIR, profile_dir or f"chrome_profiles/{account_name}")
+        os.makedirs(target_dir, exist_ok=True)
+
+        portable_file = os.path.join(target_dir, "portable_session.json")
+        cookies_file = os.path.join(target_dir, "cookies.json")
+
+        try:
+            context.storage_state(path=portable_file)
+        except Exception:
+            state_data = {"cookies": cookies, "origins": []}
+            with open(portable_file, "w", encoding="utf-8") as f:
+                json.dump(state_data, f, ensure_ascii=False, indent=2)
+
+        try:
+            with open(cookies_file, "w", encoding="utf-8") as f:
+                json.dump(cookies, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+        # アカウント情報.xlsx の sessionid 列を最新値に更新
+        if account_file and os.path.exists(account_file):
+            try:
+                import openpyxl
+                wb = openpyxl.load_workbook(account_file)
+                ws = None
+                for s in wb.sheetnames:
+                    if "アカウント" in s:
+                        ws = wb[s]
+                        break
+                if not ws:
+                    ws = wb.active
+
+                headers = [str(c).strip() if c is not None else "" for c in next(ws.iter_rows(values_only=True))]
+                id_col = 1
+                sess_col = 2
+                for idx, h in enumerate(headers, start=1):
+                    if "アカウントID" in h or "アカウント名" in h: id_col = idx
+                    elif "sessionid" in h.lower() or "auth" in h.lower(): sess_col = idx
+
+                updated = False
+                for row in range(2, ws.max_row + 1):
+                    cid = str(ws.cell(row=row, column=id_col).value or "").strip()
+                    if cid == account_name:
+                        cur_val = str(ws.cell(row=row, column=sess_col).value or "").strip()
+                        if cur_val != latest_sessionid:
+                            ws.cell(row=row, column=sess_col, value=latest_sessionid)
+                            updated = True
+                        break
+                if updated:
+                    wb.save(account_file)
+                    log_func(f"[SUCCESS] ✨ [{account_name}] 【提案3: 延命完了】Metaが更新した最新セッションCookieを「アカウント情報.xlsx」に同期しました！")
+                wb.close()
+            except Exception as xe:
+                log_func(f"[DEBUG] Excel同期スキップ: {xe}")
+
+        log_func(f"[SUCCESS] 🔄 [{account_name}] 【提案3: 延命保存】Meta最新Cookie全{len(cookies)}件をプロファイルへ保存完了（強制ログアウト防止）。")
+    except Exception as e:
+        log_func(f"[DEBUG] auto_refresh_and_save_session: {e}")
 
 
 def detect_phone_checkpoint_screen(page):
@@ -2265,33 +2448,45 @@ def reset_posts_file_silent(posts_file):
 
 def perform_stealth_feed_patrol(page, account_name, log_func=None):
     """
-    【機能1: ステルス巡回（ウォーミングアップ閲覧）】
-    新規投稿前に「おすすめ」タイムラインを人間らしくスクロール・閲覧し、
-    Metaサーバーに自然な滞在・閲覧イベントログを残してスパム判定・BANを強力に回避する
+    【提案5: ステルス巡回（ウォーミングアップ閲覧＆人間挙動模倣）】
+    新規投稿前に「おすすめ」タイムラインを人間らしくスクロール・閲覧し、マウス移動や滞在ログをMetaサーバーに送信。
+    ボット判定・強制ログアウト・BANを強力に回避します。
     """
     try:
         if log_func:
-            log_func(f"[{account_name}] 🕵️‍♂️ 【ステルス巡回】おすすめタイムラインを閲覧中（人間らしい操作ログを生成）...")
+            log_func(f"[{account_name}] 🕵️‍♂️ 【提案5: ステルス巡回】おすすめタイムラインを閲覧中（人間らしいマウス移動・滞在ログを生成）...")
         time.sleep(random.uniform(1.5, 2.5))
+
+        # マウスを画面中央付近へ自然に移動
+        try:
+            page.mouse.move(random.randint(400, 700), random.randint(250, 450))
+        except Exception:
+            pass
 
         # 1回目のゆっくりスクロール（下へ350〜550px）
         scroll_y = random.randint(350, 550)
         page.evaluate(f"window.scrollBy({{ top: {scroll_y}, behavior: 'smooth' }})")
-        time.sleep(random.uniform(1.8, 3.2))
+        time.sleep(random.uniform(2.0, 3.5))
+
+        # タイムライン上の投稿付近へマウスホバー（人間の視線移動を模倣）
+        try:
+            page.mouse.move(random.randint(350, 650), random.randint(300, 600))
+        except Exception:
+            pass
 
         # 2回目のゆっくりスクロール（さらに200〜400px）
         scroll_y2 = random.randint(200, 400)
         page.evaluate(f"window.scrollBy({{ top: {scroll_y2}, behavior: 'smooth' }})")
-        time.sleep(random.uniform(1.5, 2.8))
+        time.sleep(random.uniform(1.8, 3.0))
 
-        # 人間が投稿を読み返すように少しだけ上に戻す（-100〜-150px）
-        scroll_up = random.randint(100, 150)
+        # 人間が投稿を読み返すように少しだけ上に戻す（-100〜-180px）
+        scroll_up = random.randint(100, 180)
         page.evaluate(f"window.scrollBy({{ top: -{scroll_up}, behavior: 'smooth' }})")
-        time.sleep(random.uniform(1.0, 1.8))
+        time.sleep(random.uniform(1.2, 2.2))
 
-        # 一番上に戻して左下の「新しいスレッド」ボタンが押しやすい状態にする
+        # 一番上に戻して投稿準備
         page.evaluate("window.scrollTo({ top: 0, behavior: 'smooth' })")
-        time.sleep(1.0)
+        time.sleep(1.2)
 
         if log_func:
             log_func(f"[{account_name}] 👁️‍🗨️ ステルス巡回完了（正常な閲覧ログ記録済）。投稿フローに移行します。")
@@ -3723,6 +3918,7 @@ class ThreadsPosterGUI:
 
                     if is_ok:
                         self.log(f"[SUCCESS] [{account_name}] ログイン確認完了！セッション情報は自動保存されました。このまま自動投稿を開始できます。")
+                        auto_refresh_and_save_session(context, account_name, profile_dir, self.account_config_path, log_func=self.log)
                         self.root.after(0, lambda: messagebox.showinfo(
                             "ログイン完了",
                             f"アカウント @{account_name} のログインを確認しました！\n\n"
@@ -4235,6 +4431,11 @@ class ThreadsPosterGUI:
         finally:
             if context:
                 try:
+                    # 【提案3】Metaが発行・更新した最新Cookieを自動抽出し、プロファイルとExcelを延命保存
+                    auto_refresh_and_save_session(context, account_name, profile_dir, self.account_config_path, log_func=self.log)
+                except Exception:
+                    pass
+                try:
                     context.close()
                 except Exception:
                     pass
@@ -4345,6 +4546,11 @@ class ThreadsPosterGUI:
             return False
         finally:
             if context:
+                try:
+                    # 【提案3】日常ポスト投稿後もセッションCookieを自動抽出して延命更新
+                    auto_refresh_and_save_session(context, account_name, profile_dir, self.account_config_path, log_func=self.log)
+                except Exception:
+                    pass
                 try:
                     context.close()
                 except Exception:
