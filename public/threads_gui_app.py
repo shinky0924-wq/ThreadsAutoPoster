@@ -741,6 +741,135 @@ def get_or_create_fingerprint(profile_dir):
     return default_fp
 
 
+def clean_session_id_token(raw_token):
+    """sessionid文字列をサニタイズ・デコード"""
+    t = str(raw_token or "").strip()
+    if t.startswith("sessionid="):
+        t = t[len("sessionid="):].strip()
+    while t and t[0] in ('"', "'", ';', ' '):
+        t = t[1:].strip()
+    while t and t[-1] in ('"', "'", ';', ' '):
+        t = t[:-1].strip()
+    import urllib.parse
+    return urllib.parse.unquote(t)
+
+
+def auto_bootstrap_countermeasure_profiles(accounts_data, log_func=print):
+    """
+    【アプリ起動時・自動構築】
+    アカウント情報.xlsx に記載された全アカウントのプロファイル（chrome_profiles/<account>）を自動構築します。
+    - 端末指紋（fingerprint.json）の自動配備（固定User-Agent, 1280x850, 日本語, JST）
+    - sessionidと周辺セキュリティCookie（csrftoken, mid, ig_did, datr, rur）の全自動合成＆保存
+    これにより、ユーザーが profile_launcher を開くことなく、アプリ起動だけで対策プロファイルが100%自動配備されます。
+    """
+    if not accounts_data:
+        return 0
+
+    bootstrapped_count = 0
+    for acc in accounts_data:
+        acc_id = str(acc.get("アカウントID") or acc.get("アカウント名") or acc.get("アカウント") or "").strip()
+        if not acc_id or acc_id.lower() == "nan":
+            continue
+
+        prof_name = str(acc.get("プロファイル名") or acc.get("プロファイル") or acc_id).strip()
+        prof_dir = os.path.join(BASE_DIR, f"chrome_profiles/{prof_name}")
+        os.makedirs(prof_dir, exist_ok=True)
+
+        # 提案4: 端末指紋の自動作成・維持
+        get_or_create_fingerprint(prof_dir)
+
+        # 提案2: sessionid があれば Cookie全種をプロファイルに完全同期
+        raw_token = str(
+            acc.get("auth_token") or
+            acc.get("Authトークン_sessionid") or
+            acc.get("sessionid") or
+            acc.get("Authトークン") or
+            acc.get("セッションID") or
+            acc.get("セッションid") or
+            acc.get("トークン") or
+            acc.get("token") or
+            ""
+        ).strip()
+        pfile = os.path.join(prof_dir, "portable_session.json")
+        cfile = os.path.join(prof_dir, "cookies.json")
+
+        if (not raw_token or raw_token.startswith("ここに") or raw_token.lower() in ["nan", "none"]) and os.path.exists(pfile):
+            try:
+                with open(pfile, "r", encoding="utf-8") as _pf:
+                    _d = json.load(_pf)
+                _cks = _d.get("cookies", []) if isinstance(_d, dict) else _d
+                for _c in _cks:
+                    if _c.get("name") == "sessionid" and _c.get("value"):
+                        raw_token = str(_c.get("value")).strip()
+                        break
+            except Exception:
+                pass
+
+        if raw_token and not raw_token.startswith("ここに") and raw_token.lower() not in ["nan", "none"]:
+            token = clean_session_id_token(raw_token)
+            uid = ""
+            if ":" in token:
+                potential = token.split(":")[0].strip()
+                if potential.isdigit():
+                    uid = potential
+            elif "%3A" in token.upper():
+                potential = token.upper().split("%3A")[0].strip()
+                if potential.isdigit():
+                    uid = potential
+
+            cookie_expires = int(time.time()) + 31536000
+            import hashlib, uuid as uuid_mod
+            csrf_val = hashlib.md5(f"csrf_{uid}_{token[:16]}".encode()).hexdigest()
+            mid_val = "Z" + hashlib.md5(f"mid_{uid}_{acc_id}".encode()).hexdigest()[:23]
+            ig_did_val = str(uuid_mod.uuid5(uuid_mod.NAMESPACE_DNS, f"{uid}_{acc_id}")).upper()
+            datr_val = hashlib.md5(f"datr_{acc_id}".encode()).hexdigest()[:24]
+
+            domains = [
+                ".threads.net", "www.threads.net", "threads.net",
+                ".threads.com", "www.threads.com", "threads.com",
+                ".instagram.com", "www.instagram.com", "instagram.com"
+            ]
+
+            cookies_list = []
+            for d in domains:
+                cookies_list.append({"name": "sessionid", "value": token, "domain": d, "path": "/", "httpOnly": True, "secure": True, "sameSite": "Lax", "expires": cookie_expires})
+                if uid:
+                    cookies_list.append({"name": "ds_user_id", "value": str(uid), "domain": d, "path": "/", "secure": True, "sameSite": "Lax", "expires": cookie_expires})
+                cookies_list.append({"name": "csrftoken", "value": csrf_val, "domain": d, "path": "/", "secure": True, "sameSite": "Lax", "expires": cookie_expires})
+                cookies_list.append({"name": "mid", "value": mid_val, "domain": d, "path": "/", "secure": True, "sameSite": "Lax", "expires": cookie_expires})
+                cookies_list.append({"name": "ig_did", "value": ig_did_val, "domain": d, "path": "/", "httpOnly": True, "secure": True, "sameSite": "Lax", "expires": cookie_expires})
+                cookies_list.append({"name": "datr", "value": datr_val, "domain": d, "path": "/", "httpOnly": True, "secure": True, "sameSite": "Lax", "expires": cookie_expires})
+                cookies_list.append({"name": "rur", "value": "RVA", "domain": d, "path": "/", "httpOnly": True, "secure": True, "sameSite": "Lax", "expires": cookie_expires})
+
+            state_data = {"cookies": cookies_list, "origins": []}
+            # ファイルが存在しない、または古い場合は作成・更新
+            try:
+                need_write = True
+                if os.path.exists(pfile):
+                    try:
+                        with open(pfile, "r", encoding="utf-8") as f_ex:
+                            ex_data = json.load(f_ex)
+                        ex_cookies = ex_data.get("cookies", []) if isinstance(ex_data, dict) else ex_data
+                        for c in ex_cookies:
+                            if c.get("name") == "sessionid" and c.get("value") == token and len(ex_cookies) >= 5:
+                                need_write = False
+                                break
+                    except Exception:
+                        need_write = True
+
+                if need_write:
+                    with open(pfile, "w", encoding="utf-8") as f:
+                        json.dump(state_data, f, ensure_ascii=False, indent=2)
+                    with open(cfile, "w", encoding="utf-8") as f:
+                        json.dump(cookies_list, f, ensure_ascii=False, indent=2)
+                    bootstrapped_count += 1
+                    log_func(f"[SUCCESS] 🛡️ [@{acc_id}] アプリ起動時に【5大強制ログアウト対策プロファイル】を自動構築しました！（周辺Cookie＋端末指紋を全自動配備）")
+            except Exception as e:
+                log_func(f"[DEBUG] auto_bootstrap write: {e}")
+
+    return bootstrapped_count
+
+
 def safe_launch_persistent_context(p, profile_dir, headless=False, log_func=print):
     """
     SingletonLock等のブラウザ残骸を自動クリーンアップし、安定してChromeを起動します。
@@ -3082,6 +3211,9 @@ class ThreadsPosterGUI:
         btn_reload = tk.Button(toolbar, text="🔄 Excel再読込", font=("Segoe UI", 9, "bold"), bg="#3b82f6", fg="#ffffff", padx=8, pady=5, relief="flat", cursor="hand2", command=self.load_excel_data)
         btn_reload.pack(side="left", padx=3)
 
+        btn_sync_profiles = tk.Button(toolbar, text="🛡️ 対策プロファイル同期", font=("Segoe UI", 9, "bold"), bg="#065f46", fg="#6ee7b7", padx=8, pady=5, relief="flat", cursor="hand2", command=self.manual_sync_profiles)
+        btn_sync_profiles.pack(side="left", padx=3)
+
         btn_reset = tk.Button(toolbar, text="🔁 未投稿にリセット", font=("Segoe UI", 9, "bold"), bg="#6366f1", fg="#ffffff", padx=8, pady=5, relief="flat", cursor="hand2", command=self.reset_all_posts_to_unposted)
         btn_reset.pack(side="left", padx=3)
 
@@ -3284,6 +3416,14 @@ class ThreadsPosterGUI:
 
         self.lbl_excel_path.config(text=f"📊 設定ファイル: {os.path.basename(self.account_config_path)} (読み込みOK)", fg="#34d399")
         accounts_data = read_excel_records(self.account_config_path)
+
+        # 【起動時全自動】アカウント情報.xlsx の全アカウントに対して5大強制ログアウト対策プロファイルを自動構築
+        try:
+            bootstrapped = auto_bootstrap_countermeasure_profiles(accounts_data, log_func=self.log)
+            if bootstrapped > 0:
+                self.log(f"[SUCCESS] 🛡️ 起動時チェック: {bootstrapped}件のプロファイルに対策（端末指紋＋周辺Cookie永続化）を自動適用しました！")
+        except Exception as _e_boot:
+            self.log(f"[WARN] 対策プロファイル自動構築エラー: {_e_boot}")
 
         valid_accounts = []
         disabled_accounts = []
@@ -3504,6 +3644,22 @@ class ThreadsPosterGUI:
             os.startfile(self.account_config_path)
         else:
             messagebox.showwarning("警告", f"'{self.account_config_path}' が存在しません。")
+
+    def manual_sync_profiles(self):
+        """【手動実行】エクセル記載の全アカウントの5大強制ログアウト対策プロファイルを即時同期"""
+        try:
+            if not os.path.exists(self.account_config_path):
+                messagebox.showwarning("警告", "アカウント情報.xlsxが見つかりません。")
+                return
+            accounts_data = read_excel_records(self.account_config_path)
+            bootstrapped = auto_bootstrap_countermeasure_profiles(accounts_data, log_func=self.log)
+            self.load_excel_data()
+            messagebox.showinfo(
+                "対策プロファイル同期完了",
+                f"【5大強制ログアウト対策】\n全アカウントのプロファイル（端末指紋＋Cookie完全永続化）を同期しました！\n\n新規・更新件数: {bootstrapped} 件\n\n※ アプリ起動時にも毎回全自動で同期されます。"
+            )
+        except Exception as e:
+            messagebox.showerror("エラー", f"プロファイル同期エラー: {e}")
 
     def open_bulk_post_manager(self):
         """【EXE対応】アカウント選択、既存ツイートの全件削除、新規100件一括登録GUIダイアログ"""
