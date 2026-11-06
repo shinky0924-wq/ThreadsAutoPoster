@@ -647,9 +647,75 @@ def open_threads_composer_dialog(page, account_name, log_func=print):
     return dialog, textbox
 
 
+def restore_portable_session_if_needed(context, profile_dir, account_name, log_func=print):
+    """
+    PC AからPC B（VPS等）へプロファイルをコピーした際、
+    Windows DPAPI暗号化キーの不一致によりChromeの内部Cookieがリセットされる問題を完全解決。
+    profile_dir内に保存された「portable_session.json」または「cookies.json」から
+    Cookieを自動検知して復元し、PC BのWindows DPAPIで再暗号化保存させます。
+    """
+    if not profile_dir or not os.path.exists(profile_dir):
+        return False
+
+    portable_file = os.path.join(profile_dir, "portable_session.json")
+    if not os.path.exists(portable_file):
+        portable_file = os.path.join(profile_dir, "cookies.json")
+    if not os.path.exists(portable_file):
+        return False
+
+    try:
+        cur_cookies = context.cookies(["https://www.threads.net", "https://www.threads.com", "https://www.instagram.com"])
+        has_session = any(c.get("name") == "sessionid" and c.get("value") for c in cur_cookies)
+        if has_session:
+            return True
+
+        import json
+        with open(portable_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        cookies_to_add = data.get("cookies", []) if isinstance(data, dict) else (data if isinstance(data, list) else [])
+        if cookies_to_add:
+            cleaned_cookies = []
+            for c in cookies_to_add:
+                c_clean = {}
+                for k in ["name", "value", "domain", "path", "expires", "httpOnly", "secure", "sameSite"]:
+                    if k in c and c[k] is not None:
+                        c_clean[k] = c[k]
+                if "sameSite" in c_clean:
+                    s = str(c_clean["sameSite"]).capitalize()
+                    c_clean["sameSite"] = s if s in ["Strict", "Lax", "None"] else "Lax"
+                cleaned_cookies.append(c_clean)
+
+            context.add_cookies(cleaned_cookies)
+            log_func(f"[SUCCESS] [{account_name}] 🔄 PC間移行を検知: portable_session.json からセッションCookie ({len(cleaned_cookies)}件) を自動復元しました！")
+            log_func(f"[INFO] [{account_name}] 🛡️ 現在のPCのWindows暗号化(DPAPI)にセッションを自動再バインドしました。")
+            return True
+    except Exception as e:
+        log_func(f"[WARN] portable_session.json 復元エラー: {e}")
+    return False
+
+def save_portable_session_file(context, profile_dir, account_name, log_func=print):
+    """
+    ログイン中のセッション状態を portable_session.json として保存。
+    別PCにフォルダごとコピーした際もログイン状態を100%保持できるようにします。
+    """
+    if not profile_dir or not os.path.exists(profile_dir):
+        return
+    try:
+        import json
+        portable_file = os.path.join(profile_dir, "portable_session.json")
+        context.storage_state(path=portable_file)
+        cookies_file = os.path.join(profile_dir, "cookies.json")
+        cookies = context.cookies(["https://www.threads.net", "https://www.threads.com", "https://www.instagram.com"])
+        with open(cookies_file, "w", encoding="utf-8") as f:
+            json.dump(cookies, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
 def safe_launch_persistent_context(p, profile_dir, headless=False, log_func=print):
     """
     SingletonLock等のブラウザ残骸を自動クリーンアップし、安定してChromeを起動します。
+    PC間移行時(Windows DPAPIリセット時)は portable_session.json から自動自己復元します。
     """
     os.makedirs(profile_dir, exist_ok=True)
     for lk in ["SingletonLock", "SingletonCookie", "SingletonSocket"]:
@@ -660,8 +726,9 @@ def safe_launch_persistent_context(p, profile_dir, headless=False, log_func=prin
         except Exception:
             pass
 
+    # --disable-blink-features=AutomationControlled はChrome警告バナーを発生させ
+    # Metaの自動化検知を誘発するため削除し、ignore_default_args で自然に隠蔽
     args = [
-        "--disable-blink-features=AutomationControlled",
         "--lang=ja-JP",
         "--no-sandbox",
         "--disable-dev-shm-usage"
@@ -675,8 +742,11 @@ def safe_launch_persistent_context(p, profile_dir, headless=False, log_func=prin
                 channel="chrome",
                 locale="ja-JP",
                 viewport={"width": 1280, "height": 900},
-                args=args
+                args=args,
+                ignore_default_args=["--enable-automation"]
             )
+            # PC間移行・クッキー揮発の自動検知＆自己修復
+            restore_portable_session_if_needed(context, profile_dir, os.path.basename(profile_dir), log_func=log_func)
             return context
         except Exception as e:
             err_str = str(e)
@@ -1175,7 +1245,26 @@ def ensure_authenticated_session(page, context, account_name, filepath, log_func
     is_ok, reason = detect_threads_logged_in(page)
     if is_ok:
         log_func(f"[SUCCESS] [{account_name}] Chromeプロファイルのセッションで自動ログイン確認完了！（{reason}）")
+        p_dir = os.path.join(BASE_DIR, f"chrome_profiles/{account_name}")
+        save_portable_session_file(context, p_dir, account_name, log_func)
         return True
+
+    # Metaのレートリミット・一時アクティビティ禁止モーダルの検知
+    try:
+        page_html = page.content()
+        if "後ほどもう一度実行してください" in page_html or "特定のアクティビティは禁止されています" in page_html:
+            log_func(f"[WARN] ⚠️ [{account_name}] Metaのブロック画面（「後ほどもう一度実行してください」）を検知しました。")
+            log_func(f"[INFO] [{account_name}] 🔄 portable_session.json からのセッション自己修復を試みます...")
+            p_dir = os.path.join(BASE_DIR, f"chrome_profiles/{account_name}")
+            if restore_portable_session_if_needed(context, p_dir, account_name, log_func):
+                page.reload(timeout=30000)
+                time.sleep(3)
+                is_ok_retry, reason_retry = detect_threads_logged_in(page)
+                if is_ok_retry:
+                    log_func(f"[SUCCESS] [{account_name}] 🎉 portable_session.json によりMetaブロックを回避してログイン復帰しました！（{reason_retry}）")
+                    return True
+    except Exception:
+        pass
 
     log_func(f"[INFO] [{account_name}] Threads画面のセッション照合中...")
 
@@ -1249,6 +1338,8 @@ def ensure_authenticated_session(page, context, account_name, filepath, log_func
     is_ok, reason = detect_threads_logged_in(page)
     if is_ok:
         log_func(f"[SUCCESS] [{account_name}] 🎉 自動ログイン完了！（{reason}）")
+        p_dir = os.path.join(BASE_DIR, f"chrome_profiles/{account_name}")
+        save_portable_session_file(context, p_dir, account_name, log_func)
         save_context_cookies_to_excel(context, filepath, account_name, log_func)
         return True
 
