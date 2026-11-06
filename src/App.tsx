@@ -18,6 +18,7 @@ import { exportAccountWorkbook, exportAccountsConfigWorkbook, parseExcelFile } f
 import { parseSpintax, resolveImagePath, extractUserIdFromToken } from './utils/spintax';
 import { DownloadCenter } from './components/DownloadCenter';
 import { RAW_THREADS_GUI_APP_PY } from './data/rawScript';
+import { RAW_PROFILE_LAUNCHER_PY } from './data/rawProfileLauncher';
 import { 
   FileSpreadsheet, 
   Smartphone, 
@@ -27,7 +28,8 @@ import {
   Download, 
   FileText,
   AlertCircle,
-  Package
+  Package,
+  Rocket
 } from 'lucide-react';
 
 export default function App() {
@@ -161,11 +163,10 @@ export default function App() {
       addLog('INFO', `[${acc.id}] ⚡【提案2: メディア通信遮断】有効: タイムライン画像・動画をブロック（メモリ60%削減）`);
     }
 
-    // 2. Cookie & SessionID verification
-    const token = acc.authToken;
-    const uid = acc.userId || extractUserIdFromToken(token);
-    addLog('SUCCESS', `[${acc.id}] エクセルの sessionid (ユーザーID: ${uid || '自動検出'}) をThreads/Instagramに自動注入しました。`);
-    addLog('SUCCESS', `[${acc.id}] セッション認証成功！（ユーザー: @${acc.id}）`);
+    // 2. Persistent Profile & Session verification
+    const profileFolder = acc.profileDir || `chrome_profiles/${acc.id}`;
+    addLog('SUCCESS', `[${acc.id}] 永続プロファイルフォルダ（${profileFolder}）のChromeセッションを読込完了。`);
+    addLog('SUCCESS', `[${acc.id}] 認証済みセッションでThreadsに接続しました！（ユーザー: @${acc.id}）`);
 
     // 3. Stealth Patrol simulation (if enabled)
     if (settings.stealthPatrol) {
@@ -250,7 +251,15 @@ export default function App() {
     if (accountIndex === -1) accountIndex = 0;
 
     while (runnerRef.current) {
-      const activeAccount = accounts[accountIndex];
+      const enabledAccounts = accounts.filter((a) => a.enabled !== false);
+      if (enabledAccounts.length === 0) {
+        addLog('WARN', '⚠️ 有効なアカウントがありません（全アカウントが停止または要認証です）。');
+        stopAutoPosting();
+        break;
+      }
+
+      accountIndex = accountIndex % enabledAccounts.length;
+      const activeAccount = enabledAccounts[accountIndex];
       setSelectedAccountId(activeAccount.id);
 
       // Check active hours
@@ -263,9 +272,9 @@ export default function App() {
       }
 
       // Rotate account if 1-window rotation is enabled
-      if (settings.singleWindowRotation && accounts.length > 1) {
-        accountIndex = (accountIndex + 1) % accounts.length;
-        const nextAcc = accounts[accountIndex];
+      if (settings.singleWindowRotation && enabledAccounts.length > 1) {
+        accountIndex = (accountIndex + 1) % enabledAccounts.length;
+        const nextAcc = enabledAccounts[accountIndex];
         addLog('INFO', `🪟【1窓ローテーション】次回番: @${nextAcc.id} にバトンタッチ`);
       }
 
@@ -460,6 +469,7 @@ export default function App() {
           profileDir: a.profileDir || `chrome_profiles/${a.id}`,
           topics: a.topics || ['信太山新地', '大阪求人'],
           currentTopicIndex: 0,
+          enabled: a.enabled !== false,
         }));
         setAccounts(merged);
         setSelectedAccountId(merged[0].id);
@@ -501,6 +511,44 @@ export default function App() {
     }
   };
 
+  // Direct client-side download of profile_launcher.py
+  const handleDirectDownloadProfileLauncher = () => {
+    try {
+      const blob = new Blob([RAW_PROFILE_LAUNCHER_PY], { type: 'text/x-python;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'profile_launcher.py';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      addLog('SUCCESS', '📥 profile_launcher.py (プロファイル生成・ログイン永続化ツール) をダウンロードしました！');
+    } catch (err: any) {
+      addLog('ERROR', `ダウンロード失敗: ${err.message}`);
+    }
+  };
+
+  // Simulate detecting the phone number verification screen (SMS checkpoint)
+  const handleSimulateCheckpoint = (accId: string) => {
+    setAccounts((prev) =>
+      prev.map((a) =>
+        a.id === accId
+          ? {
+              ...a,
+              enabled: false,
+              checkpointReason: '携帯電話番号認証要求画面検知',
+              notes: `${a.notes || ''} [${new Date().toLocaleString('ja-JP')} 自動停止: 携帯電話番号認証画面検知]`.trim(),
+            }
+          : a
+      )
+    );
+    addLog('ERROR', `🚨 [CRITICAL] [@${accId}] 携帯電話番号認証（SMS確認）画面を検知しました！（シミュレーションテスト）`);
+    addLog('WARN', `🛡️ [@${accId}] アカウント情報.xlsx の【有効/無効】を「無効」に自動更新し、直ちに自動投稿を停止しました。`);
+    addLog('INFO', `📸 認証要求画面のスクリーンショットを error_screenshots/phone_checkpoint_${accId}.png に保存しました。`);
+    addLog('SUCCESS', `✅ 他の有効なアカウントの自動投稿はそのまま安全に継続されます。`);
+  };
+
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col font-sans selection:bg-emerald-900 selection:text-white">
       {/* Top Header & Toolbar */}
@@ -520,10 +568,74 @@ export default function App() {
         onImportExcel={handleImportExcel}
         onClearLogs={() => setLogs([])}
         onDownloadPyScript={handleDirectDownloadPyScript}
+        onDownloadProfileLauncher={handleDirectDownloadProfileLauncher}
+        onDownloadAccountsExcel={handleExportAccountsConfig}
       />
 
       {/* Main Container */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 space-y-4">
+        {/* 🌟 Prominent Top Download Card - Always Visible */}
+        <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-zinc-900 via-indigo-950/70 to-zinc-900 border-2 border-indigo-500/80 shadow-2xl flex flex-col xl:flex-row items-center justify-between gap-4">
+          <div className="space-y-1.5 text-center xl:text-left">
+            <div className="flex items-center gap-2 justify-center xl:justify-start flex-wrap">
+              <span className="px-2.5 py-0.5 rounded-full bg-violet-500/20 text-violet-300 border border-violet-500/40 font-mono text-[11px] font-bold">
+                🎉 新ツール: profile_launcher 付属
+              </span>
+              <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-mono text-[11px] font-bold">
+                強制ログアウト根絶・sessionid不要
+              </span>
+            </div>
+            <h2 className="text-base sm:text-lg font-bold text-white flex items-center justify-center xl:justify-start gap-2">
+              <Rocket className="w-5 h-5 text-indigo-400" />
+              <span>Windows版 更新ファイル & プロファイル生成ツール</span>
+            </h2>
+            <p className="text-zinc-300 text-xs">
+              定期ログアウトの原因だったsessionid入力は完全撤廃。新ツール <strong className="text-violet-300 font-mono">profile_launcher.py</strong> でChromeを開き、IDとPWで1回ログインするだけで永続保存されます。
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2.5 flex-wrap justify-center shrink-0">
+            {/* New Profile Launcher Button */}
+            <button
+              onClick={handleDirectDownloadProfileLauncher}
+              className="flex items-center gap-2 px-4 py-3 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white font-bold rounded-xl shadow-lg hover:shadow-violet-900/50 text-sm cursor-pointer transition-all active:scale-95 border border-violet-400/50 animate-pulse"
+              title="新アプリ: profile_launcher.py（プロファイル生成・ログイン永続化ツール）をダウンロード"
+            >
+              <Rocket className="w-4 h-4 text-violet-200" />
+              <span>🚀 profile_launcher.py</span>
+            </button>
+
+            {/* Download Button 1 */}
+            <button
+              onClick={handleDirectDownloadPyScript}
+              className="flex items-center gap-2 px-4 py-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold rounded-xl shadow-lg hover:shadow-emerald-900/50 text-sm cursor-pointer transition-all active:scale-95 border border-emerald-400/50"
+              title="最新の threads_gui_app.py (231KB) を直接ダウンロード"
+            >
+              <Download className="w-4 h-4" />
+              <span>🐍 threads_gui_app.py</span>
+            </button>
+
+            {/* Download Button 2 */}
+            <button
+              onClick={handleExportAccountsConfig}
+              className="flex items-center gap-2 px-4 py-3 bg-gradient-to-r from-sky-600 to-blue-600 hover:from-sky-500 hover:to-blue-500 text-white font-bold rounded-xl shadow-lg hover:shadow-sky-900/50 text-sm cursor-pointer transition-all active:scale-95 border border-sky-400/50"
+              title="ID/PW/sessionid列を撤廃した最新のアカウント情報.xlsx を直接ダウンロード"
+            >
+              <Download className="w-4 h-4" />
+              <span>📊 アカウント情報.xlsx</span>
+            </button>
+
+            {/* Guide Shortcut */}
+            <button
+              onClick={() => setActiveTab('downloads')}
+              className="px-3.5 py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white rounded-xl text-xs font-semibold cursor-pointer border border-zinc-700 transition-colors"
+              title="配置手順マニュアルタブへ移動"
+            >
+              <span>📁 使い方・配置手順</span>
+            </button>
+          </div>
+        </div>
+
         {/* Account Selector & Settings Bar */}
         <AccountSelector
           accounts={accounts}
@@ -531,7 +643,7 @@ export default function App() {
           onSelectAccount={(id) => setSelectedAccountId(id)}
           onUpdateAccount={(updated) => {
             setAccounts((prev) => prev.map((a) => (a.id === updated.id ? updated : a)));
-            addLog('SUCCESS', `[${updated.id}] アカウント設定を更新しました。`);
+            addLog('SUCCESS', `[${updated.id}] アカウント設定を更新しました。(有効/無効: ${updated.enabled !== false ? '有効' : '無効'})`);
           }}
           onAddAccount={(newAcc) => {
             setAccounts((prev) => [...prev, newAcc]);
@@ -542,6 +654,7 @@ export default function App() {
             setSelectedAccountId(newAcc.id);
             addLog('SUCCESS', `新規アカウント @${newAcc.id} を追加しました。`);
           }}
+          onSimulateCheckpoint={handleSimulateCheckpoint}
         />
 
         {/* 6 Key BAN Prevention Master Switches */}
@@ -736,8 +849,8 @@ export default function App() {
                   <thead className="bg-zinc-950 text-zinc-400 font-semibold border-b border-zinc-800">
                     <tr>
                       <th className="py-2.5 px-3">アカウントID</th>
-                      <th className="py-2.5 px-3">ユーザーID</th>
-                      <th className="py-2.5 px-3">Authトークン (sessionid)</th>
+                      <th className="py-2.5 px-3">状態 (有効/無効)</th>
+                      <th className="py-2.5 px-3">Chromeプロファイル (永続ログイン)</th>
                       <th className="py-2.5 px-3">待機間隔</th>
                       <th className="py-2.5 px-3">未投稿 / 総数</th>
                       <th className="py-2.5 px-3 text-right">Excel出力</th>
@@ -747,16 +860,39 @@ export default function App() {
                     {accounts.map((acc) => {
                       const pList = accountPosts[acc.id] || [];
                       const unposted = pList.filter((p) => p.status === '未投稿').length;
+                      const isAccActive = acc.enabled !== false;
+                      const profName = acc.profileDir ? acc.profileDir.replace('chrome_profiles/', '') : acc.id;
                       return (
                         <tr key={acc.id} className="hover:bg-zinc-800/30">
                           <td className="py-2.5 px-3 font-semibold text-white">
                             @{acc.id}
                           </td>
-                          <td className="py-2.5 px-3 font-mono text-zinc-400">
-                            {acc.userId || '―'}
+                          <td className="py-2.5 px-3">
+                            <button
+                              onClick={() => {
+                                const nextState = !isAccActive;
+                                setAccounts((prev) =>
+                                  prev.map((a) => (a.id === acc.id ? { ...a, enabled: nextState } : a))
+                                );
+                                addLog('INFO', `[@${acc.id}] 状態を ${nextState ? '有効' : '無効'} に変更しました。`);
+                              }}
+                              className={`px-2 py-0.5 rounded text-[10px] font-semibold cursor-pointer border ${
+                                isAccActive
+                                  ? 'bg-emerald-950 text-emerald-300 border-emerald-800'
+                                  : 'bg-rose-950 text-rose-300 border-rose-800'
+                              }`}
+                              title="クリックで有効/無効を切替"
+                            >
+                              {isAccActive ? '● 有効' : '🔴 停止中'}
+                            </button>
                           </td>
-                          <td className="py-2.5 px-3 font-mono text-zinc-400 truncate max-w-xs">
-                            {acc.authToken ? `${acc.authToken.slice(0, 24)}...` : '未設定'}
+                          <td className="py-2.5 px-3 font-mono text-zinc-300">
+                            <span className="px-2 py-0.5 rounded bg-zinc-950 border border-zinc-700 text-indigo-300 text-[11px]">
+                              📁 chrome_profiles/{profName}
+                            </span>
+                            <span className="ml-2 text-[10px] text-emerald-400 font-sans">
+                              (profile_launcher対応)
+                            </span>
                           </td>
                           <td className="py-2.5 px-3 text-zinc-300">
                             {acc.minIntervalMinutes}〜{acc.maxIntervalMinutes}分
@@ -823,7 +959,7 @@ export default function App() {
           )}
 
           {activeTab === 'downloads' && (
-            <DownloadCenter />
+            <DownloadCenter accounts={accounts} />
           )}
         </div>
       </main>

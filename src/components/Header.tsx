@@ -29,6 +29,8 @@ interface HeaderProps {
   onImportExcel: (file: File) => void;
   onClearLogs: () => void;
   onDownloadPyScript: () => void;
+  onDownloadProfileLauncher: () => void;
+  onDownloadAccountsExcel: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -47,6 +49,8 @@ export const Header: React.FC<HeaderProps> = ({
   onImportExcel,
   onClearLogs,
   onDownloadPyScript,
+  onDownloadProfileLauncher,
+  onDownloadAccountsExcel,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -173,12 +177,27 @@ export const Header: React.FC<HeaderProps> = ({
           {/* Excel & Management Controls */}
           <div className="flex items-center gap-1.5 flex-wrap">
             <button
-              onClick={onDownloadPyScript}
-              className="flex items-center gap-1 px-3 py-1.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white text-xs font-bold rounded-md shadow transition-all cursor-pointer border border-indigo-400/40"
-              title="最新の threads_gui_app.py を直接ダウンロード (HTML混入なし)"
+              onClick={onDownloadProfileLauncher}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white text-xs font-bold rounded-lg shadow-md transition-all cursor-pointer border border-violet-400/50"
+              title="新アプリ: profile_launcher.py (ログイン・プロファイル生成ツール) をダウンロード"
             >
-              <FileCode2 className="w-3.5 h-3.5" />
-              <span>⬇️ threads_gui_app.py</span>
+              <span>🚀 profile_launcher.py</span>
+            </button>
+
+            <button
+              onClick={onDownloadPyScript}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-bold rounded-lg shadow-md transition-all cursor-pointer border border-emerald-400/50"
+              title="最新の threads_gui_app.py (231KB) を直接ダウンロード"
+            >
+              <span>🐍 threads_gui_app.py</span>
+            </button>
+
+            <button
+              onClick={onDownloadAccountsExcel}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 text-white text-xs font-bold rounded-lg shadow-md transition-all cursor-pointer border border-sky-400/50"
+              title="有効/無効列が追加された アカウント情報.xlsx を直接ダウンロード"
+            >
+              <span>📊 アカウント情報.xlsx</span>
             </button>
 
             <button

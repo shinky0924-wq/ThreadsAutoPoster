@@ -297,18 +297,22 @@ def read_account_settings_from_post_file(filepath):
 
                 # 4. Chromeプロファイル保存パス
                 if any(k in row_str for k in ["Chromeプロファイル", "プロファイル保存パス", "プロファイル保存先", "プロファイル", "profile"]):
-                    for offset in range(1, 4):
+                    for offset in range(1, 3):
                         if r_idx + offset >= len(all_rows):
                             break
                         sub_row = all_rows[r_idx + offset]
                         if not sub_row:
                             continue
+                        sub_str = " ".join([str(c).strip() for c in sub_row if c is not None])
+                        if any(h in sub_str for h in ["コミュニティ", "トピック", "モード", "間隔", "ツイート", "ポスト", "実行時間"]):
+                            break
                         for cell in sub_row:
                             if cell is not None:
                                 c_s = str(cell).strip()
                                 if c_s and not c_s.startswith("(") and not c_s.startswith("（") and not c_s.startswith("※"):
-                                    settings["profile_dir"] = c_s
-                                    break
+                                    if not any(h in c_s for h in ["コミュニティ", "トピック", "モード", "間隔", "ツイート", "ポスト", "実行時間"]):
+                                        settings["profile_dir"] = c_s
+                                        break
                         if "profile_dir" in settings:
                             break
 
@@ -419,7 +423,13 @@ def update_account_sessionid(filepath, account_name, new_sessionid):
         if not filepath or not os.path.exists(filepath):
             return False
         wb = openpyxl.load_workbook(filepath)
-        ws = wb.active
+        ws = None
+        for sname in wb.sheetnames:
+            if "アカウント" in sname or "account" in sname.lower():
+                ws = wb[sname]
+                break
+        if not ws:
+            ws = wb.active
         id_col = None
         token_col = None
         for r_num, row_cells in enumerate(ws.iter_rows(max_row=5), start=1):
@@ -455,6 +465,234 @@ def update_account_sessionid(filepath, account_name, new_sessionid):
     except Exception as e:
         print(f"[WARN] sessionid 更新エラー: {e}")
     return False
+
+
+
+def open_threads_composer_dialog(page, account_name, log_func=print):
+    """
+    Threadsの新規スレッド作成モーダル (div[role="dialog"]) を開き、
+    入力欄 (textbox) を取得します。
+    
+    対応パターン（最新Threads UI完全対応）:
+    1. 画面左下の円形「＋」ボタン（黒丸白プラス・ユーザー添付画面に完全一致）
+    2. 左サイドバー/ヘッダーの「スレッド」「投稿」「作成」「+」SVG/aria-labelアイコン
+    3. タイムライン上部の「スレッドを開始...」プロンプトバー
+    4. 左下プラスボタン領域（x: 35〜55px, y: 画面下部）への直接マウスクリック
+    5. キーボードショートカット 'c'
+    """
+    dialog = None
+    textbox = None
+
+    # すでにモーダルが開いていないか即時チェック
+    for d_sel in ['div[role="dialog"]', 'div[aria-modal="true"]']:
+        try:
+            cand = page.locator(d_sel).first
+            if cand.is_visible():
+                dialog = cand
+                break
+        except Exception:
+            pass
+
+    if dialog:
+        for tb_sel in ['div[role="textbox"]', 'div[contenteditable="true"]', '[data-lexical-editor="true"]']:
+            try:
+                tb_cand = dialog.locator(tb_sel).first
+                if tb_cand.is_visible():
+                    return dialog, tb_cand
+            except Exception:
+                pass
+
+    clicked_method = ""
+
+    # パターン1: 画面左下の丸い「＋」ボタン（最新UI・画面左下隅に配置されている黒丸アイコン）
+    try:
+        # 左下領域（x < 120）に存在するボタン要素を全収集し、最も下（y座標が最大）にある要素を選択
+        candidates = []
+        for sel in ['div[role="button"]', 'button', 'a']:
+            try:
+                for el in page.locator(sel).all():
+                    try:
+                        if el.is_visible():
+                            box = el.bounding_box()
+                            if box and box['x'] < 120 and box['y'] > 200 and 20 <= box['width'] <= 100 and 20 <= box['height'] <= 100:
+                                candidates.append((box['y'], box, el))
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+        if candidates:
+            # y座標が最も大きいもの（＝一番下にある黒丸「＋」ボタン）を優先
+            candidates.sort(key=lambda item: item[0], reverse=True)
+            best_y, best_box, best_el = candidates[0]
+            log_func(f"[{account_name}] 画面左下の最下部「＋」ボタン (x={int(best_box['x'])}, y={int(best_y)}, サイズ={int(best_box['width'])}x{int(best_box['height'])}) を検出！クリックします...")
+            try:
+                best_el.scroll_into_view_if_needed()
+                best_el.click(force=True)
+                clicked_method = "左下円形＋ボタン"
+                time.sleep(1.0)
+            except Exception as e:
+                log_func(f"[DEBUG] ボタンクリック失敗: {e}")
+    except Exception as e:
+        log_func(f"[DEBUG] 左下＋ボタン探索: {e}")
+
+    # パターン2: SVG aria-label による「スレッド」「投稿」「作成」「New」「Create」ボタン
+    if not clicked_method:
+        icon_selectors = [
+            'svg[aria-label*="スレッド"]',
+            'svg[aria-label*="投稿"]',
+            'svg[aria-label*="作成"]',
+            'svg[aria-label*="New"]',
+            'svg[aria-label*="Create"]',
+            'svg[aria-label*="Post"]',
+            'div[role="button"]:has(svg[aria-label*="スレッド"])',
+            'div[role="button"]:has(svg[aria-label*="投稿"])',
+            'div[role="button"]:has(svg[aria-label*="作成"])',
+            'div[role="button"]:has(svg[aria-label*="New"])',
+            'div[role="button"]:has(svg[aria-label*="Create"])',
+            'button:has(svg[aria-label*="スレッド"])',
+            'button:has(svg[aria-label*="投稿"])',
+            'button:has(svg[aria-label*="作成"])'
+        ]
+        for sel in icon_selectors:
+            try:
+                cand = page.locator(sel).first
+                if cand.is_visible():
+                    box = cand.bounding_box()
+                    if box and (box['x'] < 300 or box['y'] < 200):
+                        log_func(f"[{account_name}] 新規スレッド作成アイコン ({sel}) を検出！クリックします...")
+                        cand.click(force=True)
+                        clicked_method = f"アイコン ({sel})"
+                        time.sleep(1.0)
+                        break
+            except Exception:
+                pass
+
+    # パターン3: タイムライン上部の「スレッドを開始...」エリア
+    if not clicked_method:
+        for prompt_sel in [
+            'div[role="button"]:has-text("スレッドを開始")',
+            'div:has-text("スレッドを開始...")',
+            'span:has-text("スレッドを開始")',
+            'div:has-text("Start a thread")',
+            '[placeholder*="スレッドを開始"]'
+        ]:
+            try:
+                p_el = page.locator(prompt_sel).first
+                if p_el.is_visible():
+                    log_func(f"[{account_name}] タイムライン上部の「スレッドを開始...」をクリックします...")
+                    p_el.click(force=True)
+                    clicked_method = "タイムライン上部バー"
+                    time.sleep(1.0)
+                    break
+            except Exception:
+                pass
+
+    # パターン4: 左下プラスボタン位置への直接マウスクリック（ブラウザ実寸座標）
+    if not clicked_method:
+        try:
+            win_dim = page.evaluate("() => ({ width: window.innerWidth, height: window.innerHeight })")
+            target_x = 35
+            target_y = max(500, win_dim.get("height", 900) - 45)
+            log_func(f"[{account_name}] 左下「＋」ボタンの位置 (x={target_x}, y={target_y}) を直接クリックします...")
+            page.mouse.click(target_x, target_y)
+            clicked_method = "左下座標直接クリック"
+            time.sleep(1.0)
+        except Exception:
+            pass
+
+    # パターン5: キーボードショートカット 'c'
+    try:
+        page.locator('body').focus()
+        page.keyboard.press("c")
+        time.sleep(0.5)
+    except Exception:
+        pass
+
+    # モーダル (dialog) と入力欄 (textbox) の出現を待機
+    for wait_i in range(20):
+        time.sleep(0.5)
+        try:
+            for d_sel in ['div[role="dialog"]', 'div[aria-modal="true"]']:
+                d_cand = page.locator(d_sel).first
+                if d_cand.is_visible():
+                    dialog = d_cand
+                    break
+            if dialog:
+                for tb_sel in [
+                    'div[role="textbox"]',
+                    'div[contenteditable="true"]',
+                    '[data-lexical-editor="true"]'
+                ]:
+                    tb_cand = dialog.locator(tb_sel).first
+                    if tb_cand.is_visible():
+                        textbox = tb_cand
+                        break
+                if textbox:
+                    log_func(f"[SUCCESS] [{account_name}] 🎉 新規スレッド作成モーダルが開きました！")
+                    return dialog, textbox
+        except Exception:
+            pass
+
+        # 途中で開かなかった場合は左下座標を再クリック＆ショートカット再送
+        if wait_i in [4, 10]:
+            try:
+                win_dim = page.evaluate("() => ({ width: window.innerWidth, height: window.innerHeight })")
+                page.mouse.click(35, max(500, win_dim.get("height", 900) - 45))
+                time.sleep(0.3)
+                page.keyboard.press("c")
+            except Exception:
+                pass
+
+    return dialog, textbox
+
+
+def safe_launch_persistent_context(p, profile_dir, headless=False, log_func=print):
+    """
+    SingletonLock等のブラウザ残骸を自動クリーンアップし、安定してChromeを起動します。
+    """
+    os.makedirs(profile_dir, exist_ok=True)
+    for lk in ["SingletonLock", "SingletonCookie", "SingletonSocket"]:
+        try:
+            lk_p = os.path.join(profile_dir, lk)
+            if os.path.exists(lk_p):
+                os.remove(lk_p)
+        except Exception:
+            pass
+
+    args = [
+        "--disable-blink-features=AutomationControlled",
+        "--lang=ja-JP",
+        "--no-sandbox",
+        "--disable-dev-shm-usage"
+    ]
+
+    for attempt in range(1, 3):
+        try:
+            context = p.chromium.launch_persistent_context(
+                user_data_dir=profile_dir,
+                headless=headless,
+                channel="chrome",
+                locale="ja-JP",
+                viewport={"width": 1280, "height": 900},
+                args=args
+            )
+            return context
+        except Exception as e:
+            err_str = str(e)
+            if ("Target page, context or browser has been closed" in err_str or "closed" in err_str) and attempt == 1:
+                log_func("[WARN] 過去のChrome残骸ロックを検知しました。ロックファイルを削除して再起動します...")
+                time.sleep(1.5)
+                for lk in ["SingletonLock", "SingletonCookie", "SingletonSocket"]:
+                    try:
+                        lk_p = os.path.join(profile_dir, lk)
+                        if os.path.exists(lk_p):
+                            os.remove(lk_p)
+                    except Exception:
+                        pass
+                continue
+            raise e
+
 
 def setup_media_blocking(target_context_or_page, log_func=None):
     """
@@ -549,9 +787,9 @@ def test_session_id_online(token):
 
 def inject_session_cookies(context, raw_token, account_name, log_func=print):
     token = str(raw_token or "").strip()
-    if not token or token.lower() == "nan" or token.startswith("ここに"):
-        log_func(f"[WARN] [{account_name}] Excelの auth_token (sessionid) が空です。")
-        return False
+    if not token or token.lower() in ["nan", "none", ""] or token.startswith("ここに"):
+        # プロファイル永続化モード（推奨・profile_launcherでID/PWログイン済み）
+        return True
     
     if token.startswith("sessionid="):
         token = token[len("sessionid="):].strip()
@@ -583,6 +821,21 @@ def inject_session_cookies(context, raw_token, account_name, log_func=print):
     if token != decoded_token:
         cookie_values_to_set.append(token)
 
+    # 既存の生きたセッションをチェック (Metaが更新した最新セッションがあれば古いExcel値で上書きしない)
+    try:
+        existing_cookies = context.cookies(["https://www.threads.net", "https://www.instagram.com"])
+        for c in existing_cookies:
+            if c.get("name") == "sessionid" and c.get("value"):
+                c_val = c.get("value")
+                if ds_user_id and str(ds_user_id) in c_val:
+                    # すでに同一アカウントの有効なセッションがChromeプロファイルにある場合はそのまま維持
+                    log_func(f"[INFO] [{account_name}] Chromeプロファイル内のアクティブなセッションを自動維持します。")
+                    return True
+    except Exception:
+        pass
+
+    cookie_expires = int(time.time()) + 31536000  # 1年間有効（揮発防止）
+
     domains = [
         ".threads.net", "www.threads.net", "threads.net",
         ".threads.com", "www.threads.com", "threads.com",
@@ -598,7 +851,8 @@ def inject_session_cookies(context, raw_token, account_name, log_func=print):
             "path": "/",
             "httpOnly": True,
             "secure": True,
-            "sameSite": "Lax"
+            "sameSite": "Lax",
+            "expires": cookie_expires
         })
         if ds_user_id:
             cookies_to_add.append({
@@ -607,7 +861,8 @@ def inject_session_cookies(context, raw_token, account_name, log_func=print):
                 "domain": domain,
                 "path": "/",
                 "secure": True,
-                "sameSite": "Lax"
+                "sameSite": "Lax",
+                "expires": cookie_expires
             })
 
     try:
@@ -623,7 +878,8 @@ def inject_session_cookies(context, raw_token, account_name, log_func=print):
                 "url": u,
                 "httpOnly": True,
                 "secure": True,
-                "sameSite": "Lax"
+                "sameSite": "Lax",
+                "expires": cookie_expires
             }]
             if ds_user_id:
                 url_cookies.append({
@@ -631,14 +887,208 @@ def inject_session_cookies(context, raw_token, account_name, log_func=print):
                     "value": str(ds_user_id),
                     "url": u,
                     "secure": True,
-                    "sameSite": "Lax"
+                    "sameSite": "Lax",
+                    "expires": cookie_expires
                 })
             context.add_cookies(url_cookies)
         except Exception:
             pass
 
-    log_func(f"[SUCCESS] [{account_name}] エクセルの sessionid (ユーザーID: {ds_user_id or '未特定'}) をThreads/Instagramに自動注入しました。")
+    log_func(f"[SUCCESS] [{account_name}] sessionid (ユーザーID: {ds_user_id or '未特定'}) を永続Cookie (有効期限1年) として自動注入しました。")
     return True
+
+
+def detect_phone_checkpoint_screen(page):
+    """
+    Metaの携帯電話番号認証（SMS / WhatsApp確認）要求画面を即時検知
+    """
+    if not page:
+        return False, ""
+    try:
+        cur_url = ""
+        try:
+            cur_url = (page.url or "").lower()
+        except Exception:
+            pass
+        if any(k in cur_url for k in ["/challenge/", "/checkpoint/", "challenge_type=phone", "phone_number"]):
+            return True, f"認証URL検知 ({cur_url})"
+
+        content = ""
+        try:
+            content = page.content()
+        except Exception:
+            pass
+
+        keywords = [
+            "携帯電話番号を入力",
+            "SMSまたはWhatsAppで送信されたコードでこの携帯電話番号を認証する必要があります",
+            "コードを送信",
+            "電話番号を認証する必要があります",
+            "Enter your mobile number",
+            "Send code",
+        ]
+        for kw in keywords:
+            if kw in content:
+                return True, f"画面テキスト検知「{kw}」"
+
+        checkpoint_selectors = [
+            'button:has-text("コードを送信")',
+            'div[role="button"]:has-text("コードを送信")',
+            'input[placeholder*="電話番号"]',
+            'input[aria-label*="電話番号"]',
+            'input[type="tel"]',
+            'text="携帯電話番号を入力"',
+            'text="SMSまたはWhatsApp"'
+        ]
+        for sel in checkpoint_selectors:
+            try:
+                if page.locator(sel).first.is_visible(timeout=200):
+                    return True, f"要素検知 ({sel})"
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return False, ""
+
+
+def safe_goto_threads(page, context, session_token, account_name, log_func=print, timeout=60000):
+    """
+    Threadsホーム (https://www.threads.net/) へ安全にアクセスします。
+    net::ERR_TOO_MANY_REDIRECTS（リダイレクトループ / Cookieを削除してください）が発生した場合、
+    エラーのままスキップして次アカウントへ飛ぶのではなく、
+    「Cookie を削除してみてください」指示に従ってCookieと循環キャッシュを自動クリアし、
+    セッションを再設定して正常にThreadsを開き直してから投稿を実行できるように自己修復します。
+    """
+    max_retries = 3
+    for attempt in range(1, max_retries + 1):
+        redirect_detected = False
+        try:
+            page.goto("https://www.threads.net/", timeout=timeout, wait_until="domcontentloaded")
+            time.sleep(2.5)
+
+            # 画面内に ERR_TOO_MANY_REDIRECTS やリダイレクトループ文言が表示されていないか検査
+            try:
+                page_content = page.content()
+                if any(k in page_content for k in [
+                    "ERR_TOO_MANY_REDIRECTS",
+                    "リダイレクトが繰り返し行われました",
+                    "Cookie を削除してみてください",
+                    "Cookieを削除してみてください",
+                    "このページは動作していません"
+                ]):
+                    redirect_detected = True
+            except Exception:
+                pass
+
+            if not redirect_detected:
+                if attempt > 1:
+                    log_func(f"[SUCCESS] ✨ [{account_name}] リダイレクトエラー (ERR_TOO_MANY_REDIRECTS) の自己修復に成功！正常にThreadsホームを表示しました。")
+                return True
+
+            log_func(f"[WARN] 🔄 [{account_name}] リダイレクトループ画面 (ERR_TOO_MANY_REDIRECTS) を検知しました (修復試行 {attempt}/{max_retries})。")
+
+        except Exception as e:
+            err_str = str(e)
+            if "ERR_TOO_MANY_REDIRECTS" in err_str or "too many redirects" in err_str.lower():
+                redirect_detected = True
+                log_func(f"[WARN] 🔄 [{account_name}] Page.goto: net::ERR_TOO_MANY_REDIRECTS を検知しました (修復試行 {attempt}/{max_retries})。")
+            else:
+                if attempt == max_retries:
+                    raise e
+                log_func(f"[WARN] [{account_name}] ページ接続エラー: {err_str} (修復試行 {attempt}/{max_retries})...")
+                time.sleep(2)
+
+        # 自己修復シーケンス:
+        log_func(f"[INFO] 🧹 [{account_name}] 「Cookie を削除してみてください」指示に従い、競合Cookie・リダイレクト循環キャッシュを全クリアして自己修復します...")
+        try:
+            # 1. about:blank に逃げてブラウザ内部の redirect loop cache を遮断
+            page.goto("about:blank", timeout=10000)
+            time.sleep(1.0)
+        except Exception:
+            pass
+
+        try:
+            # 2. コンテキスト内のクッキーを全消去
+            context.clear_cookies()
+            time.sleep(1.0)
+        except Exception as ce:
+            log_func(f"[DEBUG] clear_cookies: {ce}")
+
+        # 3. 再びクリーンなセッションCookieのみを注入
+        if session_token:
+            inject_session_cookies(context, session_token, account_name, log_func=log_func)
+            time.sleep(1.5)
+
+        log_func(f"[INFO] 🔄 [{account_name}] Threadsホーム画面へ再アクセス・再読み込みを実行中...")
+
+    # 最終試行
+    page.goto("https://www.threads.net/", timeout=timeout)
+    time.sleep(3)
+    return True
+
+def set_account_status_in_excel(filepath, account_name, status="無効", reason="携帯電話番号認証画面検知"):
+    """
+    アカウント情報.xlsx の「有効/無効」列を更新（無ければ自動新設）し、該当アカウントを「無効」に設定して保存
+    """
+    try:
+        if not filepath or not os.path.exists(filepath):
+            return False
+        import openpyxl
+        wb = openpyxl.load_workbook(filepath)
+        target_ws = None
+        for sname in wb.sheetnames:
+            if "アカウント" in sname or "account" in sname.lower():
+                target_ws = wb[sname]
+                break
+        if not target_ws:
+            target_ws = wb.active
+
+        header_row_idx = 1
+        for r_idx, row in enumerate(target_ws.iter_rows(max_row=10, values_only=True), start=1):
+            if row and any(k in [str(c).strip() for c in row if c is not None] for k in ["アカウントID", "アカウント名", "auth_token"]):
+                header_row_idx = r_idx
+                break
+
+        headers = [str(target_ws.cell(row=header_row_idx, column=c).value or "").strip() for c in range(1, target_ws.max_column + 1)]
+        id_col = None
+        status_col = None
+        notes_col = None
+
+        for c_idx, h in enumerate(headers, start=1):
+            if any(k in h for k in ["アカウントID", "アカウント名", "アカウント"]):
+                id_col = c_idx
+            elif any(k in h for k in ["有効/無効", "有効無効", "ステータス", "状態"]):
+                status_col = c_idx
+            elif any(k in h for k in ["備考", "メモ", "notes"]):
+                notes_col = c_idx
+
+        if not id_col:
+            id_col = 1
+
+        if not status_col:
+            status_col = len(headers) + 1
+            target_ws.cell(row=header_row_idx, column=status_col, value="有効/無効")
+
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        updated = False
+
+        for r_num in range(header_row_idx + 1, target_ws.max_row + 1):
+            val = str(target_ws.cell(row=r_num, column=id_col).value or "").strip()
+            if val == str(account_name).strip():
+                target_ws.cell(row=r_num, column=status_col, value=status)
+                if notes_col:
+                    cur_note = str(target_ws.cell(row=r_num, column=notes_col).value or "").strip()
+                    target_ws.cell(row=r_num, column=notes_col, value=f"{cur_note} [{now_str} 自動停止: {reason}]".strip())
+                updated = True
+                break
+
+        wb.save(filepath)
+        wb.close()
+        return updated
+    except Exception as e:
+        print(f"[ERROR] アカウント情報.xlsx 更新エラー: {e}")
+        return False
+
 
 def detect_threads_logged_in(page):
     # 1. ページ内部の Relay / 初期化データからログイン済みユーザーを判定（言語・UI変更に最も強い判定法）
@@ -716,10 +1166,15 @@ def save_context_cookies_to_excel(context, filepath, account_name, log_func=prin
 
 def ensure_authenticated_session(page, context, account_name, filepath, log_func=print, wait_timeout_sec=30):
     time.sleep(2)
+    is_cp, cp_why = detect_phone_checkpoint_screen(page)
+    if is_cp:
+        log_func(f"[CRITICAL] 🚨 [{account_name}] 携帯電話番号（SMS）認証画面を検知しました！（{cp_why}）")
+        log_func(f"[CRITICAL] 🛡️ アカウント安全保護のため直ちに停止し、アカウント情報.xlsx の【有効/無効】を「無効」に更新します。")
+        set_account_status_in_excel(filepath, account_name, status="無効", reason="携帯電話番号認証画面検知")
+        return False
     is_ok, reason = detect_threads_logged_in(page)
     if is_ok:
-        log_func(f"[SUCCESS] [{account_name}] エクセルの sessionid で自動ログインに成功しました！（{reason}）")
-        save_context_cookies_to_excel(context, filepath, account_name, log_func)
+        log_func(f"[SUCCESS] [{account_name}] Chromeプロファイルのセッションで自動ログイン確認完了！（{reason}）")
         return True
 
     log_func(f"[INFO] [{account_name}] Threads画面のセッション照合中...")
@@ -1030,6 +1485,477 @@ def set_topic_in_threads_composer(page, dialog, topic_name, log_func=None):
             log_func(f"[WARN] コミュニティ/トピック「{clean_topic}」の設定UIが見つかりませんでした。本文を改変せずそのまま投稿します。")
 
     return topic_set
+
+
+def _perform_fill_and_submit_post(
+    page,
+    container,
+    textbox,
+    account_name,
+    text_content,
+    target_topic=None,
+    resolved_img=None,
+    submit_btn_override=None,
+    route_name="新規投稿",
+    log_func=print
+):
+    """
+    指定されたテキストボックスに入力、トピック・画像を設定し、
+    「投稿」ボタンをクリックして送信完了（トースト通知またはフォーム終了）を確認する汎用投稿関数
+    """
+    try:
+        # 1. テキストボックスのフォーカス＆クリア
+        textbox.click()
+        try:
+            textbox.press("Control+A")
+            textbox.press("Backspace")
+        except Exception:
+            pass
+        time.sleep(0.3)
+
+        # 2. 本文のタイピング入力
+        lines = text_content.split("\n")
+        for l_idx, line in enumerate(lines):
+            if line:
+                textbox.press_sequentially(line, delay=random.randint(15, 30))
+            if l_idx < len(lines) - 1:
+                textbox.press("Shift+Enter")
+                time.sleep(0.1)
+
+        time.sleep(1.0)
+
+        # 3. トピック設定
+        if target_topic:
+            try:
+                set_topic_in_threads_composer(page, container, target_topic, log_func)
+                time.sleep(0.5)
+            except Exception as te:
+                if log_func:
+                    log_func(f"[DEBUG] トピック設定例外: {te}")
+
+        # 4. 画像添付
+        if resolved_img:
+            safe_img = ensure_valid_image(resolved_img, log_func)
+            if log_func:
+                log_func(f"[{account_name}] 画像を添付します: {os.path.basename(safe_img)}")
+            attached = False
+            media_selectors = [
+                'svg[aria-label*="メディア"]',
+                'svg[aria-label*="画像"]',
+                'svg[aria-label*="写真"]',
+                'svg[aria-label*="添付"]',
+                'svg[aria-label="画像を追加"]',
+                'svg[aria-label="メディアを添付"]',
+                'svg[aria-label="写真を添付"]'
+            ]
+            search_root = container if (container and container.is_visible()) else page
+            for m_sel in media_selectors:
+                try:
+                    m_el = search_root.locator(m_sel).first
+                    if m_el.is_visible():
+                        btn_parent = search_root.locator(f'div[role="button"]:has({m_sel}), button:has({m_sel})').first
+                        click_el = btn_parent if btn_parent.is_visible() else m_el
+                        with page.expect_file_chooser(timeout=2500) as fc_info:
+                            click_el.click()
+                        file_chooser = fc_info.value
+                        file_chooser.set_files(safe_img)
+                        attached = True
+                        if log_func:
+                            log_func(f"[{account_name}] メディア添付アイコン経由で画像を設定しました。")
+                        break
+                except Exception:
+                    pass
+
+            if not attached:
+                for f_sel in [
+                    'input[type="file"][accept*="image"]',
+                    'input[type="file"][multiple]',
+                    'input[type="file"]'
+                ]:
+                    try:
+                        locs = search_root.locator(f_sel).all()
+                        if locs:
+                            locs[-1].set_input_files(safe_img)
+                            attached = True
+                            if log_func:
+                                log_func(f"[{account_name}] ファイル入力要素({f_sel})に画像を設定しました。")
+                            break
+                    except Exception:
+                        pass
+
+            if attached:
+                for _ in range(12):
+                    time.sleep(0.8)
+                    preview_found = False
+                    for p_sel in [
+                        'img[src^="blob:"]',
+                        'img[alt*="メディア"]',
+                        'img[alt*="画像"]',
+                        'svg[aria-label*="削除"]',
+                        'svg[aria-label*="メディアを破棄"]'
+                    ]:
+                        try:
+                            if search_root.locator(p_sel).first.is_visible():
+                                preview_found = True
+                                break
+                        except Exception:
+                            pass
+                    if preview_found:
+                        if log_func:
+                            log_func(f"[{account_name}] 画像プレビュー確認完了（アップロード成功）")
+                        break
+
+        time.sleep(1.0)
+
+        # 5. 余計なポップアップメニュー（返信範囲設定等）をEscapeでクローズ
+        for pop_sel in ['text="返信と引用ができる人"', 'text="返信できる人"', 'div[role="menu"]']:
+            try:
+                if page.locator(pop_sel).first.is_visible():
+                    page.keyboard.press("Escape")
+                    time.sleep(0.5)
+                    break
+            except Exception:
+                pass
+
+        # 6. 「投稿」送信ボタンの特定
+        submit_btn = submit_btn_override
+        if not submit_btn or not submit_btn.is_visible():
+            search_root = container if (container and container.is_visible()) else page
+            for _ in range(15):
+                candidates = []
+                for btn in search_root.locator('div[role="button"], button').all():
+                    try:
+                        if not btn.is_visible():
+                            continue
+                        txt = btn.inner_text().strip()
+                        clean_txt = txt.replace(" ", "").replace("\n", "")
+                        if clean_txt in ["投稿", "Post", "投稿する"] and "オプション" not in txt and "新しい" not in txt and "作成" not in txt and "下書き" not in txt:
+                            candidates.append(btn)
+                    except Exception:
+                        pass
+                if candidates:
+                    cand_btn = candidates[-1]
+                    is_disabled = (cand_btn.get_attribute("aria-disabled") == "true") or (cand_btn.get_attribute("disabled") is not None)
+                    if not is_disabled:
+                        submit_btn = cand_btn
+                        break
+                time.sleep(1)
+
+        if not submit_btn:
+            return False, "「投稿」ボタンがアクティブになりませんでした（文字数超過またはアップロード中の可能性）"
+
+        if log_func:
+            log_func(f"[{account_name}] 【{route_name}】「投稿」ボタンをクリックしました。Threads送信処理を確認中...")
+        try:
+            submit_btn.scroll_into_view_if_needed()
+            submit_btn.click(force=True)
+        except Exception:
+            pass
+        try:
+            submit_btn.evaluate("el => el.click()")
+        except Exception:
+            pass
+        try:
+            textbox.focus()
+            page.keyboard.press("Control+Enter")
+        except Exception:
+            pass
+
+        # 7. 送信完了チェック
+        posted_success = False
+        post_error_detected = ""
+
+        for check_idx in range(30):
+            time.sleep(0.8)
+            # (A) 画面下部の黒い完了通知トースト
+            for s_sel in [
+                'text="投稿完了"', ':has-text("投稿完了")',
+                'text="投稿しました"', ':has-text("投稿しました")',
+                'text="スレッドを投稿しました"', ':has-text("スレッドを投稿しました")',
+                'text="スレッドを表示"', ':has-text("スレッドを表示")',
+                'text="スレッドが投稿されました"', ':has-text("スレッドが投稿されました")',
+                'text="Posted"', 'text="View post"',
+                'div[role="alert"]:has-text("投稿")', 'div[role="alert"]:has-text("スレッド")',
+                'div:has-text("投稿完了")', 'div:has-text("投稿しました")',
+                'div:has-text("スレッドを投稿しました")'
+            ]:
+                try:
+                    if page.locator(s_sel).first.is_visible():
+                        posted_success = True
+                        if log_func:
+                            log_func(f"[SUCCESS] [{account_name}] 🎉 完了通知（'{s_sel}'）を確認し、投稿完了しました！")
+                        break
+                except Exception:
+                    pass
+            if posted_success:
+                break
+
+            # (B) エラー画面通知
+            for err_sel in [
+                'div[role="alert"]:has-text("エラー")', 'text="投稿できませんでした"',
+                'text="アップロードできませんでした"', 'text="エラーが発生しました"',
+                'text="問題が発生しました"', 'text="コミュニティガイドライン"',
+                'text="後でもう一度お試しください"'
+            ]:
+                try:
+                    err_el = page.locator(err_sel).first
+                    if err_el.is_visible():
+                        post_error_detected = err_el.inner_text().strip()[:80]
+                        break
+                except Exception:
+                    pass
+            if post_error_detected:
+                break
+
+            # (C) フォームの消失またはクリア検知
+            form_cleared_or_closed = False
+            if container and container.is_visible():
+                try:
+                    if not textbox.is_visible() or not textbox.inner_text().strip():
+                        form_cleared_or_closed = True
+                except Exception:
+                    form_cleared_or_closed = True
+            else:
+                form_cleared_or_closed = True
+
+            if form_cleared_or_closed and check_idx >= 2:
+                time.sleep(0.4)
+                for err_sel in ['div[role="alert"]:has-text("エラー")', 'text="投稿できませんでした"']:
+                    try:
+                        if page.locator(err_sel).first.is_visible():
+                            post_error_detected = "エラー通知検出"
+                            break
+                    except Exception:
+                        pass
+                if not post_error_detected:
+                    posted_success = True
+                    if log_func:
+                        log_func(f"[SUCCESS] [{account_name}] 🎉 投稿フォームが正常に送信され完了しました！")
+                    break
+
+            if check_idx in [5, 12]:
+                try:
+                    if submit_btn and submit_btn.is_visible():
+                        submit_btn.click(force=True)
+                except Exception:
+                    pass
+
+        if post_error_detected:
+            return False, f"Threads画面エラー: {post_error_detected}"
+
+        if posted_success:
+            return True, ""
+        else:
+            return False, "投稿ボタン押下後30秒経過しても完了通知が確認できませんでした"
+
+    except Exception as e:
+        return False, str(e)
+
+
+def _open_timeline_top_composer(page, account_name, log_func=print):
+    """
+    タイムライン上部（おすすめ直下）の「最近どう？ / 投稿」枠を特定してアクティブ化します。
+    戻り値: (container, textbox, submit_btn)
+    """
+    try:
+        # 画面最上部にスクロール
+        page.evaluate("window.scrollTo(0, 0)")
+        time.sleep(0.8)
+    except Exception:
+        pass
+
+    # 1. 「最近どう？」テキスト・プレースホルダーを検索してクリック
+    found_prompt = None
+    for sel in [
+        'text="最近どう？"',
+        ':has-text("最近どう？")',
+        'div:has-text("最近どう？")',
+        'span:has-text("最近どう？")',
+        '[placeholder*="最近どう"]',
+        '[aria-label*="最近どう"]',
+        'div:has-text("Start a thread")',
+        'div:has-text("スレッドを開始")'
+    ]:
+        try:
+            for el in page.locator(sel).all():
+                if el.is_visible():
+                    box = el.bounding_box()
+                    if box and box['y'] < 450:
+                        found_prompt = el
+                        log_func(f"[{account_name}] タイムライン上部の「最近どう？」枠 (x={int(box['x'])}, y={int(box['y'])}) を検出！クリックします...")
+                        break
+            if found_prompt:
+                break
+        except Exception:
+            pass
+
+    # もし見つからない場合、上部カード内の「投稿」ボタン周辺をクリック
+    if not found_prompt:
+        for b_sel in ['button:has-text("投稿")', 'div[role="button"]:has-text("投稿")']:
+            try:
+                for b in page.locator(b_sel).all():
+                    if b.is_visible():
+                        box = b.bounding_box()
+                        if box and 100 < box['y'] < 450:
+                            click_x = max(150, box['x'] - 120)
+                            click_y = box['y'] + (box['height'] / 2)
+                            log_func(f"[{account_name}] 上部カード位置 (x={int(click_x)}, y={int(click_y)}) を直接クリックして入力欄を起動します...")
+                            page.mouse.click(click_x, click_y)
+                            time.sleep(1.0)
+                            found_prompt = b
+                            break
+                if found_prompt:
+                    break
+            except Exception:
+                pass
+
+    if found_prompt:
+        try:
+            found_prompt.scroll_into_view_if_needed()
+            found_prompt.click(force=True)
+            time.sleep(1.2)
+        except Exception:
+            pass
+
+    # (A) クリックによって新規投稿ダイアログが開いたかチェック
+    for d_sel in ['div[role="dialog"]', 'div[aria-modal="true"]']:
+        try:
+            cand = page.locator(d_sel).first
+            if cand.is_visible():
+                tb = cand.locator('div[role="textbox"], div[contenteditable="true"], [data-lexical-editor="true"]').first
+                if tb.is_visible():
+                    log_func(f"[{account_name}] 「最近どう？」クリックにより新規投稿ダイアログが開きました。")
+                    return cand, tb, None
+        except Exception:
+            pass
+
+    # (B) インラインの入力欄（contenteditable / textbox）をチェック
+    for tb_sel in [
+        'div[role="textbox"]',
+        'div[contenteditable="true"]',
+        '[data-lexical-editor="true"]'
+    ]:
+        try:
+            for tb in page.locator(tb_sel).all():
+                if tb.is_visible():
+                    box = tb.bounding_box()
+                    if box and box['y'] < 450:
+                        # タイムライン上部カード内の投稿ボタンを特定
+                        submit_btn = None
+                        for b_sel in ['button:has-text("投稿")', 'div[role="button"]:has-text("投稿")', 'button:has-text("Post")', 'div[role="button"]:has-text("Post")']:
+                            for b in page.locator(b_sel).all():
+                                if b.is_visible():
+                                    b_box = b.bounding_box()
+                                    if b_box and b_box['y'] < 450:
+                                        submit_btn = b
+                                        break
+                            if submit_btn:
+                                break
+                        log_func(f"[{account_name}] タイムライン上部のインライン投稿欄 (y={int(box['y'])}) を検出しました。")
+                        return None, tb, submit_btn
+        except Exception:
+            pass
+
+    return None, None, None
+
+
+def execute_threads_post_with_fallback(
+    page,
+    account_name,
+    text_content,
+    target_topic=None,
+    resolved_img=None,
+    log_func=print
+):
+    """
+    【2段階フェイルセーフ投稿エンジン】
+    1. 【第1優先】画面左下の円形「＋」ボタン / アイコン / ショートカット 'c' 経由で
+       新規スレッド作成モーダル (div[role="dialog"]) を開いて投稿。
+    2. 【第2優先】左下の「＋」ボタンでモーダルが開かない、または投稿に失敗した場合、
+       タイムライン上部（おすすめフィード直下）の「最近どう？ / 投稿」枠から代替投稿。
+    3. 【2重投稿防止ガード】第1優先（＋ボタン）が成功した場合は第2優先を実行せず直ちに完了。
+       どちらか一方のみが1度だけ成功するように厳密に制御。
+    """
+    posted_success = False
+    last_error = ""
+
+    # =========================================================================
+    # ルート1: 画面左下の円形「＋」ボタンからの投稿（優先度：高）
+    # =========================================================================
+    log_func(f"[{account_name}] 🚀 【第1ルート: 左下「＋」ボタン】新規スレッド作成モーダルを起動して投稿を試みます...")
+    try:
+        dialog, textbox = open_threads_composer_dialog(page, account_name, log_func=log_func)
+        if dialog and textbox:
+            ok, err = _perform_fill_and_submit_post(
+                page=page,
+                container=dialog,
+                textbox=textbox,
+                account_name=account_name,
+                text_content=text_content,
+                target_topic=target_topic,
+                resolved_img=resolved_img,
+                route_name="左下「＋」ボタン",
+                log_func=log_func
+            )
+            if ok:
+                posted_success = True
+                log_func(f"[SUCCESS] [{account_name}] 🎉 【第1ルート: 左下「＋」ボタン】から正常に投稿が完了しました！（※2重投稿防止のため「最近どう？」枠はスキップします）")
+                return True, ""
+            else:
+                last_error = err or "左下「＋」からの投稿送信に失敗しました"
+        else:
+            last_error = "左下「＋」ボタンをクリックしましたが、新規投稿モーダルが開きませんでした"
+    except Exception as e:
+        last_error = f"左下「＋」処理エラー: {e}"
+        log_func(f"[WARN] [{account_name}] 第1ルート失敗: {e}")
+
+    # =========================================================================
+    # ルート2: タイムライン上部の「最近どう？ / 投稿」枠からの投稿（フォールバック）
+    # =========================================================================
+    if not posted_success:
+        log_func(f"[{account_name}] 🔄 プラスボタンで投稿できなかったため、タイムライン上部の【最近どう？ / 投稿】枠から代替投稿を実行します...")
+        try:
+            # 画面の余計なダイアログをクリーンアップ＆タイムライン最上部にスクロール
+            for _ in range(3):
+                try:
+                    page.keyboard.press("Escape")
+                    time.sleep(0.3)
+                except Exception:
+                    pass
+            try:
+                page.evaluate("window.scrollTo(0, 0)")
+                time.sleep(1.0)
+            except Exception:
+                pass
+
+            top_container, top_textbox, top_submit_btn = _open_timeline_top_composer(page, account_name, log_func=log_func)
+            if top_textbox:
+                ok, err = _perform_fill_and_submit_post(
+                    page=page,
+                    container=top_container,
+                    textbox=top_textbox,
+                    account_name=account_name,
+                    text_content=text_content,
+                    target_topic=target_topic,
+                    resolved_img=resolved_img,
+                    submit_btn_override=top_submit_btn,
+                    route_name="タイムライン上部「最近どう？」",
+                    log_func=log_func
+                )
+                if ok:
+                    posted_success = True
+                    log_func(f"[SUCCESS] [{account_name}] 🎉 【第2ルート: タイムライン上部「最近どう？」】から代替投稿に成功しました！")
+                    return True, ""
+                else:
+                    last_error = err or "タイムライン上部「最近どう？」からの投稿送信に失敗しました"
+            else:
+                last_error = "タイムライン上部の「最近どう？ / 投稿」枠を検出できませんでした"
+        except Exception as e:
+            last_error = f"タイムライン上部「最近どう？」投稿エラー: {e}"
+            log_func(f"[WARN] [{account_name}] 第2ルート失敗: {e}")
+
+    return False, last_error
+
 
 def capture_error_diagnostic(page, account_name="unknown", context_label="posting", exception_obj=None, log_func=None):
 
@@ -2038,9 +2964,15 @@ class ThreadsPosterGUI:
         accounts_data = read_excel_records(self.account_config_path)
 
         valid_accounts = []
+        disabled_accounts = []
         for acc in accounts_data:
             acc_id = str(acc.get("アカウントID") or acc.get("アカウント名") or acc.get("アカウント") or "").strip()
-            if acc_id and acc_id.lower() != "nan":
+            if not acc_id or acc_id.lower() == "nan":
+                continue
+            status_val = str(acc.get("有効/無効") or acc.get("有効無効") or acc.get("ステータス") or "").strip()
+            if status_val in ["無効", "停止", "OFF", "off", "0", "false", "停止 (要電話番号認証)"]:
+                disabled_accounts.append(acc_id)
+            else:
                 valid_accounts.append(acc)
 
         if not valid_accounts:
@@ -2051,13 +2983,13 @@ class ThreadsPosterGUI:
 
         first_acc = valid_accounts[0]
         first_id = str(first_acc.get("アカウントID") or first_acc.get("アカウント名") or "").strip()
-        auth_token = str(first_acc.get("auth_token") or first_acc.get("Authトークン_sessionid") or "").strip()
-        has_token = "あり (自動ログイン)" if (auth_token and auth_token.lower() != "nan" and not auth_token.startswith("ここに")) else "なし (手動ログイン)"
+        first_prof = str(first_acc.get("プロファイル名") or first_acc.get("プロファイル") or first_id).strip()
+        dis_text = f" | ⚠️ 停止中: {len(disabled_accounts)}件 (@{', @'.join(disabled_accounts)})" if disabled_accounts else ""
         self.lbl_account_info.config(
-            text=f"👤 有効アカウント: {len(valid_accounts)}件 | メインID: @{first_id} | auth_token: {has_token} (設定は {first_id}.xlsx で管理)",
+            text=f"👤 有効: {len(valid_accounts)}件{dis_text} | メインID: @{first_id} | プロファイル: {first_prof} (profile_launcher対応)",
             fg="#e4e4e7"
         )
-        self.log(f"[INFO] アカウント情報読み込み完了: {len(valid_accounts)}件のアカウント設定を検出 (ID: @{first_id})")
+        self.log(f"[INFO] アカウント情報読み込み完了: {len(valid_accounts)}件のアカウント設定を検出 (ID: @{first_id}, プロファイル: {first_prof})")
 
         posts_file = self._find_posts_file(first_id)
         if not posts_file or not os.path.exists(posts_file):
@@ -2608,7 +3540,8 @@ class ThreadsPosterGUI:
             acc_name = str(acc.get("アカウントID") or acc.get("アカウント名") or "").strip()
             pf = self._find_posts_file(acc_name)
             custom_settings = read_account_settings_from_post_file(pf) if pf else {}
-            p_sub = custom_settings.get("profile_dir") or f"chrome_profiles/{acc_name}"
+            p_sub = custom_settings.get("profile_dir", "")
+            if not p_sub or any(k in p_sub for k in ["コミュニティ", "トピック", "モード", "間隔", "ツイート", "ポスト"]): p_sub = f"chrome_profiles/{acc_name}"
             p_dir = os.path.join(BASE_DIR, p_sub)
             clean_account_profile(acc_name, p_dir, reason="手動リクエストによる全初期化", log_func=self.log)
             cleaned_count += 1
@@ -2641,26 +3574,20 @@ class ThreadsPosterGUI:
                 
                 posts_file = self._find_posts_file(account_name)
                 custom_settings = read_account_settings_from_post_file(posts_file) if posts_file else {}
-                profile_subpath = custom_settings.get("profile_dir") or f"chrome_profiles/{account_name}"
+                profile_subpath = custom_settings.get("profile_dir", "")
+                if not profile_subpath or any(k in profile_subpath for k in ["コミュニティ", "トピック", "モード", "間隔", "ツイート", "ポスト"]): profile_subpath = f"chrome_profiles/{account_name}"
                 profile_dir = os.path.join(BASE_DIR, profile_subpath)
                 os.makedirs(profile_dir, exist_ok=True)
 
                 with sync_playwright() as p:
-                    context = p.chromium.launch_persistent_context(
-                        user_data_dir=profile_dir,
-                        headless=False,
-                        channel="chrome",
-                        locale="ja-JP",
-                        viewport={"width": 1280, "height": 900},
-                        args=["--disable-blink-features=AutomationControlled", "--lang=ja-JP"]
-                    )
+                    context = safe_launch_persistent_context(p, profile_dir, headless=False, log_func=self.log)
                     
                     token = str(first_acc.get("auth_token") or first_acc.get("Authトークン_sessionid") or first_acc.get("sessionid") or "").strip()
                     if token:
                         inject_session_cookies(context, token, account_name, log_func=self.log)
 
                     page = context.pages[0] if context.pages else context.new_page()
-                    page.goto("https://www.threads.net/", timeout=60000)
+                    safe_goto_threads(page, context, token, account_name, log_func=self.log, timeout=60000)
                     time.sleep(3)
 
                     is_ok = ensure_authenticated_session(
@@ -2918,9 +3845,14 @@ class ThreadsPosterGUI:
         posts_file = acc_state["posts_file"]
         cycle_num = acc_state.get("cycle_num", 1)
 
+        prof_name_from_acc = str(account.get("プロファイル名") or account.get("プロファイル") or "").strip()
         custom_settings = read_account_settings_from_post_file(posts_file)
-        profile_subpath = custom_settings.get("profile_dir") or f"chrome_profiles/{account_name}"
-        profile_dir = os.path.join(BASE_DIR, profile_subpath)
+        profile_subpath = prof_name_from_acc or custom_settings.get("profile_dir", "")
+        if not profile_subpath or any(k in profile_subpath for k in ["コミュニティ", "トピック", "モード", "間隔", "ツイート", "ポスト", "時間", "nan"]):
+            profile_subpath = f"chrome_profiles/{account_name}"
+        elif not profile_subpath.startswith("chrome_profiles") and not os.path.isabs(profile_subpath):
+            profile_subpath = f"chrome_profiles/{profile_subpath}"
+        profile_dir = os.path.join(BASE_DIR, profile_subpath) if not os.path.isabs(profile_subpath) else profile_subpath
 
         if "min_interval_sec" in custom_settings:
             min_delay = custom_settings["min_interval_sec"]
@@ -2957,19 +3889,21 @@ class ThreadsPosterGUI:
             self.log(f"[{account_name}] 【モード0: 上から順】未投稿 {len(unposted)} 件中の先頭を選択して投稿します。")
 
         os.makedirs(profile_dir, exist_ok=True)
+        # 過去のクラッシュ残骸(SingletonLock)を事前除去してChrome起動失敗を防止
+        for lk in ["SingletonLock", "SingletonCookie", "SingletonSocket"]:
+            try:
+                lk_p = os.path.join(profile_dir, lk)
+                if os.path.exists(lk_p):
+                    os.remove(lk_p)
+            except Exception:
+                pass
+
         context = None
         row_idx = post_item["_row_idx"]
         post_id = post_item.get("ID") or post_item.get("id") or row_idx - 1
 
         try:
-            context = p.chromium.launch_persistent_context(
-                user_data_dir=profile_dir,
-                headless=False,
-                channel="chrome",
-                locale="ja-JP",
-                viewport={"width": 1280, "height": 900},
-                args=["--disable-blink-features=AutomationControlled", "--lang=ja-JP"]
-            )
+            context = safe_launch_persistent_context(p, profile_dir, headless=False, log_func=self.log)
 
             # 提案2: 画像・動画通信ブロック
             if self.var_block_media.get():
@@ -2980,8 +3914,22 @@ class ThreadsPosterGUI:
 
             page = context.pages[0] if context.pages else context.new_page()
 
-            page.goto("https://www.threads.net/", timeout=60000)
+            # リダイレクトループ(ERR_TOO_MANY_REDIRECTS)自動自己修復付き遷移
+            safe_goto_threads(page, context, session_token, account_name, log_func=self.log, timeout=60000)
             time.sleep(3)
+
+            is_cp, cp_why = detect_phone_checkpoint_screen(page)
+            if is_cp:
+                self.log("=" * 60)
+                self.log(f"[CRITICAL] 🚨 [{account_name}] 携帯電話番号（SMS）認証画面を検知しました！（{cp_why}）")
+                self.log(f"[CRITICAL] 🛡️ アカウント安全保護のため、即座にブラウザを終了し「アカウント情報.xlsx」の【有効/無効】を「無効」に更新します。")
+                capture_error_diagnostic(page, account_name, "携帯電話番号認証要求", None, self.log)
+                set_account_status_in_excel(self.account_config_path, account_name, status="無効", reason="携帯電話番号認証画面検知")
+                acc_state["is_disabled"] = True
+                self.root.after(0, self.load_excel_data)
+                self.log(f"[SUCCESS] ✅ [{account_name}] を安全停止しました。他の有効なアカウントの自動投稿を継続します。")
+                self.log("=" * 60)
+                return 10
 
             is_logged_in = ensure_authenticated_session(
                 page, context, account_name, self.account_config_path, log_func=self.log, wait_timeout_sec=300
@@ -2989,6 +3937,12 @@ class ThreadsPosterGUI:
             if not is_logged_in:
                 self.log(f"[ERROR] [{account_name}] ログイン認証が完了しなかったため、このアカウントの今回の投稿をスキップします。")
                 return 300
+
+            # Metaが発行・更新した最新セッションIDをメモリおよびアカウント情報.xlsxに双方向自動同期
+            fresh_tok = save_context_cookies_to_excel(context, self.account_config_path, account_name, log_func=self.log)
+            if fresh_tok:
+                account["auth_token"] = fresh_tok
+                acc_state["account"]["auth_token"] = fresh_tok
 
             text_content = expand_spintax_and_placeholders(self._extract_post_text(post_item))
             raw_image = self._extract_raw_image(post_item)
@@ -3016,7 +3970,7 @@ class ThreadsPosterGUI:
                 cur_url = page.url.split('?')[0].rstrip('/')
                 if cur_url != "https://www.threads.net":
                     self.log(f"[{account_name}] 現在のページ({cur_url})からホーム(https://www.threads.net/)へ戻ります...")
-                    page.goto("https://www.threads.net/", wait_until="domcontentloaded", timeout=30000)
+                    safe_goto_threads(page, context, session_token, account_name, log_func=self.log, timeout=30000)
                     time.sleep(2.0)
             except Exception:
                 pass
@@ -3031,353 +3985,21 @@ class ThreadsPosterGUI:
             if self.var_stealth_patrol.get():
                 perform_stealth_feed_patrol(page, account_name, log_func=self.log)
 
-            # 2. 左下の新しいスレッドボタンを探す
-            dialog = None
-            textbox = None
-            new_thread_btn = None
+            # 2. 2段階フェイルセーフ投稿を実行
+            #    【第1優先】画面左下の円形「＋」ボタンからの投稿
+            #    【第2優先】失敗時はタイムライン上部の「最近どう？ / 投稿」枠からの代替投稿
+            #    ※ どちらか一方が成功した時点で直ちに完了し、2重投稿を完全に防止します
+            posted_ok, post_err_msg = execute_threads_post_with_fallback(
+                page=page,
+                account_name=account_name,
+                text_content=text_content,
+                target_topic=target_topic,
+                resolved_img=resolved_img,
+                log_func=self.log
+            )
 
-            try:
-                for el in page.get_by_text("新しいスレッド", exact=False).all():
-                    try:
-                        if el.is_visible():
-                            box = el.bounding_box()
-                            if box and box['x'] < 300 and box['width'] < 300 and box['height'] < 80 and box['y'] > 200:
-                                new_thread_btn = el
-                                break
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-
-            if not new_thread_btn:
-                for sel in ['div[role="button"]', 'button', 'a']:
-                    try:
-                        for el in page.locator(sel).all():
-                            if el.is_visible():
-                                txt = el.inner_text().strip()
-                                if "新しいスレッド" in txt:
-                                    box = el.bounding_box()
-                                    if box and box['x'] < 300 and box['width'] < 300 and box['height'] < 80:
-                                        new_thread_btn = el
-                                        break
-                        if new_thread_btn:
-                            break
-                    except Exception:
-                        pass
-
-            if new_thread_btn:
-                self.log(f"[{account_name}] 左下の「＋ 新しいスレッド」ボタンをクリックします...")
-                new_thread_btn.click()
-                time.sleep(1.0)
-            else:
-                self.log(f"[{account_name}] キーボードショートカット 'c' で新規スレッド作成モーダルを呼び出します...")
-                page.keyboard.press("c")
-                time.sleep(1.0)
-
-            # 3. 新規投稿モーダル出現待機
-            for wait_i in range(16):
-                time.sleep(0.5)
-                try:
-                    for d_sel in ['div[role="dialog"]', 'div[aria-modal="true"]']:
-                        d_cand = page.locator(d_sel).first
-                        if d_cand.is_visible():
-                            dialog = d_cand
-                            break
-                    if dialog:
-                        for tb_sel in [
-                            'div[role="textbox"]',
-                            'div[contenteditable="true"]',
-                            '[data-lexical-editor="true"]'
-                        ]:
-                            tb_cand = dialog.locator(tb_sel).first
-                            if tb_cand.is_visible():
-                                textbox = tb_cand
-                                break
-                        if textbox:
-                            break
-                except Exception:
-                    pass
-                if wait_i == 6 and not dialog:
-                    if new_thread_btn:
-                        try:
-                            new_thread_btn.click()
-                        except Exception:
-                            pass
-                    try:
-                        page.keyboard.press("c")
-                    except Exception:
-                        pass
-
-            if not dialog or not textbox:
-                raise Exception("左下の「新しいスレッド」をクリックしましたが、新規投稿モーダルが開きませんでした。他人のポストに誤爆しないよう処理を安全に中断しました。")
-
-            # 4. テキスト入力
-            textbox.click()
-            try:
-                textbox.press("Control+A")
-                textbox.press("Backspace")
-            except Exception:
-                pass
-
-            lines = text_content.split("\n")
-            for l_idx, line in enumerate(lines):
-                if line:
-                    textbox.press_sequentially(line, delay=random.randint(15, 30))
-                if l_idx < len(lines) - 1:
-                    textbox.press("Shift+Enter")
-                    time.sleep(0.1)
-
-            time.sleep(1)
-
-            # トピック設定
-            if target_topic:
-                set_topic_in_threads_composer(page, dialog, target_topic, self.log)
-                time.sleep(0.5)
-
-            # 画像添付
-            if resolved_img:
-                safe_img = ensure_valid_image(resolved_img, self.log)
-                self.log(f"[{account_name}] 画像を添付します: {os.path.basename(safe_img)}")
-                attached = False
-                media_selectors = [
-                    'div[role="dialog"] svg[aria-label*="メディア"]',
-                    'div[role="dialog"] svg[aria-label*="画像"]',
-                    'div[role="dialog"] svg[aria-label*="写真"]',
-                    'div[role="dialog"] svg[aria-label*="添付"]',
-                    'svg[aria-label="画像を追加"]',
-                    'svg[aria-label="メディアを添付"]',
-                    'svg[aria-label="写真を添付"]',
-                    'svg[aria-label*="メディア"]',
-                    'svg[aria-label*="画像"]',
-                ]
-                for m_sel in media_selectors:
-                    try:
-                        m_el = page.locator(m_sel).first
-                        if m_el.is_visible():
-                            btn_parent = page.locator(f'div[role="button"]:has({m_sel}), button:has({m_sel})').first
-                            click_el = btn_parent if btn_parent.is_visible() else m_el
-                            with page.expect_file_chooser(timeout=2500) as fc_info:
-                                click_el.click()
-                            file_chooser = fc_info.value
-                            file_chooser.set_files(safe_img)
-                            attached = True
-                            self.log(f"[{account_name}] メディア添付アイコン経由で画像を設定しました。")
-                            break
-                    except Exception:
-                        pass
-
-                if not attached:
-                    for f_sel in [
-                        'div[role="dialog"] input[type="file"]',
-                        'div[aria-modal="true"] input[type="file"]',
-                        'input[type="file"][accept*="image"]',
-                        'input[type="file"][multiple]',
-                        'input[type="file"]'
-                    ]:
-                        try:
-                            locs = page.locator(f_sel).all()
-                            if locs:
-                                locs[-1].set_input_files(safe_img)
-                                attached = True
-                                self.log(f"[{account_name}] ダイアログ内ファイル入力要素({f_sel})に画像を設定しました。")
-                                break
-                        except Exception:
-                            pass
-
-                preview_found = False
-                for _ in range(12):
-                    time.sleep(0.8)
-                    for err_sel in ['div:text-matches("添付ファイルを添付できませんでした|アップロードできませんでした|エラーが発生しました")']:
-                        try:
-                            err_el = page.locator(err_sel).first
-                            if err_el.is_visible():
-                                err_text = err_el.inner_text().strip()
-                                self.log(f"[WARN] [{account_name}] Threads画面通知: '{err_text}'")
-                        except Exception:
-                            pass
-                    for p_sel in [
-                        'div[role="dialog"] img[src^="blob:"]',
-                        'div[role="dialog"] img[alt*="メディア"]',
-                        'div[role="dialog"] img[alt*="画像"]',
-                        'div[role="dialog"] svg[aria-label*="削除"]',
-                        'div[role="dialog"] svg[aria-label*="メディアを破棄"]',
-                        'div[role="dialog"] svg[aria-label*="メディアを編集"]'
-                    ]:
-                        try:
-                            if page.locator(p_sel).first.is_visible():
-                                preview_found = True
-                                break
-                        except Exception:
-                            pass
-                    if preview_found:
-                        self.log(f"[{account_name}] 画像プレビュー確認完了（アップロード成功）")
-                        break
-
-            time.sleep(1.0)
-
-            # ポップアップクローズ
-            for pop_sel in ['text="返信と引用ができる人"', 'text="返信できる人"', 'div[role="menu"]', 'div[role="listbox"]']:
-                try:
-                    pop_el = page.locator(pop_sel).first
-                    if pop_el.is_visible():
-                        self.log(f"[{account_name}] 画面上のオプションメニューを閉じて「投稿」ボタンを押せるようにします...")
-                        page.keyboard.press("Escape")
-                        time.sleep(0.6)
-                        break
-                except Exception:
-                    pass
-
-            # 投稿ボタン特定
-            submit_btn = None
-            for _ in range(15):
-                try:
-                    if page.locator('text="返信と引用ができる人"').first.is_visible():
-                        page.keyboard.press("Escape")
-                        time.sleep(0.5)
-                except Exception:
-                    pass
-
-                candidates = []
-                search_root = dialog if (dialog and dialog.is_visible()) else page.locator('div[role="dialog"]').first
-                for btn in search_root.locator('div[role="button"], button').all():
-                    try:
-                        if not btn.is_visible():
-                            continue
-                        txt = btn.inner_text().strip()
-                        clean_txt = txt.replace(" ", "").replace("\n", "")
-                        if clean_txt in ["投稿", "Post", "投稿する"] and "オプション" not in txt and "新しい" not in txt and "作成" not in txt and "下書き" not in txt:
-                            candidates.append(btn)
-                    except Exception:
-                        pass
-
-                if candidates:
-                    cand_btn = candidates[-1]
-                    is_disabled = (cand_btn.get_attribute("aria-disabled") == "true") or (cand_btn.get_attribute("disabled") is not None)
-                    if not is_disabled:
-                        submit_btn = cand_btn
-                        break
-                time.sleep(1)
-
-            if not submit_btn:
-                raise Exception("「投稿」ボタンがアクティブになりませんでした（画像のアップロード中か、文字数超過の可能性があります）。")
-
-            # 投稿実行
-            self.log(f"[{account_name}] 「投稿」ボタンをクリックしました。Threads送信処理を確認中...")
-            try:
-                submit_btn.scroll_into_view_if_needed()
-                submit_btn.click(force=True)
-            except Exception as e:
-                self.log(f"[{account_name}] 送信ボタン通常クリック試行: {e}")
-
-            try:
-                submit_btn.evaluate("el => el.click()")
-            except Exception:
-                pass
-
-            try:
-                textbox.focus()
-                page.keyboard.press("Control+Enter")
-            except Exception:
-                pass
-
-            posted_success = False
-            post_error_detected = ""
-
-            for check_idx in range(30):
-                time.sleep(0.8)
-                for s_sel in [
-                    'text="投稿完了"',
-                    ':has-text("投稿完了")',
-                    'text="投稿しました"',
-                    ':has-text("投稿しました")',
-                    'text="スレッドを投稿しました"',
-                    ':has-text("スレッドを投稿しました")',
-                    'text="スレッドを表示"',
-                    ':has-text("スレッドを表示")',
-                    'text="スレッドが投稿されました"',
-                    ':has-text("スレッドが投稿されました")',
-                    'text="Posted"',
-                    'text="View post"',
-                    'div[role="alert"]:has-text("投稿")',
-                    'div[role="alert"]:has-text("スレッド")',
-                    'div:has-text("投稿完了")',
-                    'div:has-text("投稿しました")',
-                    'div:has-text("スレッドを投稿しました")'
-                ]:
-                    try:
-                        s_loc = page.locator(s_sel).first
-                        if s_loc.is_visible():
-                            posted_success = True
-                            self.log(f"[SUCCESS] [{account_name}] 🎉 画面下部の黒い通知バー（'{s_sel}'）を確認し、投稿完了しました！")
-                            break
-                    except Exception:
-                        pass
-                if posted_success:
-                    break
-
-                for err_sel in [
-                    'div[role="alert"]:has-text("エラー")',
-                    'text="投稿できませんでした"',
-                    'text="アップロードできませんでした"',
-                    'text="エラーが発生しました"',
-                    'text="問題が発生しました"',
-                    'text="コミュニティガイドライン"',
-                    'text="後でもう一度お試しください"'
-                ]:
-                    try:
-                        err_el = page.locator(err_sel).first
-                        if err_el.is_visible():
-                            post_error_detected = err_el.inner_text().strip()[:80]
-                            break
-                    except Exception:
-                        pass
-                if post_error_detected:
-                    break
-
-                modal_closed = True
-                try:
-                    for d in page.locator('div[role="dialog"], div[aria-modal="true"]').all():
-                        if d.is_visible():
-                            modal_closed = False
-                            break
-                except Exception:
-                    pass
-
-                if modal_closed:
-                    time.sleep(0.4)
-                    for err_sel in ['div[role="alert"]:has-text("エラー")', 'text="投稿できませんでした"']:
-                        try:
-                            if page.locator(err_sel).first.is_visible():
-                                post_error_detected = "エラー通知検出"
-                                break
-                        except Exception:
-                            pass
-                    if not post_error_detected:
-                        posted_success = True
-                        self.log(f"[SUCCESS] [{account_name}] 🎉 投稿モーダルが閉じ、下部の黒バー完了通知を確認しました！")
-                        break
-
-                if check_idx in [5, 12]:
-                    try:
-                        if page.locator('text="返信と引用ができる人"').first.is_visible():
-                            page.keyboard.press("Escape")
-                            time.sleep(0.5)
-                        for btn in page.locator('div[role="dialog"] div[role="button"], div[role="dialog"] button').all():
-                            try:
-                                if btn.is_visible() and btn.inner_text().strip() in ["投稿", "Post"]:
-                                    self.log(f"[{account_name}] 送信ボタンを再押下します...")
-                                    btn.click(force=True)
-                                    break
-                            except Exception:
-                                pass
-                    except Exception:
-                        pass
-
-            if post_error_detected:
-                raise Exception(f"Threads画面でエラーが返されました: {post_error_detected}")
-
-            if not posted_success:
-                raise Exception("投稿ボタンを押下後、30秒経過してもThreads上で送信完了（投稿通知またはフォーム閉鎖）が確認できませんでした。下書きが画面に残っています。")
+            if not posted_ok:
+                raise Exception(post_err_msg or "投稿処理に失敗しました（左下「＋」ボタンおよび「最近どう？」枠の両方で投稿できませんでした）。")
 
             finish_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             update_post_status(posts_file, row_idx, status="投稿完了", finish_time=finish_time, error_msg="", sheet_name=post_item.get("_sheet_name"), applied_topic=target_topic)
@@ -3390,6 +4012,26 @@ class ThreadsPosterGUI:
             return wait_sec
 
         except Exception as post_err:
+            err_str = str(post_err)
+            # リダイレクトループエラー (ERR_TOO_MANY_REDIRECTS) の即時自動修復＆再試行セーフティ
+            if ("ERR_TOO_MANY_REDIRECTS" in err_str or "too many redirects" in err_str.lower() or "リダイレクトが繰り返し" in err_str) and not acc_state.get("_retried_redirect", False):
+                self.log("=" * 60)
+                self.log(f"[WARN] 🔄 [{account_name}] リダイレクトループエラー (net::ERR_TOO_MANY_REDIRECTS) を検知しました。")
+                self.log(f"[INFO] 🧹 [{account_name}] 次アカウントへスキップしません！「Cookieを削除してください」指示に基づき、破損Cookieを完全消去して Post #{post_id} を即時再実行します...")
+                self.log("=" * 60)
+                acc_state["_retried_redirect"] = True
+                try:
+                    if context:
+                        context.clear_cookies()
+                        time.sleep(1.0)
+                        context.close()
+                except Exception:
+                    pass
+                time.sleep(2.0)
+                # エクセルはエラーにせず未投稿のまま維持し、1秒後にこのアカウントを即座に再実行
+                return 1
+
+            acc_state["_retried_redirect"] = False
             acc_state["consecutive_errors"] = acc_state.get("consecutive_errors", 0) + 1
             err_count = acc_state["consecutive_errors"]
 
@@ -3487,23 +4129,21 @@ class ThreadsPosterGUI:
         row_indices = daily_data["row_indices"]
         sheet_name = daily_data["sheet_name"]
 
+        prof_name_from_acc = str(account.get("プロファイル名") or account.get("プロファイル") or "").strip()
         custom_settings = read_account_settings_from_post_file(posts_file)
-        profile_subpath = custom_settings.get("profile_dir") or f"chrome_profiles/{account_name}"
-        profile_dir = os.path.join(BASE_DIR, profile_subpath)
+        profile_subpath = prof_name_from_acc or custom_settings.get("profile_dir", "")
+        if not profile_subpath or any(k in profile_subpath for k in ["コミュニティ", "トピック", "モード", "間隔", "ツイート", "ポスト"]):
+            profile_subpath = f"chrome_profiles/{account_name}"
+        elif not profile_subpath.startswith("chrome_profiles") and not os.path.isabs(profile_subpath):
+            profile_subpath = f"chrome_profiles/{profile_subpath}"
+        profile_dir = os.path.join(BASE_DIR, profile_subpath) if not os.path.isabs(profile_subpath) else profile_subpath
         os.makedirs(profile_dir, exist_ok=True)
 
         self.log(f"[{account_name}] 🌅 日常つぶやき【{slot_name}】({time_slot}) 自動投稿を開始（スピンタックス＆動的日付展開済: {post_text[:35]}...）")
         context = None
         page = None
         try:
-            context = p.chromium.launch_persistent_context(
-                user_data_dir=profile_dir,
-                headless=False,
-                channel="chrome",
-                locale="ja-JP",
-                viewport={"width": 1280, "height": 900},
-                args=["--disable-blink-features=AutomationControlled", "--lang=ja-JP"]
-            )
+            context = safe_launch_persistent_context(p, profile_dir, headless=False, log_func=self.log)
             if self.var_block_media.get():
                 setup_media_blocking(context, log_func=self.log)
 
@@ -3511,7 +4151,7 @@ class ThreadsPosterGUI:
             inject_session_cookies(context, session_token, account_name, log_func=self.log)
 
             page = context.pages[0] if context.pages else context.new_page()
-            page.goto("https://www.threads.net/", timeout=60000)
+            safe_goto_threads(page, context, session_token, account_name, log_func=self.log, timeout=60000)
             time.sleep(3)
 
             is_logged_in = ensure_authenticated_session(
@@ -3538,101 +4178,9 @@ class ThreadsPosterGUI:
             if self.var_stealth_patrol.get():
                 perform_stealth_feed_patrol(page, account_name, log_func=self.log)
 
-            dialog = None
-            textbox = None
-            new_thread_btn = None
-            try:
-                for el in page.get_by_text("新しいスレッド", exact=False).all():
-                    try:
-                        if el.is_visible():
-                            box = el.bounding_box()
-                            if box and box['x'] < 300 and box['width'] < 300 and box['height'] < 80 and box['y'] > 200:
-                                new_thread_btn = el
-                                break
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-
-            if not new_thread_btn:
-                for sel in ['div[role="button"]', 'button', 'a']:
-                    try:
-                        for el in page.locator(sel).all():
-                            if el.is_visible():
-                                txt = el.inner_text().strip()
-                                if "新しいスレッド" in txt:
-                                    box = el.bounding_box()
-                                    if box and box['x'] < 300 and box['width'] < 300 and box['height'] < 80:
-                                        new_thread_btn = el
-                                        break
-                        if new_thread_btn:
-                            break
-                    except Exception:
-                        pass
-
-            if new_thread_btn:
-                new_thread_btn.click()
-                time.sleep(1.0)
-            else:
-                page.keyboard.press("c")
-                time.sleep(1.0)
-
-            for wait_i in range(16):
-                time.sleep(0.5)
-                try:
-                    for d_sel in ['div[role="dialog"]', 'div[aria-modal="true"]']:
-                        d_cand = page.locator(d_sel).first
-                        if d_cand.is_visible():
-                            dialog = d_cand
-                            break
-                    if dialog:
-                        for tb_sel in [
-                            'div[role="textbox"]',
-                            'div[contenteditable="true"]',
-                            '[data-lexical-editor="true"]'
-                        ]:
-                            tb_cand = dialog.locator(tb_sel).first
-                            if tb_cand.is_visible():
-                                textbox = tb_cand
-                                break
-                        if textbox:
-                            break
-                except Exception:
-                    pass
-                if wait_i == 6 and not dialog:
-                    if new_thread_btn:
-                        try:
-                            new_thread_btn.click()
-                        except Exception:
-                            pass
-                    try:
-                        page.keyboard.press("c")
-                    except Exception:
-                        pass
-
-            if not dialog or not textbox:
-                raise Exception("新規投稿ダイアログが開けませんでした。")
-
-            textbox.click()
-            try:
-                textbox.press("Control+A")
-                textbox.press("Backspace")
-            except Exception:
-                pass
-
-            lines = post_text.split("\n")
-            for l_idx, line in enumerate(lines):
-                if line:
-                    textbox.press_sequentially(line, delay=random.randint(15, 30))
-                if l_idx < len(lines) - 1:
-                    textbox.press("Shift+Enter")
-                    time.sleep(0.1)
-
-            time.sleep(1.2)
-
             # トピック設定（日常ポストの「コミュニティまたはトピック」列から設定可能）
-            # カンマ区切り（例: 信太山新地, 大阪求人, 高収入バイト）でA/Bテスト自動均等ローテーション
             daily_raw_topic = daily_data.get("topic", "")
+            target_topic = None
             if daily_raw_topic:
                 target_topic = select_topic_for_post(
                     daily_raw_topic,
@@ -3643,114 +4191,20 @@ class ThreadsPosterGUI:
                 )
                 if target_topic:
                     acc_state["daily_topic_counter"] = acc_state.get("daily_topic_counter", 0) + 1
-                    set_topic_in_threads_composer(page, dialog, target_topic, self.log)
-                    time.sleep(0.5)
 
-            for pop_sel in ['text="返信と引用ができる人"', 'text="返信できる人"', 'div[role="menu"]', 'div[role="listbox"]']:
-                try:
-                    pop_el = page.locator(pop_sel).first
-                    if pop_el.is_visible():
-                        page.keyboard.press("Escape")
-                        time.sleep(0.6)
-                        break
-                except Exception:
-                    pass
+            # 2段階フェイルセーフ投稿（左下「＋」ボタン優先、失敗時はタイムライン上部「最近どう？ / 投稿」枠）
+            # ※ どちらか一方が成功した時点で完了し、2重投稿を完全に防止
+            posted_ok, post_err_msg = execute_threads_post_with_fallback(
+                page=page,
+                account_name=account_name,
+                text_content=post_text,
+                target_topic=target_topic,
+                resolved_img=None,
+                log_func=self.log
+            )
 
-            submit_btn = None
-            for _ in range(15):
-                try:
-                    if page.locator('text="返信と引用ができる人"').first.is_visible():
-                        page.keyboard.press("Escape")
-                        time.sleep(0.5)
-                except Exception:
-                    pass
-
-                candidates = []
-                search_root = dialog if (dialog and dialog.is_visible()) else page.locator('div[role="dialog"]').first
-                for btn in search_root.locator('div[role="button"], button').all():
-                    try:
-                        if not btn.is_visible():
-                            continue
-                        txt = btn.inner_text().strip()
-                        clean_txt = txt.replace(" ", "").replace("\n", "")
-                        if clean_txt in ["投稿", "Post", "投稿する"] and "オプション" not in txt and "新しい" not in txt and "作成" not in txt and "下書き" not in txt:
-                            candidates.append(btn)
-                    except Exception:
-                        pass
-
-                if candidates:
-                    cand_btn = candidates[-1]
-                    is_disabled = (cand_btn.get_attribute("aria-disabled") == "true") or (cand_btn.get_attribute("disabled") is not None)
-                    if not is_disabled:
-                        submit_btn = cand_btn
-                        break
-                time.sleep(1)
-
-            if not submit_btn:
-                raise Exception("「投稿」ボタンがアクティブになりませんでした。")
-
-            self.log(f"[{account_name}] 日常ポストの「投稿」ボタンをクリックしました...")
-            try:
-                submit_btn.scroll_into_view_if_needed()
-                submit_btn.click(force=True)
-            except Exception:
-                pass
-            try:
-                submit_btn.evaluate("el => el.click()")
-            except Exception:
-                pass
-            try:
-                textbox.focus()
-                page.keyboard.press("Control+Enter")
-            except Exception:
-                pass
-
-            posted_success = False
-            for check_idx in range(25):
-                time.sleep(0.8)
-                for s_sel in [
-                    'text="投稿完了"', ':has-text("投稿完了")',
-                    'text="投稿しました"', ':has-text("投稿しました")',
-                    'text="スレッドを投稿しました"', ':has-text("スレッドを投稿しました")',
-                    'text="スレッドを表示"', ':has-text("スレッドを表示")',
-                    'text="スレッドが投稿されました"', ':has-text("スレッドが投稿されました")',
-                    'text="Posted"', 'text="View post"',
-                    'div[role="alert"]:has-text("投稿")', 'div[role="alert"]:has-text("スレッド")'
-                ]:
-                    try:
-                        if page.locator(s_sel).first.is_visible():
-                            posted_success = True
-                            break
-                    except Exception:
-                        pass
-                if posted_success:
-                    break
-
-                modal_closed = True
-                try:
-                    for d in page.locator('div[role="dialog"], div[aria-modal="true"]').all():
-                        if d.is_visible():
-                            modal_closed = False
-                            break
-                except Exception:
-                    pass
-                if modal_closed:
-                    posted_success = True
-                    break
-
-                if check_idx in [5, 10]:
-                    try:
-                        page.keyboard.press("Escape")
-                        time.sleep(0.3)
-                        for btn in page.locator('div[role="dialog"] div[role="button"], div[role="dialog"] button').all():
-                            if btn.is_visible() and btn.inner_text().strip() in ["投稿", "Post"]:
-                                btn.click(force=True)
-                                break
-                    except Exception:
-                        pass
-
-            if not posted_success:
-                raise Exception("日常ポスト送信後、完了通知またはモーダル終了が確認できませんでした。")
+            if not posted_ok:
+                raise Exception(post_err_msg or "日常ポスト送信が完了できませんでした。")
 
             update_daily_post_status(posts_file, sheet_name, row_indices)
             self.log(f"[SUCCESS] [{account_name}] 🎉 🌅 日常つぶやき【{slot_name}】の自動投稿に成功しました！(Excelの「日常ポスト」シートに本日完了を記録)")
@@ -3815,7 +4269,8 @@ class ThreadsPosterGUI:
             return
 
         custom_settings = read_account_settings_from_post_file(posts_file)
-        profile_subpath = custom_settings.get("profile_dir") or f"chrome_profiles/{account_name}"
+        profile_subpath = custom_settings.get("profile_dir", "")
+        if not profile_subpath or any(k in profile_subpath for k in ["コミュニティ", "トピック", "モード", "間隔", "ツイート", "ポスト"]): profile_subpath = f"chrome_profiles/{account_name}"
         profile_dir = os.path.join(BASE_DIR, profile_subpath)
 
         if "min_interval_sec" in custom_settings:
@@ -3946,374 +4401,21 @@ class ThreadsPosterGUI:
                     if self.var_stealth_patrol.get():
                         perform_stealth_feed_patrol(page, account_name, log_func=self.log)
 
-                    # 2. 画面【左下の新しいスレッド】ボタンをピンポイントで特定してクリック
-                    # （※親コンテナやフィードへの誤クリックを完全に防ぐため、サイズ幅<300, 高さ<80, 画面左側の要素のみを厳格に対象化）
-                    dialog = None
-                    textbox = None
-                    new_thread_btn = None
+                    # 2. 2段階フェイルセーフ投稿を実行
+                    #    【第1優先】画面左下の円形「＋」ボタンからの投稿
+                    #    【第2優先】失敗時はタイムライン上部の「最近どう？ / 投稿」枠からの代替投稿
+                    #    ※ どちらか一方が成功した時点で完了し、2重投稿を完全に防止
+                    posted_ok, post_err_msg = execute_threads_post_with_fallback(
+                        page=page,
+                        account_name=account_name,
+                        text_content=text_content,
+                        target_topic=target_topic,
+                        resolved_img=resolved_img,
+                        log_func=self.log
+                    )
 
-                    # (A) テキスト要素から幅と高さがコンパクトなボタン要素を探索
-                    try:
-                        for el in page.get_by_text("新しいスレッド", exact=False).all():
-                            try:
-                                if el.is_visible():
-                                    box = el.bounding_box()
-                                    if box and box['x'] < 300 and box['width'] < 300 and box['height'] < 80 and box['y'] > 200:
-                                        new_thread_btn = el
-                                        break
-                            except Exception:
-                                pass
-                    except Exception:
-                        pass
-
-                    # (B) ボタン・リンクタグから厳密に探索
-                    if not new_thread_btn:
-                        for sel in ['div[role="button"]', 'button', 'a']:
-                            try:
-                                for el in page.locator(sel).all():
-                                    if el.is_visible():
-                                        txt = el.inner_text().strip()
-                                        if "新しいスレッド" in txt:
-                                            box = el.bounding_box()
-                                            if box and box['x'] < 300 and box['width'] < 300 and box['height'] < 80:
-                                                new_thread_btn = el
-                                                break
-                                if new_thread_btn:
-                                    break
-                            except Exception:
-                                pass
-
-                    # (C) ボタンをクリック
-                    if new_thread_btn:
-                        self.log(f"[{account_name}] 左下の「＋ 新しいスレッド」ボタンをクリックします...")
-                        new_thread_btn.click()
-                        time.sleep(1.0)
-                    else:
-                        self.log(f"[{account_name}] キーボードショートカット 'c' で新規スレッド作成モーダルを呼び出します...")
-                        page.keyboard.press("c")
-                        time.sleep(1.0)
-
-                    # 3. 新規投稿モーダル (div[role="dialog"]) の出現を厳格に待機
-                    for wait_i in range(16):
-                        time.sleep(0.5)
-                        try:
-                            for d_sel in ['div[role="dialog"]', 'div[aria-modal="true"]']:
-                                d_cand = page.locator(d_sel).first
-                                if d_cand.is_visible():
-                                    dialog = d_cand
-                                    break
-                            if dialog:
-                                for tb_sel in [
-                                    'div[role="textbox"]',
-                                    'div[contenteditable="true"]',
-                                    '[data-lexical-editor="true"]'
-                                ]:
-                                    tb_cand = dialog.locator(tb_sel).first
-                                    if tb_cand.is_visible():
-                                        textbox = tb_cand
-                                        break
-                                if textbox:
-                                    break
-                        except Exception:
-                            pass
-                        # 4秒経過しても開かない場合、再度クリックを試みる
-                        if wait_i == 6 and not dialog:
-                            if new_thread_btn:
-                                try:
-                                    new_thread_btn.click()
-                                except Exception:
-                                    pass
-                            try:
-                                page.keyboard.press("c")
-                            except Exception:
-                                pass
-
-                    if not dialog or not textbox:
-                        raise Exception("左下の「新しいスレッド」をクリックしましたが、新規投稿モーダルが開きませんでした。他人のポストに誤爆しないよう処理を安全に中断しました。")
-
-                    # 4. モーダル内の新規スレッド入力欄に投稿テキストを入力
-
-                    textbox.click()
-                    try:
-                        textbox.press("Control+A")
-                        textbox.press("Backspace")
-                    except Exception:
-                        pass
-
-                    lines = text_content.split("\n")
-                    for l_idx, line in enumerate(lines):
-                        if line:
-                            textbox.press_sequentially(line, delay=random.randint(15, 30))
-                        if l_idx < len(lines) - 1:
-                            textbox.press("Shift+Enter")
-                            time.sleep(0.1)
-
-                    time.sleep(1)
-
-                    # コミュニティまたはトピックの設定
-                    if target_topic:
-                        set_topic_in_threads_composer(page, dialog, target_topic, self.log)
-                        time.sleep(0.5)
-
-                    if resolved_img:
-
-                        safe_img = ensure_valid_image(resolved_img, self.log)
-                        self.log(f"[{account_name}] 画像を添付します: {os.path.basename(safe_img)}")
-                        
-                        attached = False
-                        
-                        # 1. 投稿ダイアログ内の画像添付アイコンをクリックして expect_file_chooser で設定
-                        media_selectors = [
-                            'div[role="dialog"] svg[aria-label*="メディア"]',
-                            'div[role="dialog"] svg[aria-label*="画像"]',
-                            'div[role="dialog"] svg[aria-label*="写真"]',
-                            'div[role="dialog"] svg[aria-label*="添付"]',
-                            'svg[aria-label="画像を追加"]',
-                            'svg[aria-label="メディアを添付"]',
-                            'svg[aria-label="写真を添付"]',
-                            'svg[aria-label*="メディア"]',
-                            'svg[aria-label*="画像"]',
-                        ]
-                        for m_sel in media_selectors:
-                            try:
-                                m_el = page.locator(m_sel).first
-                                if m_el.is_visible():
-                                    btn_parent = page.locator(f'div[role="button"]:has({m_sel}), button:has({m_sel})').first
-                                    click_el = btn_parent if btn_parent.is_visible() else m_el
-                                    with page.expect_file_chooser(timeout=2500) as fc_info:
-                                        click_el.click()
-                                    file_chooser = fc_info.value
-                                    file_chooser.set_files(safe_img)
-                                    attached = True
-                                    self.log(f"[{account_name}] メディア添付アイコン経由で画像を設定しました。")
-                                    break
-                            except Exception:
-                                pass
-                        
-                        # 2. expect_file_chooserで設定できなかった場合、ダイアログ内のinput[type="file"]を直接指定
-                        if not attached:
-                            for f_sel in [
-                                'div[role="dialog"] input[type="file"]',
-                                'div[aria-modal="true"] input[type="file"]',
-                                'input[type="file"][accept*="image"]',
-                                'input[type="file"][multiple]',
-                                'input[type="file"]'
-                            ]:
-                                try:
-                                    locs = page.locator(f_sel).all()
-                                    if locs:
-                                        locs[-1].set_input_files(safe_img)
-                                        attached = True
-                                        self.log(f"[{account_name}] ダイアログ内ファイル入力要素({f_sel})に画像を設定しました。")
-                                        break
-                                except Exception:
-                                    pass
-
-                        
-                        # 3. アップロードプレビューの完了を待機
-                        preview_found = False
-                        for _ in range(12):
-                            time.sleep(0.8)
-                            for err_sel in ['div:text-matches("添付ファイルを添付できませんでした|アップロードできませんでした|エラーが発生しました")']:
-                                try:
-                                    err_el = page.locator(err_sel).first
-                                    if err_el.is_visible():
-                                        err_text = err_el.inner_text().strip()
-                                        self.log(f"[WARN] [{account_name}] Threads画面通知: '{err_text}'")
-                                except Exception:
-                                    pass
-                            
-                            for p_sel in [
-                                'div[role="dialog"] img[src^="blob:"]',
-                                'div[role="dialog"] img[alt*="メディア"]',
-                                'div[role="dialog"] img[alt*="画像"]',
-                                'div[role="dialog"] svg[aria-label*="削除"]',
-                                'div[role="dialog"] svg[aria-label*="メディアを破棄"]',
-                                'div[role="dialog"] svg[aria-label*="メディアを編集"]'
-                            ]:
-                                try:
-                                    if page.locator(p_sel).first.is_visible():
-                                        preview_found = True
-                                        break
-                                except Exception:
-                                    pass
-                            if preview_found:
-                                self.log(f"[{account_name}] 画像プレビュー確認完了（アップロード成功）")
-                                break
-
-                    time.sleep(1.0)
-
-                    # ポップアップ（「返信と引用ができる人」や投稿オプション）が開いている場合はEscapeで閉じる
-                    for pop_sel in ['text="返信と引用ができる人"', 'text="返信できる人"', 'div[role="menu"]', 'div[role="listbox"]']:
-                        try:
-                            pop_el = page.locator(pop_sel).first
-                            if pop_el.is_visible():
-                                self.log(f"[{account_name}] 画面上のオプションメニューを閉じて「投稿」ボタンを押せるようにします...")
-                                page.keyboard.press("Escape")
-                                time.sleep(0.6)
-                                break
-                        except Exception:
-                            pass
-
-                    # 本物の「投稿」ボタンを特定（「投稿オプション」「下書き」等は除外）
-                    submit_btn = None
-                    for _ in range(15):
-                        # メニューが開いていれば閉じる
-                        try:
-                            if page.locator('text="返信と引用ができる人"').first.is_visible():
-                                page.keyboard.press("Escape")
-                                time.sleep(0.5)
-                        except Exception:
-                            pass
-
-                        candidates = []
-                        search_root = dialog if (dialog and dialog.is_visible()) else page.locator('div[role="dialog"]').first
-                        for btn in search_root.locator('div[role="button"], button').all():
-                            try:
-                                if not btn.is_visible():
-                                    continue
-                                txt = btn.inner_text().strip()
-                                clean_txt = txt.replace(" ", "").replace("\n", "")
-                                if clean_txt in ["投稿", "Post", "投稿する"] and "オプション" not in txt and "新しい" not in txt and "作成" not in txt and "下書き" not in txt:
-                                    candidates.append(btn)
-                            except Exception:
-                                pass
-
-                        if candidates:
-                            cand_btn = candidates[-1]
-                            is_disabled = (cand_btn.get_attribute("aria-disabled") == "true") or (cand_btn.get_attribute("disabled") is not None)
-                            if not is_disabled:
-                                submit_btn = cand_btn
-                                break
-                        time.sleep(1)
-
-                    if not submit_btn:
-                        raise Exception("「投稿」ボタンがアクティブになりませんでした（画像のアップロード中か、文字数超過の可能性があります）。")
-
-                    # 送信ボタンクリックとCtrl+Enterの両方で確実に投稿実行
-                    self.log(f"[{account_name}] 「投稿」ボタンをクリックしました。Threads送信処理を確認中...")
-                    try:
-                        submit_btn.scroll_into_view_if_needed()
-                        submit_btn.click(force=True)
-                    except Exception as e:
-                        self.log(f"[{account_name}] 送信ボタン通常クリック試行: {e}")
-                    
-                    # DOMレベルの直接click()も呼出
-                    try:
-                        submit_btn.evaluate("el => el.click()")
-                    except Exception:
-                        pass
-
-                    try:
-                        textbox.focus()
-                        page.keyboard.press("Control+Enter")
-                    except Exception:
-                        pass
-
-                    # 【厳密検証】本当にThreads側で投稿が完了したか確認（勝手に成功扱いにしない）
-                    posted_success = False
-                    post_error_detected = ""
-
-                    for check_idx in range(30):
-                        time.sleep(0.8)
-
-                        # 1. 画面下部の黒い通知バー（「投稿完了」「投稿しました」等）を即座に検出
-                        for s_sel in [
-                            'text="投稿完了"',
-                            ':has-text("投稿完了")',
-                            'text="投稿しました"',
-                            ':has-text("投稿しました")',
-                            'text="スレッドを投稿しました"',
-                            ':has-text("スレッドを投稿しました")',
-                            'text="スレッドを表示"',
-                            ':has-text("スレッドを表示")',
-                            'text="スレッドが投稿されました"',
-                            ':has-text("スレッドが投稿されました")',
-                            'text="Posted"',
-                            'text="View post"',
-                            'div[role="alert"]:has-text("投稿")',
-                            'div[role="alert"]:has-text("スレッド")',
-                            'div:has-text("投稿完了")',
-                            'div:has-text("投稿しました")',
-                            'div:has-text("スレッドを投稿しました")'
-                        ]:
-                            try:
-                                s_loc = page.locator(s_sel).first
-                                if s_loc.is_visible():
-                                    posted_success = True
-                                    self.log(f"[SUCCESS] [{account_name}] 🎉 画面下部の黒い通知バー（'{s_sel}'）を確認し、投稿完了しました！")
-                                    break
-                            except Exception:
-                                pass
-                        if posted_success:
-                            break
-
-                        # 2. 画面上のエラーメッセージ検出
-                        for err_sel in [
-                            'div[role="alert"]:has-text("エラー")',
-                            'text="投稿できませんでした"',
-                            'text="アップロードできませんでした"',
-                            'text="エラーが発生しました"',
-                            'text="問題が発生しました"',
-                            'text="コミュニティガイドライン"',
-                            'text="後でもう一度お試しください"'
-                        ]:
-                            try:
-                                err_el = page.locator(err_sel).first
-                                if err_el.is_visible():
-                                    post_error_detected = err_el.inner_text().strip()[:80]
-                                    break
-                            except Exception:
-                                pass
-                        if post_error_detected:
-                            break
-
-                        # 3. 投稿モーダル (div[role="dialog"]) が画面から消滅したか確認（モーダル閉鎖＝送信成功）
-                        modal_closed = True
-                        try:
-                            for d in page.locator('div[role="dialog"], div[aria-modal="true"]').all():
-                                if d.is_visible():
-                                    modal_closed = False
-                                    break
-                        except Exception:
-                            pass
-
-                        if modal_closed:
-                            time.sleep(0.4)
-                            for err_sel in ['div[role="alert"]:has-text("エラー")', 'text="投稿できませんでした"']:
-                                try:
-                                    if page.locator(err_sel).first.is_visible():
-                                        post_error_detected = "エラー通知検出"
-                                        break
-                                except Exception:
-                                    pass
-                            if not post_error_detected:
-                                posted_success = True
-                                self.log(f"[SUCCESS] [{account_name}] 🎉 投稿モーダルが閉じ、下部の黒バー完了通知を確認しました！")
-                                break
-
-                        # 4. モーダルがまだ開いている場合、5秒経過時に「投稿」ボタンを再押下
-                        if check_idx in [5, 12]:
-                            try:
-                                if page.locator('text="返信と引用ができる人"').first.is_visible():
-                                    page.keyboard.press("Escape")
-                                    time.sleep(0.5)
-                                for btn in page.locator('div[role="dialog"] div[role="button"], div[role="dialog"] button').all():
-                                    try:
-                                        if btn.is_visible() and btn.inner_text().strip() in ["投稿", "Post"]:
-                                            self.log(f"[{account_name}] 送信ボタンを再押下します...")
-                                            btn.click(force=True)
-                                            break
-                                    except Exception:
-                                        pass
-                            except Exception:
-                                pass
-
-                    if post_error_detected:
-                        raise Exception(f"Threads画面でエラーが返されました: {post_error_detected}")
-
-                    if not posted_success:
-                        raise Exception("投稿ボタンを押下後、30秒経過してもThreads上で送信完了（投稿通知またはフォーム閉鎖）が確認できませんでした。下書きが画面に残っています。")
+                    if not posted_ok:
+                        raise Exception(post_err_msg or "投稿処理に失敗しました（左下「＋」ボタンおよび「最近どう？」枠の両方で投稿できませんでした）。")
 
 
                     finish_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")

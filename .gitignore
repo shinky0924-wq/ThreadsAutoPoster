@@ -13,3 +13,6 @@ coverage/
 .env*
 !.env.example
 bun.lock
+__pycache__/
+*.pyc
+.aistudio/

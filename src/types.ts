@@ -10,6 +10,8 @@ export interface AccountInfo {
   profileDir: string;
   topics: string[];
   currentTopicIndex: number;
+  enabled: boolean; // 有効 / 無効 (電話番号認証時等に自動で無効・停止)
+  checkpointReason?: string; // 停止理由
 }
 
 export interface PostItem {

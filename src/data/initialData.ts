@@ -3,9 +3,9 @@ import { AccountInfo, PostItem, DailyGreetingSlot, SystemSettings } from '../typ
 export const initialAccounts: AccountInfo[] = [
   {
     id: 'sll15802',
-    authToken: '47094044745:HP477WPO3v01NR:4:AYlIDUGTeie5QpgJ04lsSGIceblgEb_1RYr_AuqSwg',
-    userId: '47094044745',
-    notes: '【推奨】auth_token(sessionid)を貼るだけでログイン完了！ポスト間隔・モードは各アカウントのxlsxで設定します',
+    authToken: '',
+    userId: 'sll15802',
+    notes: 'メインアカウント (profile_launcherでID・PWログイン保存済)',
     minIntervalMinutes: 120,
     maxIntervalMinutes: 360,
     activeHours: '0:00-0:00',
@@ -13,11 +13,12 @@ export const initialAccounts: AccountInfo[] = [
     profileDir: 'chrome_profiles/sll15802',
     topics: ['信太山新地', '大阪求人', '高収入バイト'],
     currentTopicIndex: 0,
+    enabled: true,
   },
   {
     id: 'jhtwj2',
-    authToken: '59443198637%3AoWW1jHLPGWBk76%3A1%3AAYln_P28EWgNoa4z5mR1pQvQTJRsMeKfODAHiMJ8lg',
-    userId: '59443198637',
+    authToken: '',
+    userId: 'jhtwj2',
     notes: 'サブアカウント1 (大阪エリア)',
     minIntervalMinutes: 90,
     maxIntervalMinutes: 240,
@@ -26,11 +27,12 @@ export const initialAccounts: AccountInfo[] = [
     profileDir: 'chrome_profiles/jhtwj2',
     topics: ['信太山新地', '高収入女性求人'],
     currentTopicIndex: 0,
+    enabled: true,
   },
   {
     id: 'wqlopakpskapkoq',
-    authToken: '15570761432%3A9El7toYgQBOzf5%3A20%3AAYkM_HvTaUQQDGV61ml7vevbgRsE_pvrhLcpV1h8GQ',
-    userId: '15570761432',
+    authToken: '',
+    userId: 'wqlopakpskapkoq',
     notes: 'サブアカウント2 (夜間帯運用)',
     minIntervalMinutes: 180,
     maxIntervalMinutes: 300,
@@ -39,6 +41,7 @@ export const initialAccounts: AccountInfo[] = [
     profileDir: 'chrome_profiles/wqlopakpskapkoq',
     topics: ['大阪求人', 'ナイトワーク安心ナビ'],
     currentTopicIndex: 0,
+    enabled: true,
   },
 ];
 

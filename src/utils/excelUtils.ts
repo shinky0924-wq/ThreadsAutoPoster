@@ -74,11 +74,16 @@ export function exportAccountWorkbook(
  */
 export function exportAccountsConfigWorkbook(accounts: AccountInfo[]) {
   const wb = XLSX.utils.book_new();
-  const headers = ['アカウントID', 'auth_token', '備考'];
+  const headers = ['アカウントID', 'プロファイル名', '有効/無効', '備考'];
   const rows: any[][] = [headers];
 
   accounts.forEach((acc) => {
-    rows.push([acc.id, acc.authToken, acc.notes || '']);
+    rows.push([
+      acc.id,
+      acc.profileDir ? acc.profileDir.replace('chrome_profiles/', '') : acc.id,
+      acc.enabled !== false ? '有効' : '無効',
+      acc.notes || '',
+    ]);
   });
 
   const ws = XLSX.utils.aoa_to_sheet(rows);
@@ -124,14 +129,15 @@ export async function parseExcelFile(
             let headerIdx = 0;
             for (let i = 0; i < Math.min(10, rawRows.length); i++) {
               const rowStr = (rawRows[i] || []).join(' ');
-              if (rowStr.includes('アカウントID') || rowStr.includes('アカウント名') || rowStr.includes('auth_token')) {
+              if (rowStr.includes('アカウントID') || rowStr.includes('アカウント名') || rowStr.includes('プロファイル')) {
                 headerIdx = i;
                 break;
               }
             }
             const headers = (rawRows[headerIdx] || []).map((h) => String(h || '').trim());
             const accIdCol = headers.findIndex((h) => h.includes('アカウントID') || h.includes('アカウント名') || h === 'アカウント');
-            const tokenCol = headers.findIndex((h) => h.includes('auth_token') || h.includes('sessionid'));
+            const profileCol = headers.findIndex((h) => h.includes('プロファイル') || h.includes('profile'));
+            const enabledCol = headers.findIndex((h) => h.includes('有効') || h.includes('ステータス') || h.includes('状態'));
             const notesCol = headers.findIndex((h) => h.includes('備考') || h.includes('note'));
 
             const parsedAccounts: Partial<AccountInfo>[] = [];
@@ -140,11 +146,16 @@ export async function parseExcelFile(
               if (!row || !row[accIdCol]) continue;
               const accId = String(row[accIdCol]).trim();
               if (!accId) continue;
-              const token = tokenCol !== -1 && row[tokenCol] ? String(row[tokenCol]).trim() : '';
+              const profileName = profileCol !== -1 && row[profileCol] ? String(row[profileCol]).trim() : accId;
+              const statusStr = enabledCol !== -1 && row[enabledCol] ? String(row[enabledCol]).trim() : '有効';
+              const isEnabled = !['無効', '停止', 'off', 'OFF', '0', 'false', '停止 (要電話番号認証)'].includes(statusStr);
+
               parsedAccounts.push({
                 id: accId,
-                authToken: token,
-                userId: extractUserIdFromToken(token),
+                authToken: '',
+                userId: accId,
+                profileDir: profileName.startsWith('chrome_profiles/') ? profileName : `chrome_profiles/${profileName}`,
+                enabled: isEnabled,
                 notes: notesCol !== -1 && row[notesCol] ? String(row[notesCol]).trim() : '',
               });
             }

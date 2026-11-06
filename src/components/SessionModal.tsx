@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { ShieldCheck, CheckCircle2, AlertTriangle, Copy, ExternalLink, X } from 'lucide-react';
+import { ShieldCheck, CheckCircle2, AlertTriangle, Download, Rocket, ExternalLink, X, Info } from 'lucide-react';
 import { extractUserIdFromToken } from '../utils/spintax';
+import { RAW_PROFILE_LAUNCHER_PY } from '../data/rawProfileLauncher';
 
 interface SessionModalProps {
   isOpen: boolean;
@@ -18,49 +19,28 @@ export const SessionModal: React.FC<SessionModalProps> = ({
   accountId,
 }) => {
   const [tokenInput, setTokenInput] = useState(currentAuthToken);
-  const [testResult, setTestResult] = useState<{
-    valid: boolean;
-    userId: string;
-    message: string;
-  } | null>(null);
 
   if (!isOpen) return null;
 
-  const handleTestToken = () => {
-    const clean = tokenInput.trim();
-    if (!clean) {
-      setTestResult({
-        valid: false,
-        userId: '',
-        message: 'トークンが入力されていません。',
-      });
-      return;
+  const handleDownloadLauncher = () => {
+    try {
+      const blob = new Blob([RAW_PROFILE_LAUNCHER_PY], { type: 'text/x-python;charset=utf-8' });
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = 'profile_launcher.py';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(blobUrl);
+    } catch (err: any) {
+      console.error(err);
     }
-
-    const userId = extractUserIdFromToken(clean);
-    if (userId) {
-      setTestResult({
-        valid: true,
-        userId,
-        message: `✅ 有効なsessionid形式です！ユーザーID: [${userId}] を検出しました。Threads / Instagramのクッキー注入に対応しています。`,
-      });
-    } else {
-      setTestResult({
-        valid: true,
-        userId: '不明',
-        message: `⚠️ sessionid文字列を認識しました（ユーザーID分離形式ではありませんが認証試行可能です）。`,
-      });
-    }
-  };
-
-  const handleSave = () => {
-    onSaveToken(tokenInput.trim());
-    onClose();
   };
 
   return (
-    <div className="fixed inset-0 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-      <div className="bg-zinc-900 border border-zinc-700 rounded-2xl max-w-xl w-full p-6 space-y-4 shadow-2xl relative text-xs">
+    <div className="fixed inset-0 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+      <div className="bg-zinc-900 border border-violet-500/60 rounded-2xl max-w-xl w-full p-6 space-y-4 shadow-2xl relative text-xs">
         {/* Close Button */}
         <button
           onClick={onClose}
@@ -72,11 +52,14 @@ export const SessionModal: React.FC<SessionModalProps> = ({
         {/* Header */}
         <div className="flex items-center gap-2.5 pb-2 border-b border-zinc-800">
           <div className="p-2 rounded-xl bg-violet-950 text-violet-400 border border-violet-800">
-            <ShieldCheck className="w-5 h-5" />
+            <Rocket className="w-5 h-5" />
           </div>
           <div>
-            <h2 className="text-sm font-bold text-white">
-              Authトークン (sessionid) による自動ログイン設定
+            <h2 className="text-sm font-bold text-white flex items-center gap-2">
+              <span>ログイン永続化 & プロファイル管理 (profile_launcher)</span>
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-800">
+                推奨方式
+              </span>
             </h2>
             <p className="text-zinc-400 text-[11px]">
               対象アカウント: <span className="font-mono text-emerald-400">@{accountId}</span>
@@ -84,77 +67,59 @@ export const SessionModal: React.FC<SessionModalProps> = ({
           </div>
         </div>
 
-        {/* 30-sec Guide */}
+        {/* Notice about SessionID Logout issues */}
+        <div className="p-3.5 rounded-xl bg-amber-950/40 border border-amber-800/80 space-y-1.5 text-zinc-200">
+          <div className="font-bold text-amber-300 flex items-center gap-1.5">
+            <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+            <span>なぜsessionid入力ではなく「プロファイル永続化」が必要なのか？</span>
+          </div>
+          <p className="text-zinc-300 text-[11px] leading-relaxed">
+            Meta（Instagram/Threads）は定期的にセッションCookie（sessionid）を強制ローテーション・無効化するため、手動コピペしたsessionidは数時間〜数日で使えなくなり強制ログアウトされます。<br />
+            <strong>「profile_launcher」で作成した専用Chromeプロファイル</strong>は、IndexedDB・ローカルストレージ・正規端末Cookieを完全保存するため、<strong>ID・PWで一度ログインするだけで永続的にログイン状態を維持</strong>できます。
+          </p>
+        </div>
+
+        {/* 3-Step Simple Guide */}
         <div className="p-3.5 rounded-xl bg-zinc-950 border border-zinc-800 space-y-2">
-          <span className="font-bold text-zinc-300 block text-[11px]">
-            【簡単30秒！】sessionidの取得手順:
+          <span className="font-bold text-violet-300 block text-[11px] flex items-center gap-1.5">
+            <Info className="w-4 h-4 text-violet-400" />
+            【かんたん3ステップ】profile_launcherの使い方:
           </span>
-          <ol className="list-decimal list-inside space-y-1 text-zinc-400 leading-relaxed pl-1">
+          <ol className="list-decimal list-inside space-y-1.5 text-zinc-300 leading-relaxed pl-1 text-[11px]">
             <li>
-              Google Chrome等のブラウザで{' '}
-              <a
-                href="https://www.threads.net/"
-                target="_blank"
-                rel="noreferrer"
-                className="text-sky-400 hover:underline inline-flex items-center gap-0.5"
-              >
-                Threads.net <ExternalLink className="w-2.5 h-2.5" />
-              </a>{' '}
-              を開き、ログインします。
+              下のボタンから <code className="text-violet-300 font-mono">profile_launcher.py</code> をダウンロードして起動。
             </li>
-            <li>キーボードの <kbd className="px-1 py-0.5 rounded bg-zinc-800 font-mono text-zinc-200">F12</kbd> キーを押してデベロッパーツールを開きます。</li>
-            <li>上部タブの「Application（アプリケーション）」をクリックします。</li>
-            <li>左メニュー「Cookies」内の「https://www.threads.net」をクリックします。</li>
-            <li>一覧の「sessionid」の値をコピーして、下の欄に貼り付けます。</li>
+            <li>
+              プロファイル名に <code className="text-emerald-400 font-mono">{accountId}</code> を指定して「<strong>🚀 Chromeを起動</strong>」をクリック。
+            </li>
+            <li>
+              開いたChromeでThreadsにID/PWで1回通常ログインし、ウィンドウを閉じるだけで保存完了！
+            </li>
           </ol>
         </div>
 
-        {/* Input & Tester */}
-        <div className="space-y-2">
-          <label className="text-zinc-300 font-semibold block">
-            sessionid / Authトークン:
-          </label>
-          <textarea
-            value={tokenInput}
-            onChange={(e) => {
-              setTokenInput(e.target.value);
-              setTestResult(null);
-            }}
-            rows={3}
-            placeholder="例: 47094044745:HP477WPO3v01NR:4:AYlIDUGTeie5QpgJ04lsSGIceblgEb_1RYr_AuqSwg"
-            className="w-full bg-zinc-950 border border-zinc-700 text-white p-2.5 rounded-lg focus:outline-none focus:border-violet-500 font-mono text-xs"
-          />
-
-          <div className="flex items-center justify-between gap-2 pt-1">
-            <button
-              type="button"
-              onClick={handleTestToken}
-              className="px-3 py-1.5 bg-violet-600/30 hover:bg-violet-600/40 text-violet-300 border border-violet-500/50 rounded-lg font-medium cursor-pointer"
-            >
-              トークン形式テスト
-            </button>
-
-            {testResult && (
-              <span className={`text-[11px] font-mono ${testResult.valid ? 'text-emerald-400' : 'text-rose-400'}`}>
-                {testResult.message}
-              </span>
-            )}
+        {/* Download profile_launcher.py button */}
+        <div className="flex items-center justify-between p-3 rounded-xl bg-violet-950/30 border border-violet-800/50">
+          <div>
+            <div className="font-bold text-white text-xs">profile_launcher.py</div>
+            <div className="text-[11px] text-zinc-400">プロファイル作成・ログイン永続化GUIツール</div>
           </div>
+          <button
+            onClick={handleDownloadLauncher}
+            className="flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white font-bold rounded-lg shadow cursor-pointer text-xs"
+          >
+            <Download className="w-3.5 h-3.5" />
+            <span>ツールをダウンロード</span>
+          </button>
         </div>
 
         {/* Footer Actions */}
-        <div className="flex items-center justify-end gap-2 pt-3 border-t border-zinc-800">
+        <div className="flex items-center justify-end gap-2 pt-2 border-t border-zinc-800">
           <button
             onClick={onClose}
-            className="px-4 py-2 text-zinc-400 hover:text-white cursor-pointer"
+            className="px-5 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg cursor-pointer text-xs"
           >
-            キャンセル
-          </button>
-          <button
-            onClick={handleSave}
-            className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded-lg shadow cursor-pointer"
-          >
-            トークンを保存して適用
+            閉じる
           </button>
         </div>
       </div>
