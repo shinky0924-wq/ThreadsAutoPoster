@@ -698,15 +698,24 @@ def save_portable_session_file(context, profile_dir, account_name, log_func=prin
     """
     ログイン中のセッション状態を portable_session.json として保存。
     別PCにフォルダごとコピーした際もログイン状態を100%保持できるようにします。
+    ※ ログアウト状態や未認証状態での上書き破壊を防止する安全ガード付き。
     """
-    if not profile_dir or not os.path.exists(profile_dir):
+    if not profile_dir or not os.path.exists(profile_dir) or not context:
         return
     try:
         import json
+        cookies = context.cookies(["https://www.threads.net", "https://www.threads.com", "https://www.instagram.com"])
+        if not cookies:
+            return
+
+        # 🛡️ ログアウト状態・未認証状態での上書き破壊防止ガード！
+        has_valid_session = any(c.get("name") == "sessionid" and len(str(c.get("value") or "").strip()) > 15 for c in cookies)
+        if not has_valid_session:
+            return
+
         portable_file = os.path.join(profile_dir, "portable_session.json")
         context.storage_state(path=portable_file)
         cookies_file = os.path.join(profile_dir, "cookies.json")
-        cookies = context.cookies(["https://www.threads.net", "https://www.threads.com", "https://www.instagram.com"])
         with open(cookies_file, "w", encoding="utf-8") as f:
             json.dump(cookies, f, ensure_ascii=False, indent=2)
     except Exception:
@@ -1042,10 +1051,21 @@ def inject_session_cookies(context, raw_token, account_name, log_func=print):
                 try:
                     with open(pjson, "r", encoding="utf-8") as f:
                         data = json.load(f)
-                        t = data.get("sessionid", "").strip()
+                        t = data.get("sessionid", "").strip() if isinstance(data, dict) else ""
+                        cks = data.get("cookies", []) if isinstance(data, dict) else (data if isinstance(data, list) else [])
+                        if not t and cks:
+                            for c in cks:
+                                if c.get("name") == "sessionid" and c.get("value"):
+                                    t = str(c["value"]).strip()
+                                    break
                         if t:
                             token = t
-                            log_func(f"[INFO] [{account_name}] プロファイル永続化ファイル (portable_session.json) から sessionid を自動読み込みしました。")
+                            if cks:
+                                try:
+                                    context.add_cookies(cks)
+                                except Exception:
+                                    pass
+                            log_func(f"[INFO] [{account_name}] プロファイル永続化ファイル (portable_session.json) から sessionid を自動読み込み・適用しました。")
                             break
                 except Exception:
                     pass
@@ -1083,15 +1103,13 @@ def inject_session_cookies(context, raw_token, account_name, log_func=print):
     if token != decoded_token:
         cookie_values_to_set.append(token)
 
-    # 既存の生きたセッションをチェック (Metaが更新した最新セッションがあれば古いExcel値で上書きしない)
+    # 既存のCookieをチェック (すでに全く同じ値が設定済みの場合は二重設定をスキップ)
     try:
         existing_cookies = context.cookies(["https://www.threads.net", "https://www.instagram.com"])
         for c in existing_cookies:
             if c.get("name") == "sessionid" and c.get("value"):
-                c_val = c.get("value")
-                if ds_user_id and str(ds_user_id) in c_val:
-                    # すでに同一アカウントの有効なセッションがChromeプロファイルにある場合はそのまま維持
-                    log_func(f"[INFO] [{account_name}] Chromeプロファイル内のアクティブなセッションを自動維持します。")
+                c_val = str(c.get("value")).strip()
+                if c_val == decoded_token or c_val == token:
                     return True
     except Exception:
         pass
@@ -1249,7 +1267,8 @@ def auto_refresh_and_save_session(context, account_name, profile_dir, account_fi
             elif c.get("name") == "ds_user_id" and c.get("value"):
                 user_id = str(c.get("value")).strip()
 
-        if not latest_sessionid:
+        if not latest_sessionid or len(latest_sessionid) < 15:
+            # 🛡️ ログアウト状態での上書き破壊防止ガード！有効なsessionidがない場合は保存しない
             return
 
         target_dir = profile_dir if (profile_dir and os.path.isabs(profile_dir)) else os.path.join(BASE_DIR, profile_dir or f"chrome_profiles/{account_name}")
@@ -4118,8 +4137,19 @@ class ThreadsPosterGUI:
                     self.root.after(0, lambda: self.status_lbl.config(text=f"👤 @{account_name} ログイン確認・手動操作中", fg="#38bdf8"))
                     self.root.after(0, lambda: self.btn_stop.config(state="normal"))
 
+                    last_captured_session = token
                     while not page.is_closed() and not self.stop_requested:
-                        time.sleep(0.5)
+                        try:
+                            # リアルタイムセッション監視（手動ログイン完了を即座に感知して永続保存）
+                            cks = context.cookies(["https://www.threads.net", "https://www.instagram.com"])
+                            cur_sess = next((c.get("value") for c in cks if c.get("name") == "sessionid" and len(str(c.get("value") or "")) > 15), None)
+                            if cur_sess and cur_sess != last_captured_session:
+                                last_captured_session = cur_sess
+                                auto_refresh_and_save_session(context, account_name, profile_dir, self.account_config_path, log_func=self.log)
+                                self.log(f"[SUCCESS] 🎉 [{account_name}] ブラウザログインを即座に検知！最新セッションIDをアカウント情報.xlsxとプロファイルへ永続保存しました！")
+                        except Exception:
+                            pass
+                        time.sleep(1.0)
 
                     try:
                         auto_refresh_and_save_session(context, account_name, profile_dir, self.account_config_path, log_func=self.log)

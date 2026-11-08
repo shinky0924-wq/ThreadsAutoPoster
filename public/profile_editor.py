@@ -243,6 +243,18 @@ def auto_refresh_and_save_session(context, account_name, profile_dir, excel_path
         if not cookies:
             return None
 
+        session_val = None
+        for c in cookies:
+            if c.get("name") == "sessionid" and c.get("value"):
+                v = str(c.get("value")).strip()
+                if len(v) > 15:
+                    session_val = v
+                    break
+
+        # 🛡️ ログアウト状態・未認証状態での上書き破壊防止ガード！
+        if not session_val:
+            return None
+
         os.makedirs(profile_dir, exist_ok=True)
         pfile = os.path.join(profile_dir, "portable_session.json")
         cfile = os.path.join(profile_dir, "cookies.json")
@@ -250,12 +262,6 @@ def auto_refresh_and_save_session(context, account_name, profile_dir, excel_path
             json.dump({"cookies": cookies, "origins": []}, f, ensure_ascii=False, indent=2)
         with open(cfile, "w", encoding="utf-8") as f:
             json.dump(cookies, f, ensure_ascii=False, indent=2)
-
-        session_val = None
-        for c in cookies:
-            if c.get("name") == "sessionid" and c.get("value"):
-                session_val = c.get("value")
-                break
 
         if session_val and excel_path and os.path.exists(excel_path) and openpyxl:
             wb = openpyxl.load_workbook(excel_path)
@@ -277,7 +283,7 @@ def auto_refresh_and_save_session(context, account_name, profile_dir, excel_path
                             break
             wb.close()
 
-        log_func(f"[SUCCESS] 💾 [@{account_name}] 最新セッションCookieを自動保存しました！")
+        log_func(f"[SUCCESS] 💾 [@{account_name}] 最新セッションCookie（sessionid）を自動保存しました！")
         return session_val
     except Exception as e:
         log_func(f"[WARN] auto_refresh_and_save_session error: {e}")
@@ -608,9 +614,26 @@ class ProfileEditorApp:
                     self.log("[INFO] 🚪 編集完了後、ブラウザを「×」で閉じるか、画面の「💾 編集完了（保存してChrome終了）」を押してください。")
                     self.log("=" * 60)
 
-                    # ユーザーがブラウザを閉じるまで待機
+                    # リアルタイム監視＆ユーザーがブラウザを閉じるまで待機
+                    last_detected_session = token
                     while not page.is_closed() and self.is_browser_running:
-                        time.sleep(0.5)
+                        try:
+                            # ログイン画面(/login)に飛ばされていないかチェック＆案内
+                            cur_u = page.url or ""
+                            if "/login" in cur_u:
+                                # 画面上に「Instagramでログイン」ボタンがあれば確認
+                                pass
+
+                            # セッションのリアルタイム監視（ブラウザ内でログインやセッション更新があったら即座に永続化）
+                            cks = context.cookies(["https://www.threads.net", "https://www.instagram.com"])
+                            cur_sess = next((c.get("value") for c in cks if c.get("name") == "sessionid" and len(str(c.get("value") or "")) > 15), None)
+                            if cur_sess and cur_sess != last_detected_session:
+                                last_detected_session = cur_sess
+                                auto_refresh_and_save_session(context, account_name, prof_dir, self.account_excel_path, log_func=self.log)
+                                self.log(f"[SUCCESS] 🎉 [@{account_name}] ブラウザログイン・最新セッションを即座に検知！プロファイルとExcelへ永続保存しました！")
+                        except Exception:
+                            pass
+                        time.sleep(1.0)
 
                     try:
                         auto_refresh_and_save_session(context, account_name, prof_dir, self.account_excel_path, log_func=self.log)

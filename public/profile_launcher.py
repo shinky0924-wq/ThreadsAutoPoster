@@ -750,22 +750,11 @@ class ProfileLauncherApp:
         messagebox.showinfo("作成完了", msg)
 
     def launch_selected_profile(self):
-        """プロファイルChromeを起動（Threadsホームへ直行）"""
+        """プロファイルChromeを起動（Cookieを完全復元してThreadsホームへ直行＆リアルタイムログイン保存）"""
         name = self.entry_name.get().strip()
         if not name:
             messagebox.showwarning("警告", "アカウントIDを入力してください。")
             return
-
-        if not self.chrome_path or not os.path.exists(self.chrome_path):
-            chrome_file = filedialog.askopenfilename(
-                title="Chromeの実行ファイル (chrome.exe) を選択してください",
-                filetypes=[("Chrome Executable", "chrome.exe"), ("All Files", "*.*")]
-            )
-            if chrome_file and os.path.exists(chrome_file):
-                self.chrome_path = chrome_file
-            else:
-                messagebox.showerror("エラー", "Google Chromeが見つかりませんでした。")
-                return
 
         profile_path = os.path.join(PROFILES_DIR, name)
         os.makedirs(profile_path, exist_ok=True)
@@ -773,25 +762,134 @@ class ProfileLauncherApp:
 
         url = "https://www.threads.net/"
         self.log(f"🚀 プロファイル '{name}' でChromeを起動中...")
-        self.log(f"🌐 接続先: {url} (ログイン画面をスキップしてホームへ直行)")
+        self.log(f"🌐 接続先: {url} (保存済みCookieを完全注入してホームへ直行)")
 
-        cmd = [
-            self.chrome_path,
-            f"--user-data-dir={profile_path}",
-            "--start-maximized",
-            "--no-first-run",
-            "--no-default-browser-check",
-            "--lang=ja-JP",
-            url
-        ]
+        import threading
 
-        try:
-            subprocess.Popen(cmd)
-            self.log("✨ Chromeウィンドウが開きました！ログイン済みになっているかご確認ください。")
-            self.refresh_profile_list()
-        except Exception as e:
-            self.log(f"❌ 起動エラー: {e}")
-            messagebox.showerror("起動エラー", f"Chromeの起動に失敗しました:\n{e}")
+        def _launch_worker():
+            try:
+                from playwright.sync_api import sync_playwright
+                with sync_playwright() as p:
+                    args = [
+                        "--start-maximized",
+                        "--no-first-run",
+                        "--no-default-browser-check",
+                        "--lang=ja-JP",
+                        "--disable-dev-shm-usage"
+                    ]
+                    # 指紋ファイルの読み込み
+                    fp_file = os.path.join(profile_path, "fingerprint.json")
+                    fp = {}
+                    if os.path.exists(fp_file):
+                        try:
+                            with open(fp_file, "r", encoding="utf-8") as ffp:
+                                fp = json.load(ffp)
+                        except Exception:
+                            pass
+
+                    context = p.chromium.launch_persistent_context(
+                        user_data_dir=profile_path,
+                        headless=False,
+                        channel="chrome" if self.chrome_path else None,
+                        user_agent=fp.get("user_agent") or "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                        locale="ja-JP",
+                        args=args,
+                        ignore_default_args=["--enable-automation"]
+                    )
+                    try:
+                        context.add_init_script("Object.defineProperty(navigator, 'webdriver', { get: () => undefined }); window.chrome = { runtime: {} };")
+                    except Exception:
+                        pass
+
+                    # 1. portable_session.json / cookies.json からCookieを完全復元
+                    pfile = os.path.join(profile_path, "portable_session.json")
+                    cfile = os.path.join(profile_path, "cookies.json")
+                    injected_count = 0
+                    if os.path.exists(pfile):
+                        try:
+                            with open(pfile, "r", encoding="utf-8") as f_pf:
+                                pdata = json.load(f_pf)
+                            cks = pdata.get("cookies", []) if isinstance(pdata, dict) else (pdata if isinstance(pdata, list) else [])
+                            if cks:
+                                context.add_cookies(cks)
+                                injected_count = len(cks)
+                        except Exception as ex:
+                            self.log(f"[DEBUG] pfile restore: {ex}")
+
+                    raw_token = self.entry_sessionid.get().strip()
+                    if raw_token and not raw_token.startswith("ここに"):
+                        token = clean_session_id_token(raw_token)
+                        uid = extract_user_id(token)
+                        cookie_expires = int(time.time()) + 31536000
+                        domains = [".threads.net", "www.threads.net", "threads.net", ".instagram.com", "www.instagram.com", "instagram.com"]
+                        for d in domains:
+                            try:
+                                context.add_cookies([
+                                    {"name": "sessionid", "value": token, "domain": d, "path": "/", "httpOnly": True, "secure": True, "sameSite": "Lax", "expires": cookie_expires}
+                                ])
+                                if uid:
+                                    context.add_cookies([
+                                        {"name": "ds_user_id", "value": str(uid), "domain": d, "path": "/", "secure": True, "sameSite": "Lax", "expires": cookie_expires}
+                                    ])
+                            except Exception:
+                                pass
+
+                    if injected_count > 0:
+                        self.log(f"🍪 保存済みCookie（全{injected_count}件）をChromeへ注入しました！")
+
+                    page = context.pages[0] if context.pages else context.new_page()
+                    page.goto(url, wait_until="domcontentloaded", timeout=45000)
+
+                    self.log("✨ Chromeウィンドウが開きました！ログイン状態をご確認ください。")
+                    self.log("💡 ブラウザ上でログインした場合やプロフィール編集した場合は、即座にセッションが自動検知・永続保存されます。")
+                    self.root.after(0, self.refresh_profile_list)
+
+                    # リアルタイムセッション監視ループ
+                    last_detected = ""
+                    while not page.is_closed():
+                        try:
+                            cur_cks = context.cookies(["https://www.threads.net", "https://www.instagram.com"])
+                            sess = next((c for c in cur_cks if c.get("name") == "sessionid" and c.get("value") and len(str(c["value"])) > 15), None)
+                            if sess:
+                                cur_val = str(sess["value"]).strip()
+                                if cur_val != last_detected:
+                                    last_detected = cur_val
+                                    # 永続保存
+                                    context.storage_state(path=pfile)
+                                    with open(cfile, "w", encoding="utf-8") as cf:
+                                        json.dump(cur_cks, cf, ensure_ascii=False, indent=2)
+                                    self.save_token_to_excel(name, cur_val)
+                                    self.root.after(0, lambda v=cur_val: self.entry_sessionid.delete(0, "end") or self.entry_sessionid.insert(0, v))
+                                    self.root.after(0, self.refresh_profile_list)
+                                    self.log(f"🎉 ログイン/最新セッション検知！Cookie全{len(cur_cks)}件をプロファイル＆Excelへ即時保存しました！")
+                        except Exception:
+                            pass
+                        time.sleep(1.5)
+
+                    try:
+                        context.close()
+                    except Exception:
+                        pass
+                    self.root.after(0, self.refresh_profile_list)
+
+            except Exception as e:
+                self.log(f"[WARN] Playwright起動フォールバック: {e}")
+                cmd = [
+                    self.chrome_path or "chrome.exe",
+                    f"--user-data-dir={profile_path}",
+                    "--start-maximized",
+                    "--no-first-run",
+                    "--no-default-browser-check",
+                    "--lang=ja-JP",
+                    url
+                ]
+                try:
+                    subprocess.Popen(cmd)
+                    self.log("✨ フォールバックChromeウィンドウを起動しました。")
+                except Exception as pe:
+                    self.log(f"❌ 起動エラー: {pe}")
+
+        threading.Thread(target=_launch_worker, daemon=True).start()
 
     def open_profile_folder(self):
         name = self.entry_name.get().strip()
