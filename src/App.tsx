@@ -17,8 +17,7 @@ import { SessionModal } from './components/SessionModal';
 import { exportAccountWorkbook, exportAccountsConfigWorkbook, parseExcelFile } from './utils/excelUtils';
 import { parseSpintax, resolveImagePath, extractUserIdFromToken } from './utils/spintax';
 import { DownloadCenter } from './components/DownloadCenter';
-import { RAW_THREADS_GUI_APP_PY } from './data/rawScript';
-import { RAW_PROFILE_LAUNCHER_PY } from './data/rawProfileLauncher';
+import { RAW_THREADS_GUI_APP_PY, RAW_PROFILE_LAUNCHER_PY, RAW_PROFILE_EDITOR_PY } from './data/rawScript';
 import { 
   FileSpreadsheet, 
   Smartphone, 
@@ -529,6 +528,24 @@ export default function App() {
     }
   };
 
+  // Direct client-side download of profile_editor.py
+  const handleDirectDownloadProfileEditor = () => {
+    try {
+      const blob = new Blob([RAW_PROFILE_EDITOR_PY], { type: 'text/x-python;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'profile_editor.py';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      addLog('SUCCESS', '📥 profile_editor.py (プロフィール編集専用アプリ) をダウンロードしました！');
+    } catch (err: any) {
+      addLog('ERROR', `ダウンロード失敗: ${err.message}`);
+    }
+  };
+
   // Simulate detecting the phone number verification screen (SMS checkpoint)
   const handleSimulateCheckpoint = (accId: string) => {
     setAccounts((prev) =>
@@ -598,11 +615,21 @@ export default function App() {
             {/* New Profile Launcher Button */}
             <button
               onClick={handleDirectDownloadProfileLauncher}
-              className="flex items-center gap-2 px-4 py-3 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white font-bold rounded-xl shadow-lg hover:shadow-violet-900/50 text-sm cursor-pointer transition-all active:scale-95 border border-violet-400/50 animate-pulse"
-              title="新アプリ: profile_launcher.py（プロファイル生成・ログイン永続化ツール）をダウンロード"
+              className="flex items-center gap-2 px-4 py-3 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white font-bold rounded-xl shadow-lg hover:shadow-violet-900/50 text-sm cursor-pointer transition-all active:scale-95 border border-violet-400/50"
+              title="profile_launcher.py（プロファイル生成・ログイン永続化ツール）をダウンロード"
             >
               <Rocket className="w-4 h-4 text-violet-200" />
               <span>🚀 profile_launcher.py</span>
+            </button>
+
+            {/* New Profile Editor Button */}
+            <button
+              onClick={handleDirectDownloadProfileEditor}
+              className="flex items-center gap-2 px-4 py-3 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-bold rounded-xl shadow-lg hover:shadow-cyan-900/50 text-sm cursor-pointer transition-all active:scale-95 border border-cyan-400/50 animate-pulse"
+              title="新アプリ: profile_editor.py（プロフィール編集専用アプリ）をダウンロード"
+            >
+              <Users className="w-4 h-4 text-cyan-200" />
+              <span>👤 profile_editor.py (プロフィール編集)</span>
             </button>
 
             {/* Download Button 1 */}

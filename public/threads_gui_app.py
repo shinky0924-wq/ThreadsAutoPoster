@@ -2304,7 +2304,8 @@ def execute_threads_post_with_fallback(
     text_content,
     target_topic=None,
     resolved_img=None,
-    log_func=print
+    log_func=print,
+    abort_check=None
 ):
     """
     【2段階フェイルセーフ投稿エンジン】
@@ -2315,15 +2316,26 @@ def execute_threads_post_with_fallback(
     3. 【2重投稿防止ガード】第1優先（＋ボタン）が成功した場合は第2優先を実行せず直ちに完了。
        どちらか一方のみが1度だけ成功するように厳密に制御。
     """
+    if abort_check and abort_check():
+        log_func(f"[INFO] ⏸️ 停止ボタン検知: 投稿処理を直ちに中断しました。")
+        return False, "停止ボタンによる中断"
+
     posted_success = False
     last_error = ""
 
     # =========================================================================
     # ルート1: 画面左下の円形「＋」ボタンからの投稿（優先度：高）
     # =========================================================================
+    if abort_check and abort_check():
+        log_func(f"[INFO] ⏸️ 停止ボタン検知: 投稿処理を直ちに中断しました。")
+        return False, "停止ボタンによる中断"
+
     log_func(f"[{account_name}] 🚀 【第1ルート: 左下「＋」ボタン】新規スレッド作成モーダルを起動して投稿を試みます...")
     try:
         dialog, textbox = open_threads_composer_dialog(page, account_name, log_func=log_func)
+        if abort_check and abort_check():
+            log_func(f"[INFO] ⏸️ 停止ボタン検知: 投稿入力を中断しました。")
+            return False, "停止ボタンによる中断"
         if dialog and textbox:
             ok, err = _perform_fill_and_submit_post(
                 page=page,
@@ -2352,6 +2364,9 @@ def execute_threads_post_with_fallback(
     # ルート2: タイムライン上部の「最近どう？ / 投稿」枠からの投稿（フォールバック）
     # =========================================================================
     if not posted_success:
+        if abort_check and abort_check():
+            log_func(f"[INFO] ⏸️ 停止ボタン検知: 投稿処理を直ちに中断しました。")
+            return False, "停止ボタンによる中断"
         log_func(f"[{account_name}] 🔄 プラスボタンで投稿できなかったため、タイムライン上部の【最近どう？ / 投稿】枠から代替投稿を実行します...")
         try:
             # 画面の余計なダイアログをクリーンアップ＆タイムライン最上部にスクロール
@@ -2575,16 +2590,21 @@ def reset_posts_file_silent(posts_file):
         print(f"[WARN] reset_posts_file_silent エラー: {e}")
         return 0
 
-def perform_stealth_feed_patrol(page, account_name, log_func=None):
+def perform_stealth_feed_patrol(page, account_name, log_func=None, abort_check=None):
     """
     【提案5: ステルス巡回（ウォーミングアップ閲覧＆人間挙動模倣）】
     新規投稿前に「おすすめ」タイムラインを人間らしくスクロール・閲覧し、マウス移動や滞在ログをMetaサーバーに送信。
     ボット判定・強制ログアウト・BANを強力に回避します。
     """
+    if abort_check and abort_check():
+        return
+
     try:
         if log_func:
             log_func(f"[{account_name}] 🕵️‍♂️ 【提案5: ステルス巡回】おすすめタイムラインを閲覧中（人間らしいマウス移動・滞在ログを生成）...")
         time.sleep(random.uniform(1.5, 2.5))
+        if abort_check and abort_check():
+            return
 
         # マウスを画面中央付近へ自然に移動
         try:
@@ -2596,6 +2616,8 @@ def perform_stealth_feed_patrol(page, account_name, log_func=None):
         scroll_y = random.randint(350, 550)
         page.evaluate(f"window.scrollBy({{ top: {scroll_y}, behavior: 'smooth' }})")
         time.sleep(random.uniform(2.0, 3.5))
+        if abort_check and abort_check():
+            return
 
         # タイムライン上の投稿付近へマウスホバー（人間の視線移動を模倣）
         try:
@@ -2607,11 +2629,15 @@ def perform_stealth_feed_patrol(page, account_name, log_func=None):
         scroll_y2 = random.randint(200, 400)
         page.evaluate(f"window.scrollBy({{ top: {scroll_y2}, behavior: 'smooth' }})")
         time.sleep(random.uniform(1.8, 3.0))
+        if abort_check and abort_check():
+            return
 
         # 人間が投稿を読み返すように少しだけ上に戻す（-100〜-180px）
         scroll_up = random.randint(100, 180)
         page.evaluate(f"window.scrollBy({{ top: -{scroll_up}, behavior: 'smooth' }})")
         time.sleep(random.uniform(1.2, 2.2))
+        if abort_check and abort_check():
+            return
 
         # 一番上に戻して投稿準備
         page.evaluate("window.scrollTo({ top: 0, behavior: 'smooth' })")
@@ -3168,6 +3194,11 @@ class ThreadsPosterGUI:
         self.root.geometry("860x800")
         self.root.configure(bg="#121212")
         self.is_running = False
+        self.stop_requested = False
+        self.current_context = None
+        self.current_page = None
+        self.current_account_name = None
+        self.current_profile_dir = None
         self.account_config_path = find_account_file()
         self.var_auto_loop = tk.BooleanVar(value=True)
         self.var_single_window_rotation = tk.BooleanVar(value=True) # 提案1: 1窓・順番交代ローテーション
@@ -3204,6 +3235,9 @@ class ThreadsPosterGUI:
 
         self.btn_browser_login = tk.Button(toolbar, text="🌐 ログイン確認・保存", font=("Segoe UI", 9, "bold"), bg="#8b5cf6", fg="#ffffff", padx=10, pady=5, relief="flat", cursor="hand2", command=self.open_browser_for_login)
         self.btn_browser_login.pack(side="left", padx=3)
+
+        self.btn_edit_profile = tk.Button(toolbar, text="👤 プロフィール編集", font=("Segoe UI", 9, "bold"), bg="#0284c7", fg="#ffffff", padx=10, pady=5, relief="flat", cursor="hand2", command=self.open_browser_for_profile_edit)
+        self.btn_edit_profile.pack(side="left", padx=3)
 
         self.btn_test_session = tk.Button(toolbar, text="⚡ セッションテスト", font=("Segoe UI", 9, "bold"), bg="#f59e0b", fg="#000000", padx=10, pady=5, relief="flat", cursor="hand2", command=self.test_session_id_action)
         self.btn_test_session.pack(side="left", padx=3)
@@ -4059,12 +4093,14 @@ class ThreadsPosterGUI:
 
                 with sync_playwright() as p:
                     context = safe_launch_persistent_context(p, profile_dir, headless=False, log_func=self.log)
+                    self.current_context = context
                     
                     token = str(first_acc.get("auth_token") or first_acc.get("Authトークン_sessionid") or first_acc.get("sessionid") or "").strip()
                     if token:
                         inject_session_cookies(context, token, account_name, log_func=self.log)
 
                     page = context.pages[0] if context.pages else context.new_page()
+                    self.current_page = page
                     safe_goto_threads(page, context, token, account_name, log_func=self.log, timeout=60000)
                     time.sleep(3)
 
@@ -4073,27 +4109,153 @@ class ThreadsPosterGUI:
                     )
 
                     if is_ok:
-                        self.log(f"[SUCCESS] [{account_name}] ログイン確認完了！セッション情報は自動保存されました。このまま自動投稿を開始できます。")
+                        self.log(f"[SUCCESS] [{account_name}] ログイン確認完了！セッション情報は自動保存されました。")
                         auto_refresh_and_save_session(context, account_name, profile_dir, self.account_config_path, log_func=self.log)
-                        self.root.after(0, lambda: messagebox.showinfo(
-                            "ログイン完了",
-                            f"アカウント @{account_name} のログインを確認しました！\n\n"
-                            "最新のセッション情報は「アカウント情報.xlsx」およびブラウザプロファイルに永続保存されました。\n\n"
-                            "これで次回以降、ログイン操作なしで「自動投稿を開始」できます！"
-                        ))
                     else:
                         self.log(f"[WARN] [{account_name}] ログインが完了しませんでした。ブラウザで「Instagramでログイン」を完了してください。")
 
-                    time.sleep(2)
-                    context.close()
+                    self.log("[INFO] 👤 ブラウザウィンドウは開いたまま維持しています。プロフィールの編集や確認を行ってください（ブラウザの「×」で閉じるとセッションが最新保存されます）。")
+                    self.root.after(0, lambda: self.status_lbl.config(text=f"👤 @{account_name} ログイン確認・手動操作中", fg="#38bdf8"))
+                    self.root.after(0, lambda: self.btn_stop.config(state="normal"))
+
+                    while not page.is_closed() and not self.stop_requested:
+                        time.sleep(0.5)
+
+                    try:
+                        auto_refresh_and_save_session(context, account_name, profile_dir, self.account_config_path, log_func=self.log)
+                    except Exception:
+                        pass
+                    try:
+                        context.close()
+                    except Exception:
+                        pass
             except Exception as e:
                 self.log(f"[ERROR] ログインブラウザ起動エラー: {e}")
             finally:
+                self.current_context = None
+                self.current_page = None
+                self.stop_requested = False
                 self.root.after(0, lambda: self.btn_browser_login.config(state="normal"))
                 self.root.after(0, lambda: self.btn_start.config(state="normal"))
+                self.root.after(0, lambda: self.btn_stop.config(state="disabled"))
+                self.root.after(0, lambda: self.status_lbl.config(text="● 待機中", fg="#10b981"))
                 self.root.after(0, self.load_excel_data)
 
         threading.Thread(target=_worker, daemon=True).start()
+
+    def open_browser_for_profile_edit(self):
+        """【プロフィール編集】Chromeを起動してログイン済みThreadsのプロフィール画面を開き、ユーザーが手動編集できるようにウィンドウを維持"""
+        if not os.path.exists(self.account_config_path):
+            messagebox.showerror("エラー", f"'{self.account_config_path}' が見つかりません。")
+            return
+
+        all_accounts = read_excel_records(self.account_config_path)
+        valid_accounts = [
+            acc for acc in all_accounts
+            if str(acc.get("アカウントID") or acc.get("アカウント名") or "").strip() != ""
+        ]
+        if not valid_accounts:
+            messagebox.showwarning("警告", "アカウント情報.xlsx に有効なアカウントが見つかりません。")
+            return
+
+        target_acc = valid_accounts[0]
+        target_acc_name = str(target_acc.get("アカウントID") or target_acc.get("アカウント名") or "").strip()
+
+        prof_name = str(target_acc.get("プロファイル名") or target_acc.get("プロファイル") or target_acc_name).strip()
+        prof_dir = os.path.join(BASE_DIR, f"chrome_profiles/{prof_name}")
+        os.makedirs(prof_dir, exist_ok=True)
+
+        self.log(f"[INFO] 👤 @{target_acc_name} のプロフィール編集用ブラウザを起動しています...")
+        self.btn_edit_profile.config(state="disabled")
+        self.btn_browser_login.config(state="disabled")
+        self.btn_start.config(state="disabled")
+        self.btn_stop.config(state="normal")
+        self.status_lbl.config(text=f"👤 @{target_acc_name} プロフィール編集・手動操作中", fg="#38bdf8")
+
+        def _worker():
+            try:
+                from playwright.sync_api import sync_playwright
+                with sync_playwright() as p:
+                    context = safe_launch_persistent_context(p, prof_dir, headless=False, log_func=self.log)
+                    self.current_context = context
+                    page = context.pages[0] if context.pages else context.new_page()
+                    self.current_page = page
+
+                    token = str(target_acc.get("auth_token") or target_acc.get("Authトークン_sessionid") or target_acc.get("sessionid") or "").strip()
+                    if token:
+                        inject_session_cookies(context, token, target_acc_name, log_func=self.log)
+
+                    safe_goto_threads(page, context, token, target_acc_name, log_func=self.log, timeout=60000)
+                    time.sleep(2)
+
+                    try:
+                        clean_id = target_acc_name.lstrip('@')
+                        page.goto(f"https://www.threads.net/@{clean_id}", wait_until="domcontentloaded", timeout=30000)
+                    except Exception:
+                        pass
+
+                    self.log("=" * 60)
+                    self.log(f"[SUCCESS] 👤 @{target_acc_name} のプロフィール画面を開きました！")
+                    self.log("[INFO] 💡 画面上の「プロフィールを編集」ボタンから、自己紹介・名前・リンク・アイコン等を自由に変更していただけます。")
+                    self.log("[INFO] 🚪 編集が終わったら、ブラウザの「×」ボタンを押して閉じるか、「⏹ 停止」を押してください。")
+                    self.log("=" * 60)
+
+                    while not page.is_closed() and not self.stop_requested:
+                        time.sleep(0.5)
+
+                    try:
+                        auto_refresh_and_save_session(context, target_acc_name, prof_dir, self.account_config_path, log_func=self.log)
+                        self.log(f"[SUCCESS] 💾 @{target_acc_name} の最新Cookie・セッション情報を自動保存しました！")
+                    except Exception:
+                        pass
+
+                    try:
+                        context.close()
+                    except Exception:
+                        pass
+            except Exception as ex:
+                self.log(f"[ERROR] プロフィール編集ブラウザエラー: {ex}")
+            finally:
+                self.current_context = None
+                self.current_page = None
+                self.stop_requested = False
+                self.root.after(0, lambda: self.btn_edit_profile.config(state="normal"))
+                self.root.after(0, lambda: self.btn_browser_login.config(state="normal"))
+                self.root.after(0, lambda: self.btn_start.config(state="normal"))
+                self.root.after(0, lambda: self.btn_stop.config(state="disabled"))
+                self.root.after(0, lambda: self.status_lbl.config(text="● 待機中", fg="#10b981"))
+                self.root.after(0, self.load_excel_data)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _wait_for_user_in_open_browser(self, page, context, account_name, profile_dir):
+        """
+        停止ボタンが押された際、ユーザーがブラウザ上でプロフィール編集や手動操作を行えるよう
+        ウィンドウを閉じずに維持し、ユーザーが手動で閉じるか再開するまで待機します。
+        """
+        self.root.after(0, lambda: self.status_lbl.config(text=f"⏸️ 停止中: @{account_name} 手動操作可能", fg="#f59e0b"))
+        self.root.after(0, lambda: self.btn_start.config(state="normal"))
+        self.root.after(0, lambda: self.btn_stop.config(state="disabled"))
+        self.log(f"[INFO] ⏸️ @{account_name} のブラウザウィンドウを開いたまま待機中（プロフィール編集などの手動操作が可能です）...")
+
+        clean_id = account_name.lstrip('@')
+        self.log(f"[INFO] 🔗 プロフィール画面URL: https://www.threads.net/@{clean_id}")
+
+        while not self.is_running:
+            try:
+                if page.is_closed() or (hasattr(context, "is_closed") and context.is_closed()):
+                    self.log(f"[INFO] 👤 @{account_name} のブラウザがユーザーにより閉じられました。")
+                    break
+            except Exception:
+                break
+            time.sleep(0.5)
+
+        # 最新セッションとCookieを自動保存
+        try:
+            if not page.is_closed():
+                auto_refresh_and_save_session(context, account_name, profile_dir, self.account_config_path, log_func=self.log)
+        except Exception:
+            pass
 
     def start_posting(self):
         if not os.path.exists(self.account_config_path):
@@ -4101,6 +4263,7 @@ class ThreadsPosterGUI:
             return
 
         self.is_running = True
+        self.stop_requested = False
         self.btn_start.config(state="disabled")
         self.btn_stop.config(state="normal")
         self.status_lbl.config(text="● 投稿処理中...", fg="#38bdf8")
@@ -4111,10 +4274,20 @@ class ThreadsPosterGUI:
 
     def stop_posting(self):
         self.is_running = False
-        self.log("[WARN] 停止リクエストを送信しました。現在の投稿完了後に停止します。")
+        self.stop_requested = True
         self.btn_start.config(state="normal")
         self.btn_stop.config(state="disabled")
-        self.status_lbl.config(text="● 待機中", fg="#10b981")
+        if self.current_page and not self.current_page.is_closed():
+            self.log("=" * 65)
+            self.log("[INFO] 🛑 停止ボタンが押されました！自動投稿・操作を直ちにストップしました。")
+            self.log("[INFO] 👤 プロフィール編集用にブラウザウィンドウを開いたまま維持しています。")
+            self.log("[INFO] 💡 プロフィール画面で自己紹介・リンク・アイコン等を自由に変更してください。")
+            self.log("[INFO] 🚪 編集完了後、ブラウザを「×」で閉じるか「▶ 自動投稿を開始」を押すと最新情報を保存して再開します。")
+            self.log("=" * 65)
+            self.status_lbl.config(text="⏸️ 停止中（ブラウザ手動操作・プロフィール編集可能）", fg="#f59e0b")
+        else:
+            self.log("[INFO] 🛑 停止ボタンが押されました。自動投稿処理を停止しました。")
+            self.status_lbl.config(text="● 待機中", fg="#10b981")
 
     def _run_automation_loop(self):
         try:
@@ -4205,6 +4378,11 @@ class ThreadsPosterGUI:
                     pf = a_state["posts_file"]
                     if not pf or not os.path.exists(pf):
                         continue
+                    # 【BAN対策1】前回失敗・実行後のクールダウン待機チェック（連続再試行スピンを完全防止）
+                    daily_cooldown_until = a_state.get("daily_cooldown_until", datetime.min)
+                    if now < daily_cooldown_until:
+                        continue
+
                     daily_data = get_eligible_daily_post(pf)
                     if daily_data:
                         acc_name = a_state["name"]
@@ -4214,11 +4392,22 @@ class ThreadsPosterGUI:
                         ok = self._execute_daily_greeting_post(a_state, daily_data, p)
                         if ok:
                             self.log(f"[INFO] 🌿 @{acc_name} の日常ポスト完了。ブラウザを完全終了しメモリを解放しました。")
+                            # 【BAN対策2】日常ポスト成功後、次回の通常プロモ投稿時刻を45〜90分後に延期（同一アカウントでの連投BANを完全回避）
+                            safe_promo_delay = random.randint(2700, 5400)
+                            a_state["next_run_time"] = datetime.now() + timedelta(seconds=safe_promo_delay)
+                            a_state["daily_cooldown_until"] = datetime.now() + timedelta(minutes=60)
+                            rem_m = safe_promo_delay // 60
+                            self.log(f"[INFO] 🛡️ 連投BAN防止: @{acc_name} の次回の通常プロモ投稿を【{rem_m}分後】に設定しました（日常ポスト直後の連投を遮断）。")
+                        else:
+                            # 【BAN対策3】失敗時の無限リトライ防止（20分間のクールダウンを設定し429強制ログアウトを回避）
+                            a_state["daily_cooldown_until"] = datetime.now() + timedelta(minutes=20)
+                            self.log(f"[WARN] 🛡️ 連続再試行BAN防止: @{acc_name} の日常ポスト失敗を検知。20分間の待機クールダウンを設定しました。")
+
                         self.root.after(0, self.load_excel_data)
                         daily_executed = True
                         break
                 if daily_executed:
-                    time.sleep(2)
+                    time.sleep(5)
                     continue
 
             # 1. 各アカウントの未投稿ポスト存在確認＆自動ループ周回処理
@@ -4383,6 +4572,15 @@ class ThreadsPosterGUI:
 
         try:
             context = safe_launch_persistent_context(p, profile_dir, headless=False, log_func=self.log)
+            self.current_context = context
+            page = context.pages[0] if context.pages else context.new_page()
+            self.current_page = page
+            self.current_account_name = account_name
+            self.current_profile_dir = profile_dir
+
+            if not self.is_running or self.stop_requested:
+                self._wait_for_user_in_open_browser(page, context, account_name, profile_dir)
+                return 0
 
             # 提案2: 画像・動画通信ブロック
             if self.var_block_media.get():
@@ -4391,11 +4589,13 @@ class ThreadsPosterGUI:
             session_token = str(account.get("auth_token") or account.get("Authトークン_sessionid") or account.get("sessionid") or "").strip()
             inject_session_cookies(context, session_token, account_name, log_func=self.log)
 
-            page = context.pages[0] if context.pages else context.new_page()
-
             # リダイレクトループ(ERR_TOO_MANY_REDIRECTS)自動自己修復付き遷移
             safe_goto_threads(page, context, session_token, account_name, log_func=self.log, timeout=60000)
             time.sleep(3)
+
+            if not self.is_running or self.stop_requested:
+                self._wait_for_user_in_open_browser(page, context, account_name, profile_dir)
+                return 0
 
             is_cp, cp_why = detect_phone_checkpoint_screen(page)
             if is_cp:
@@ -4461,8 +4661,16 @@ class ThreadsPosterGUI:
                 pass
 
             # 提案新機能1: 投稿前のステルス巡回（ウォーミングアップ閲覧）
+            if not self.is_running or self.stop_requested:
+                self._wait_for_user_in_open_browser(page, context, account_name, profile_dir)
+                return 0
+
             if self.var_stealth_patrol.get():
-                perform_stealth_feed_patrol(page, account_name, log_func=self.log)
+                perform_stealth_feed_patrol(page, account_name, log_func=self.log, abort_check=lambda: not self.is_running or self.stop_requested)
+
+            if not self.is_running or self.stop_requested:
+                self._wait_for_user_in_open_browser(page, context, account_name, profile_dir)
+                return 0
 
             # 2. 2段階フェイルセーフ投稿を実行
             #    【第1優先】画面左下の円形「＋」ボタンからの投稿
@@ -4474,7 +4682,8 @@ class ThreadsPosterGUI:
                 text_content=text_content,
                 target_topic=target_topic,
                 resolved_img=resolved_img,
-                log_func=self.log
+                log_func=self.log,
+                abort_check=lambda: not self.is_running or self.stop_requested
             )
 
             if not posted_ok:
@@ -4585,6 +4794,12 @@ class ThreadsPosterGUI:
 
             return 300
         finally:
+            if not self.is_running or self.stop_requested:
+                try:
+                    if 'page' in locals() and page and not page.is_closed():
+                        self._wait_for_user_in_open_browser(page, context, account_name, profile_dir)
+                except Exception:
+                    pass
             if context:
                 try:
                     # 【提案3】Metaが発行・更新した最新Cookieを自動抽出し、プロファイルとExcelを延命保存
@@ -4595,6 +4810,8 @@ class ThreadsPosterGUI:
                     context.close()
                 except Exception:
                     pass
+            self.current_context = None
+            self.current_page = None
 
     def _execute_daily_greeting_post(self, acc_state, daily_data, p):
         """
@@ -4623,20 +4840,42 @@ class ThreadsPosterGUI:
         profile_dir = os.path.join(BASE_DIR, profile_subpath) if not os.path.isabs(profile_subpath) else profile_subpath
         os.makedirs(profile_dir, exist_ok=True)
 
+        # 過去のクラッシュ残骸(SingletonLock)を事前除去
+        for lk in ["SingletonLock", "SingletonCookie", "SingletonSocket"]:
+            try:
+                lk_p = os.path.join(profile_dir, lk)
+                if os.path.exists(lk_p):
+                    os.remove(lk_p)
+            except Exception:
+                pass
+
         self.log(f"[{account_name}] 🌅 日常つぶやき【{slot_name}】({time_slot}) 自動投稿を開始（スピンタックス＆動的日付展開済: {post_text[:35]}...）")
         context = None
         page = None
         try:
             context = safe_launch_persistent_context(p, profile_dir, headless=False, log_func=self.log)
+            self.current_context = context
+            page = context.pages[0] if context.pages else context.new_page()
+            self.current_page = page
+            self.current_account_name = account_name
+            self.current_profile_dir = profile_dir
+
+            if not self.is_running or self.stop_requested:
+                self._wait_for_user_in_open_browser(page, context, account_name, profile_dir)
+                return False
+
             if self.var_block_media.get():
                 setup_media_blocking(context, log_func=self.log)
 
             session_token = str(account.get("auth_token") or account.get("Authトークン_sessionid") or account.get("sessionid") or "").strip()
             inject_session_cookies(context, session_token, account_name, log_func=self.log)
 
-            page = context.pages[0] if context.pages else context.new_page()
             safe_goto_threads(page, context, session_token, account_name, log_func=self.log, timeout=60000)
             time.sleep(3)
+
+            if not self.is_running or self.stop_requested:
+                self._wait_for_user_in_open_browser(page, context, account_name, profile_dir)
+                return False
 
             is_logged_in = ensure_authenticated_session(
                 page, context, account_name, self.account_config_path, log_func=self.log, wait_timeout_sec=300
@@ -4645,10 +4884,16 @@ class ThreadsPosterGUI:
                 self.log(f"[ERROR] [{account_name}] ログイン認証が完了しなかったため日常投稿をスキップします。")
                 return False
 
+            # Metaが発行・更新した最新セッションIDをメモリおよびアカウント情報.xlsxに双方向自動同期
+            fresh_tok = save_context_cookies_to_excel(context, self.account_config_path, account_name, log_func=self.log)
+            if fresh_tok:
+                account["auth_token"] = fresh_tok
+                acc_state["account"]["auth_token"] = fresh_tok
+
             try:
                 cur_url = page.url.split('?')[0].rstrip('/')
                 if cur_url != "https://www.threads.net":
-                    page.goto("https://www.threads.net/", wait_until="domcontentloaded", timeout=30000)
+                    safe_goto_threads(page, context, session_token, account_name, log_func=self.log, timeout=30000)
                     time.sleep(2.0)
             except Exception:
                 pass
@@ -4659,8 +4904,16 @@ class ThreadsPosterGUI:
             except Exception:
                 pass
 
+            if not self.is_running or self.stop_requested:
+                self._wait_for_user_in_open_browser(page, context, account_name, profile_dir)
+                return False
+
             if self.var_stealth_patrol.get():
-                perform_stealth_feed_patrol(page, account_name, log_func=self.log)
+                perform_stealth_feed_patrol(page, account_name, log_func=self.log, abort_check=lambda: not self.is_running or self.stop_requested)
+
+            if not self.is_running or self.stop_requested:
+                self._wait_for_user_in_open_browser(page, context, account_name, profile_dir)
+                return False
 
             # トピック設定（日常ポストの「コミュニティまたはトピック」列から設定可能）
             daily_raw_topic = daily_data.get("topic", "")
@@ -4684,7 +4937,8 @@ class ThreadsPosterGUI:
                 text_content=post_text,
                 target_topic=target_topic,
                 resolved_img=None,
-                log_func=self.log
+                log_func=self.log,
+                abort_check=lambda: not self.is_running or self.stop_requested
             )
 
             if not posted_ok:
@@ -4701,6 +4955,12 @@ class ThreadsPosterGUI:
                 self.log(f"[ERROR] [{account_name}] 🌅 日常ポスト投稿エラー: {e}")
             return False
         finally:
+            if not self.is_running or self.stop_requested:
+                try:
+                    if page and not page.is_closed():
+                        self._wait_for_user_in_open_browser(page, context, account_name, profile_dir)
+                except Exception:
+                    pass
             if context:
                 try:
                     # 【提案3】日常ポスト投稿後もセッションCookieを自動抽出して延命更新
@@ -4711,6 +4971,8 @@ class ThreadsPosterGUI:
                     context.close()
                 except Exception:
                     pass
+            self.current_context = None
+            self.current_page = None
 
     def _run_legacy_sequential_loop(self, active_accounts, p):
         cycle_num = 1
@@ -4731,7 +4993,10 @@ class ThreadsPosterGUI:
                         daily_data = get_eligible_daily_post(pf)
                         if daily_data:
                             acc_st = {"account": acc, "name": acc_name, "posts_file": pf}
-                            self._execute_daily_greeting_post(acc_st, daily_data, p)
+                            ok = self._execute_daily_greeting_post(acc_st, daily_data, p)
+                            if ok:
+                                self.log(f"[INFO] 🛡️ 連投BAN防止: @{acc_name} の日常ポスト完了直後のプロモ投稿をスキップし次アカウントへ移行します。")
+                                continue
                 self._process_single_account(acc, p, cycle_num=cycle_num)
 
             if not self.var_auto_loop.get() or not self.is_running:
