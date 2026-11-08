@@ -237,6 +237,122 @@ def inject_session_cookies(context, token, account_name, log_func=print):
         return False
 
 
+def execute_id_pw_login(page, context, account_name, password, log_func=print):
+    """
+    【ID/PW自動ログイン】
+    セッションIDに一切依存せず、ExcelのIDとパスワードを使ってChromeプロファイル上で自動ログインします。
+    """
+    clean_id = str(account_name or "").lstrip("@").strip()
+    clean_pw = str(password or "").strip()
+    if not clean_pw:
+        return False
+
+    log_func(f"[INFO] 🔐 [{account_name}] 【ID/PW自動ログイン】を実行中（ID: @{clean_id}）...")
+    try:
+        cur_url = (page.url or "").lower()
+        if "/login" not in cur_url and not any(k in cur_url for k in ["login", "accounts"]):
+            try:
+                page.goto("https://www.threads.net/login", timeout=30000, wait_until="domcontentloaded")
+                time.sleep(2)
+            except Exception:
+                pass
+
+        # 1. 連携ボタン
+        for cont_sel in ['button:has-text("としてログイン")', 'div[role="button"]:has-text("としてログイン")', 'span:has-text("としてログイン")', f'button:has-text("{clean_id}")', 'button:has-text("Continue as")']:
+            try:
+                c_btn = page.locator(cont_sel).first
+                if c_btn.is_visible(timeout=800):
+                    log_func(f"[INFO] [{account_name}] ワンクリック連携ボタン ({cont_sel}) を自動クリック...")
+                    c_btn.click(force=True)
+                    time.sleep(3)
+                    if "/login" not in (page.url or ""):
+                        return True
+            except Exception:
+                pass
+
+        # 2. Instagramでログインボタン
+        for ig_sel in ['div[role="button"]:has-text("Instagramでログイン")', 'button:has-text("Instagramでログイン")', 'span:has-text("Instagramでログイン")', 'button:has-text("Log in with Instagram")']:
+            try:
+                btn = page.locator(ig_sel).first
+                if btn.is_visible(timeout=800):
+                    btn.click(force=True)
+                    time.sleep(2.5)
+                    break
+            except Exception:
+                pass
+
+        # 3. フォーム入力
+        user_loc = None
+        for u_sel in ['input[name="username"]', 'input[autocomplete="username"]', 'input[aria-label*="ユーザーネーム"]', 'input[aria-label*="ユーザー名"]', 'input[placeholder*="ユーザーネーム"]', 'input[placeholder*="ユーザー名"]', 'input[type="text"]']:
+            try:
+                loc = page.locator(u_sel).first
+                if loc.is_visible(timeout=1000):
+                    user_loc = loc
+                    break
+            except Exception:
+                pass
+
+        pass_loc = None
+        for p_sel in ['input[name="password"]', 'input[autocomplete="current-password"]', 'input[type="password"]']:
+            try:
+                loc = page.locator(p_sel).first
+                if loc.is_visible(timeout=1000):
+                    pass_loc = loc
+                    break
+            except Exception:
+                pass
+
+        if not user_loc or not pass_loc:
+            return False
+
+        user_loc.click()
+        time.sleep(0.3)
+        user_loc.fill("")
+        time.sleep(0.2)
+        import random
+        user_loc.type(clean_id, delay=random.randint(50, 110))
+        time.sleep(0.5)
+
+        pass_loc.click()
+        time.sleep(0.3)
+        pass_loc.fill("")
+        time.sleep(0.2)
+        pass_loc.type(clean_pw, delay=random.randint(50, 110))
+        time.sleep(0.8)
+
+        # 送信
+        for s_sel in ['button[type="submit"]', 'button:has-text("ログイン")', 'div[role="button"]:has-text("ログイン")']:
+            try:
+                b = page.locator(s_sel).first
+                if b.is_visible(timeout=800):
+                    b.click()
+                    break
+            except Exception:
+                pass
+
+        time.sleep(4)
+        for pop_sel in ['button:has-text("ログイン情報を保存")', 'button:has-text("後で")', 'div[role="button"]:has-text("後で")', 'button:has-text("Save info")']:
+            try:
+                pop = page.locator(pop_sel).first
+                if pop.is_visible(timeout=1000):
+                    pop.click(force=True)
+                    time.sleep(1.5)
+            except Exception:
+                pass
+
+        for _ in range(10):
+            cur = (page.url or "").lower()
+            if "/login" not in cur:
+                log_func(f"[SUCCESS] 🎉 [{account_name}] 【ID/PWログイン成功！】プロファイルが正規復帰しました！")
+                return True
+            time.sleep(1)
+
+        return False
+    except Exception as e:
+        log_func(f"[ERROR] [{account_name}] execute_id_pw_login: {e}")
+        return False
+
+
 def auto_refresh_and_save_session(context, account_name, profile_dir, excel_path=None, log_func=print):
     try:
         cookies = context.cookies(["https://www.threads.net", "https://www.instagram.com", "https://www.threads.com"])
@@ -469,6 +585,7 @@ class ProfileEditorApp:
             seen_ids.add(acc_id.lstrip("@").lower())
             prof_name = str(acc.get("プロファイル名") or acc.get("プロファイル") or acc_id).strip()
             raw_token = str(acc.get("auth_token") or acc.get("Authトークン_sessionid") or acc.get("sessionid") or "").strip()
+            password_val = str(acc.get("パスワード") or acc.get("password") or acc.get("PW") or acc.get("Pass") or acc.get("暗証番号") or "").strip()
             status_val = str(acc.get("有効/無効") or acc.get("有効無効") or acc.get("ステータス") or "有効").strip()
 
             prof_dir = os.path.join(BASE_DIR, f"chrome_profiles/{prof_name}")
@@ -492,6 +609,7 @@ class ProfileEditorApp:
                 "prof_name": prof_name,
                 "prof_dir": prof_dir,
                 "token": raw_token,
+                "password": password_val,
                 "status": status_val
             }
             self.accounts_list.append((item_id, acc_obj))
@@ -560,6 +678,7 @@ class ProfileEditorApp:
         account_name = acc["id"]
         prof_dir = acc["prof_dir"]
         token = acc["token"]
+        password = acc.get("password", "")
 
         self.is_browser_running = True
         self.btn_open_browser.config(state="disabled")
@@ -607,6 +726,20 @@ class ProfileEditorApp:
                         page.goto("https://www.threads.net/", wait_until="domcontentloaded", timeout=45000)
 
                     time.sleep(2)
+
+                    # ログイン画面(/login)にリダイレクトされた場合の自動復帰
+                    cur_u = (page.url or "").lower()
+                    if "/login" in cur_u:
+                        self.log(f"[WARN] 🚪 @{account_name} のセッションが切れているためログイン画面を検知しました。")
+                        if password:
+                            self.log(f"[INFO] 🔐 パスワード情報を検出。ID/PWによるプロファイル自動ログインを実行します...")
+                            ok = execute_id_pw_login(page, context, account_name, password, log_func=self.log)
+                            if ok:
+                                time.sleep(2)
+                                page.goto(profile_url, wait_until="domcontentloaded", timeout=30000)
+                        else:
+                            self.log(f"[INFO] 💡 画面上の「Instagramでログイン」ボタンからログインしてください。ログイン後は最新セッションが自動保存されます。")
+
                     self.log("=" * 60)
                     self.log(f"[SUCCESS] 🎉 @{account_name} のプロフィール画面を開きました！")
                     self.log("[INFO] 💡 画面上の「プロフィールを編集」ボタンを押して、自己紹介・画像・名前・リンク等を自由に変更してください。")
@@ -621,7 +754,6 @@ class ProfileEditorApp:
                             # ログイン画面(/login)に飛ばされていないかチェック＆案内
                             cur_u = page.url or ""
                             if "/login" in cur_u:
-                                # 画面上に「Instagramでログイン」ボタンがあれば確認
                                 pass
 
                             # セッションのリアルタイム監視（ブラウザ内でログインやセッション更新があったら即座に永続化）
