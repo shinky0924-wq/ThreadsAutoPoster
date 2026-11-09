@@ -1588,19 +1588,9 @@ def save_context_cookies_to_excel(context, filepath, account_name, log_func=prin
 def execute_id_pw_login(page, context, account_name, password, log_func=print):
     """
     【ID/PW自動ログイン】
-    セッションIDを一切使用せず、Excelに登録されたIDとパスワードを使って
-    Chromeプロファイル上でThreads/Instagramへ直接自動ログインを実行します。
+    セッションIDに一切依存せず、ExcelのIDとパスワードを使ってChromeプロファイル上で即時自動ログインします。
     ログイン完了後はプロファイル内部のSQLite/LocalStorageに認証が永続化され、
     次回以降はsessionid不要でログイン済み起動が可能になります。
-    """
-    clean_id = str(account_name or "").lstrip("@").strip()
-    clean_pw = str(password or "").strip()
-    if not clean_pw:
-        log_func(f"[WARN] ⚠️ [{account_name}] パスワードがExcelに登録されていないため、ID/PW自動ログインをスキップします。")
-def execute_id_pw_login(page, context, account_name, password, log_func=print):
-    """
-    【ID/PW自動ログイン】
-    セッションIDに一切依存せず、ExcelのIDとパスワードを使ってChromeプロファイル上で即時自動ログインします。
     """
     clean_id = str(account_name or "").lstrip("@").strip()
     clean_pw = str(password or "").strip()
@@ -4931,9 +4921,12 @@ class ThreadsPosterGUI:
             if ("ERR_TOO_MANY_REDIRECTS" in err_str or "too many redirects" in err_str.lower() or "リダイレクトが繰り返し" in err_str) and not acc_state.get("_retried_redirect", False):
                 self.log("=" * 60)
                 self.log(f"[WARN] 🔄 [{account_name}] リダイレクトループエラー (net::ERR_TOO_MANY_REDIRECTS) を検知しました。")
-                self.log(f"[INFO] 🧹 [{account_name}] 次アカウントへスキップしません！「Cookieを削除してください」指示に基づき、破損Cookieを完全消去して Post #{post_id} を即時再実行します...")
+                self.log(f"[INFO] 🧹 [{account_name}] 破損Cookieを完全消去し、失効したsessionidを破棄して【ID/PWプロファイル運用】へ自動移行します...")
                 self.log("=" * 60)
                 acc_state["_retried_redirect"] = True
+                acc_state["pure_profile_mode"] = True
+                if isinstance(account, dict):
+                    account["auth_token"] = ""
                 try:
                     if context:
                         context.clear_cookies()
@@ -4942,8 +4935,7 @@ class ThreadsPosterGUI:
                 except Exception:
                     pass
                 time.sleep(2.0)
-                # エクセルはエラーにせず未投稿のまま維持し、1秒後にこのアカウントを即座に再実行
-                return 1
+                return 15
 
             acc_state["_retried_redirect"] = False
             acc_state["consecutive_errors"] = acc_state.get("consecutive_errors", 0) + 1
@@ -5324,11 +5316,11 @@ class ThreadsPosterGUI:
         page = context.pages[0] if context.pages else context.new_page()
 
         try:
-            page.goto("https://www.threads.net/", timeout=60000)
+            safe_goto_threads(page, context, session_token, account_name, log_func=self.log, timeout=60000)
             time.sleep(3)
 
             is_logged_in = ensure_authenticated_session(
-                page, context, account_name, self.account_config_path, log_func=self.log, wait_timeout_sec=300
+                page, context, account, self.account_config_path, log_func=self.log, wait_timeout_sec=300
             )
             if not is_logged_in:
                 self.log(f"[ERROR] [{account_name}] ログイン認証が完了しなかったため、このアカウントの投稿をスキップします。")
