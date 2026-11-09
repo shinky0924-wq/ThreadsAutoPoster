@@ -240,7 +240,7 @@ def inject_session_cookies(context, token, account_name, log_func=print):
 def execute_id_pw_login(page, context, account_name, password, log_func=print):
     """
     【ID/PW自動ログイン】
-    セッションIDに一切依存せず、ExcelのIDとパスワードを使ってChromeプロファイル上で自動ログインします。
+    セッションIDに一切依存せず、ExcelのIDとパスワードを使ってChromeプロファイル上で即時自動ログインします。
     """
     clean_id = str(account_name or "").lstrip("@").strip()
     clean_pw = str(password or "").strip()
@@ -249,13 +249,23 @@ def execute_id_pw_login(page, context, account_name, password, log_func=print):
 
     log_func(f"[INFO] 🔐 [{account_name}] 【ID/PW自動ログイン】を実行中（ID: @{clean_id}）...")
     try:
+        # 失効Cookieによるリダイレクトループを未然に防止
+        try:
+            context.clear_cookies()
+            time.sleep(0.5)
+        except Exception:
+            pass
+
         cur_url = (page.url or "").lower()
-        if "/login" not in cur_url and not any(k in cur_url for k in ["login", "accounts"]):
-            try:
-                page.goto("https://www.threads.net/login", timeout=30000, wait_until="domcontentloaded")
-                time.sleep(2)
-            except Exception:
-                pass
+        if "about:blank" in cur_url or "/login" not in cur_url:
+            for login_url in ["https://www.threads.net/login", "https://www.instagram.com/accounts/login/"]:
+                try:
+                    page.goto(login_url, timeout=30000, wait_until="domcontentloaded")
+                    time.sleep(2)
+                    if "about:blank" not in (page.url or "").lower():
+                        break
+                except Exception:
+                    pass
 
         # 1. 連携ボタン
         for cont_sel in ['button:has-text("としてログイン")', 'div[role="button"]:has-text("としてログイン")', 'span:has-text("としてログイン")', f'button:has-text("{clean_id}")', 'button:has-text("Continue as")']:
@@ -274,7 +284,7 @@ def execute_id_pw_login(page, context, account_name, password, log_func=print):
         for ig_sel in ['div[role="button"]:has-text("Instagramでログイン")', 'button:has-text("Instagramでログイン")', 'span:has-text("Instagramでログイン")', 'button:has-text("Log in with Instagram")']:
             try:
                 btn = page.locator(ig_sel).first
-                if btn.is_visible(timeout=800):
+                if btn.is_visible(timeout=1000):
                     btn.click(force=True)
                     time.sleep(2.5)
                     break
@@ -286,7 +296,7 @@ def execute_id_pw_login(page, context, account_name, password, log_func=print):
         for u_sel in ['input[name="username"]', 'input[autocomplete="username"]', 'input[aria-label*="ユーザーネーム"]', 'input[aria-label*="ユーザー名"]', 'input[placeholder*="ユーザーネーム"]', 'input[placeholder*="ユーザー名"]', 'input[type="text"]']:
             try:
                 loc = page.locator(u_sel).first
-                if loc.is_visible(timeout=1000):
+                if loc.is_visible(timeout=1500):
                     user_loc = loc
                     break
             except Exception:
@@ -296,11 +306,36 @@ def execute_id_pw_login(page, context, account_name, password, log_func=print):
         for p_sel in ['input[name="password"]', 'input[autocomplete="current-password"]', 'input[type="password"]']:
             try:
                 loc = page.locator(p_sel).first
-                if loc.is_visible(timeout=1000):
+                if loc.is_visible(timeout=1500):
                     pass_loc = loc
                     break
             except Exception:
                 pass
+
+        # Threads側でフォームが見つからない場合、Instagram公式ログインへフォールバック
+        if not user_loc or not pass_loc:
+            log_func(f"[INFO] [{account_name}] Threads側フォーム未検出のため、Instagramログイン画面へアクセスします...")
+            try:
+                page.goto("https://www.instagram.com/accounts/login/", timeout=30000, wait_until="domcontentloaded")
+                time.sleep(2.5)
+                for u_sel in ['input[name="username"]', 'input[type="text"]']:
+                    try:
+                        loc = page.locator(u_sel).first
+                        if loc.is_visible(timeout=1500):
+                            user_loc = loc
+                            break
+                    except Exception:
+                        pass
+                for p_sel in ['input[name="password"]', 'input[type="password"]']:
+                    try:
+                        loc = page.locator(p_sel).first
+                        if loc.is_visible(timeout=1500):
+                            pass_loc = loc
+                            break
+                    except Exception:
+                        pass
+            except Exception as e:
+                log_func(f"[WARN] Instagramフォールバック遷移エラー: {e}")
 
         if not user_loc or not pass_loc:
             return False
@@ -324,7 +359,7 @@ def execute_id_pw_login(page, context, account_name, password, log_func=print):
         for s_sel in ['button[type="submit"]', 'button:has-text("ログイン")', 'div[role="button"]:has-text("ログイン")']:
             try:
                 b = page.locator(s_sel).first
-                if b.is_visible(timeout=800):
+                if b.is_visible(timeout=1000):
                     b.click()
                     break
             except Exception:
@@ -340,7 +375,7 @@ def execute_id_pw_login(page, context, account_name, password, log_func=print):
             except Exception:
                 pass
 
-        for _ in range(10):
+        for _ in range(12):
             cur = (page.url or "").lower()
             if "/login" not in cur:
                 log_func(f"[SUCCESS] 🎉 [{account_name}] 【ID/PWログイン成功！】プロファイルが正規復帰しました！")

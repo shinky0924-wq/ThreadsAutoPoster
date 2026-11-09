@@ -1392,20 +1392,20 @@ def safe_goto_threads(page, context, session_token, account_name, log_func=print
     「Cookie を削除してみてください」指示に従ってCookieと循環キャッシュを自動クリアし、
     セッションを再設定して正常にThreadsを開き直してから投稿を実行できるように自己修復します。
     """
-    max_retries = 3
-    for attempt in range(1, max_retries + 1):
-        redirect_detected = False
-        try:
-            page.goto("https://www.threads.net/", timeout=timeout, wait_until="domcontentloaded")
-            time.sleep(2.5)
+    redirect_detected = False
+    try:
+        page.goto("https://www.threads.net/", timeout=timeout, wait_until="domcontentloaded")
+        time.sleep(2.5)
 
-            # 画面内に ERR_TOO_MANY_REDIRECTS やリダイレクトループ文言、HTTP 429 を検査
+        cur_u = (page.url or "").lower()
+        if "about:blank" in cur_u:
+            redirect_detected = True
+        else:
             try:
                 page_content = page.content()
                 if "HTTP ERROR 429" in page_content or "429 Too Many Requests" in page_content:
                     redirect_detected = True
-                    log_func(f"[WARN] ⏳ [{account_name}] Metaアクセス頻度制限 (HTTP ERROR 429) を検知しました。制限解除のため15秒間待機します...")
-                    time.sleep(15)
+                    log_func(f"[WARN] ⏳ [{account_name}] Metaアクセス頻度制限 (HTTP ERROR 429) を検知しました。")
                 elif any(k in page_content for k in [
                     "ERR_TOO_MANY_REDIRECTS",
                     "リダイレクトが繰り返し行われました",
@@ -1417,48 +1417,34 @@ def safe_goto_threads(page, context, session_token, account_name, log_func=print
             except Exception:
                 pass
 
-            if not redirect_detected:
-                if attempt > 1:
-                    log_func(f"[SUCCESS] ✨ [{account_name}] リダイレクトエラー (ERR_TOO_MANY_REDIRECTS) の自己修復に成功！正常にThreadsホームを表示しました。")
-                return True
+    except Exception as e:
+        err_str = str(e)
+        redirect_detected = True
+        if "ERR_TOO_MANY_REDIRECTS" in err_str or "too many redirects" in err_str.lower():
+            log_func(f"[WARN] 🔄 [{account_name}] Page.goto: net::ERR_TOO_MANY_REDIRECTS を検知しました。")
+        else:
+            log_func(f"[WARN] [{account_name}] ページ接続エラー ({err_str[:60]}) を検知しました。")
 
-            log_func(f"[WARN] 🔄 [{account_name}] リダイレクトループ画面 (ERR_TOO_MANY_REDIRECTS) を検知しました (修復試行 {attempt}/{max_retries})。")
-
-        except Exception as e:
-            err_str = str(e)
-            if "ERR_TOO_MANY_REDIRECTS" in err_str or "too many redirects" in err_str.lower():
-                redirect_detected = True
-                log_func(f"[WARN] 🔄 [{account_name}] Page.goto: net::ERR_TOO_MANY_REDIRECTS を検知しました (修復試行 {attempt}/{max_retries})。")
-            else:
-                if attempt == max_retries:
-                    raise e
-                log_func(f"[WARN] [{account_name}] ページ接続エラー: {err_str} (修復試行 {attempt}/{max_retries})...")
-                time.sleep(2)
-
-        # 自己修復シーケンス:
-        log_func(f"[INFO] 🧹 [{account_name}] リダイレクトループを検知。失効したCookieを全消去し、直接Threadsログイン画面を開きます...")
+    if redirect_detected or "about:blank" in (page.url or "").lower():
+        log_func(f"[INFO] 🧹 [{account_name}] セッション失効 / about:blank / リダイレクトループを検知。競合Cookieを全消去してログイン画面へ遷移します...")
         try:
-            # 1. コンテキスト内のクッキーを全消去（競合Cookieを除去）
             context.clear_cookies()
             time.sleep(1.0)
         except Exception as ce:
             log_func(f"[DEBUG] clear_cookies: {ce}")
 
-        # 2. 直接クリーンにログイン画面へアクセス（死んだsessionidは再注入しない！）
-        try:
-            page.goto("https://www.threads.net/login", timeout=30000, wait_until="domcontentloaded")
-            time.sleep(2)
-            log_func(f"[INFO] 🚪 [{account_name}] クリーンなThreadsログイン画面を開きました。")
-            return True
-        except Exception as le:
-            log_func(f"[WARN] ログイン画面遷移試行: {le}")
+        # 直接クリーンにログイン画面へアクセス
+        for target_url in ["https://www.threads.net/login", "https://www.instagram.com/accounts/login/"]:
+            try:
+                page.goto(target_url, timeout=30000, wait_until="domcontentloaded")
+                time.sleep(2)
+                cur_after = (page.url or "").lower()
+                if "about:blank" not in cur_after:
+                    log_func(f"[INFO] 🚪 [{account_name}] 正常にログイン画面 ({page.url}) を開きました。")
+                    return True
+            except Exception:
+                pass
 
-    # 最終試行
-    try:
-        page.goto("https://www.threads.net/login", timeout=timeout, wait_until="domcontentloaded")
-        time.sleep(2)
-    except Exception:
-        page.goto("https://www.threads.net/", timeout=timeout)
     return True
 
 def set_account_status_in_excel(filepath, account_name, status="無効", reason="携帯電話番号認証画面検知"):
@@ -1611,18 +1597,37 @@ def execute_id_pw_login(page, context, account_name, password, log_func=print):
     clean_pw = str(password or "").strip()
     if not clean_pw:
         log_func(f"[WARN] ⚠️ [{account_name}] パスワードがExcelに登録されていないため、ID/PW自動ログインをスキップします。")
+def execute_id_pw_login(page, context, account_name, password, log_func=print):
+    """
+    【ID/PW自動ログイン】
+    セッションIDに一切依存せず、ExcelのIDとパスワードを使ってChromeプロファイル上で即時自動ログインします。
+    """
+    clean_id = str(account_name or "").lstrip("@").strip()
+    clean_pw = str(password or "").strip()
+    if not clean_pw:
+        log_func(f"[WARN] ⚠️ [{account_name}] パスワードがExcelに登録されていないため、ID/PW自動ログインをスキップします。")
         return False
 
     log_func(f"[INFO] 🔐 [{account_name}] 【ID/PWプロファイル自動ログイン】を開始します（ID: @{clean_id}）...")
 
     try:
+        # 失効Cookieによるリダイレクトループを確実に防ぐため、Cookieを全消去
+        try:
+            context.clear_cookies()
+            time.sleep(0.5)
+        except Exception:
+            pass
+
         cur_url = (page.url or "").lower()
-        if "/login" not in cur_url and not any(k in cur_url for k in ["login", "accounts"]):
-            try:
-                page.goto("https://www.threads.net/login", timeout=30000, wait_until="domcontentloaded")
-                time.sleep(2)
-            except Exception:
-                pass
+        if "about:blank" in cur_url or "/login" not in cur_url:
+            for login_url in ["https://www.threads.net/login", "https://www.instagram.com/accounts/login/"]:
+                try:
+                    page.goto(login_url, timeout=30000, wait_until="domcontentloaded")
+                    time.sleep(2)
+                    if "about:blank" not in (page.url or "").lower():
+                        break
+                except Exception:
+                    pass
 
         # 1. まずワンクリック連携ボタン（「〇〇としてログイン」「Instagramでログイン」）があれば試す
         for cont_sel in [
@@ -1658,7 +1663,7 @@ def execute_id_pw_login(page, context, account_name, password, log_func=print):
         ]:
             try:
                 btn = page.locator(ig_sel).first
-                if btn.is_visible(timeout=800):
+                if btn.is_visible(timeout=1000):
                     log_func(f"[INFO] [{account_name}] 「Instagramでログイン」をクリックしてフォームを展開...")
                     btn.click(force=True)
                     time.sleep(2.5)
@@ -1671,7 +1676,7 @@ def execute_id_pw_login(page, context, account_name, password, log_func=print):
         for u_sel in ['input[name="username"]', 'input[autocomplete="username"]', 'input[aria-label*="ユーザーネーム"]', 'input[aria-label*="ユーザー名"]', 'input[placeholder*="ユーザーネーム"]', 'input[placeholder*="ユーザー名"]', 'input[type="text"]']:
             try:
                 loc = page.locator(u_sel).first
-                if loc.is_visible(timeout=1000):
+                if loc.is_visible(timeout=1500):
                     user_loc = loc
                     break
             except Exception:
@@ -1681,11 +1686,36 @@ def execute_id_pw_login(page, context, account_name, password, log_func=print):
         for p_sel in ['input[name="password"]', 'input[autocomplete="current-password"]', 'input[type="password"]']:
             try:
                 loc = page.locator(p_sel).first
-                if loc.is_visible(timeout=1000):
+                if loc.is_visible(timeout=1500):
                     pass_loc = loc
                     break
             except Exception:
                 pass
+
+        # Threads側でフォームが見つからない場合、Instagram公式ログインへフォールバック
+        if not user_loc or not pass_loc:
+            log_func(f"[INFO] [{account_name}] Threads側フォーム未検出のため、Instagramログイン画面へアクセスします...")
+            try:
+                page.goto("https://www.instagram.com/accounts/login/", timeout=30000, wait_until="domcontentloaded")
+                time.sleep(2.5)
+                for u_sel in ['input[name="username"]', 'input[type="text"]']:
+                    try:
+                        loc = page.locator(u_sel).first
+                        if loc.is_visible(timeout=1500):
+                            user_loc = loc
+                            break
+                    except Exception:
+                        pass
+                for p_sel in ['input[name="password"]', 'input[type="password"]']:
+                    try:
+                        loc = page.locator(p_sel).first
+                        if loc.is_visible(timeout=1500):
+                            pass_loc = loc
+                            break
+                    except Exception:
+                        pass
+            except Exception as e:
+                log_func(f"[WARN] Instagramフォールバック遷移エラー: {e}")
 
         if not user_loc or not pass_loc:
             log_func(f"[WARN] [{account_name}] ログイン入力フォームが見つかりませんでした (URL: {page.url})。")
@@ -1697,6 +1727,7 @@ def execute_id_pw_login(page, context, account_name, password, log_func=print):
         time.sleep(0.3)
         user_loc.fill("")
         time.sleep(0.2)
+        import random
         user_loc.type(clean_id, delay=random.randint(50, 110))
         time.sleep(0.5)
 
@@ -1712,7 +1743,7 @@ def execute_id_pw_login(page, context, account_name, password, log_func=print):
         for s_sel in ['button[type="submit"]', 'button:has-text("ログイン")', 'div[role="button"]:has-text("ログイン")', 'button:has-text("Log in")']:
             try:
                 b = page.locator(s_sel).first
-                if b.is_visible(timeout=800):
+                if b.is_visible(timeout=1000):
                     submit_btn = b
                     break
             except Exception:
@@ -1753,8 +1784,8 @@ def execute_id_pw_login(page, context, account_name, password, log_func=print):
         # 最終判定
         for _ in range(12):
             is_ok, reason = detect_threads_logged_in(page)
-            if is_ok:
-                log_func(f"[SUCCESS] 🎉 [{account_name}] 【ID/PWログイン大成功！】正規プロファイルが復活しました！（{reason}）")
+            if is_ok or "/login" not in (page.url or "").lower():
+                log_func(f"[SUCCESS] 🎉 [{account_name}] 【ID/PWログイン大成功！】正規プロファイルが復活しました！")
                 p_dir = os.path.join(BASE_DIR, f"chrome_profiles/{account_name}")
                 save_portable_session_file(context, p_dir, account_name, log_func)
                 return True
@@ -1766,7 +1797,7 @@ def execute_id_pw_login(page, context, account_name, password, log_func=print):
         return False
 
 def ensure_authenticated_session(page, context, account, filepath, log_func=print, wait_timeout_sec=30, acc_state=None):
-    account_name = str(account.get("アカウントID") or account.get("アカウント名") or account.get("アカウント") or account if isinstance(account, dict) else account).strip()
+    account_name = str(account.get("アカウントID") or account.get("アカウント名") or account.get("アカウント") or account if isinstance(account, dict) else account).strip().lstrip("@")
     password = ""
     if isinstance(account, dict):
         password = str(account.get("パスワード") or account.get("password") or account.get("PW") or account.get("Pass") or account.get("暗証番号") or "").strip()
@@ -1775,13 +1806,13 @@ def ensure_authenticated_session(page, context, account, filepath, log_func=prin
             recs = read_excel_records(filepath)
             for r in recs:
                 rid = str(r.get("アカウントID") or r.get("アカウント名") or "").strip().lstrip("@")
-                if rid == account_name.lstrip("@"):
+                if rid == account_name:
                     password = str(r.get("パスワード") or r.get("password") or r.get("PW") or r.get("Pass") or r.get("暗証番号") or "").strip()
                     break
         except Exception:
             pass
 
-    time.sleep(2)
+    time.sleep(1.5)
     is_cp, cp_why = detect_phone_checkpoint_screen(page)
     if is_cp:
         log_func(f"[CRITICAL] 🚨 [{account_name}] 携帯電話番号（SMS）認証画面を検知しました！（{cp_why}）")
@@ -1789,6 +1820,7 @@ def ensure_authenticated_session(page, context, account, filepath, log_func=prin
         set_account_status_in_excel(filepath, account_name, status="無効", reason="携帯電話番号認証画面検知")
         return False
 
+    # 既にログイン成功しているか判定
     is_ok, reason = detect_threads_logged_in(page)
     if is_ok:
         log_func(f"[SUCCESS] [{account_name}] Chromeプロファイルのセッションで自動ログイン確認完了！（{reason}）")
@@ -1801,7 +1833,7 @@ def ensure_authenticated_session(page, context, account, filepath, log_func=prin
         return True
 
     # 未ログイン・ログアウト画面を検知した場合
-    log_func(f"[INFO] [{account_name}] Threads画面のセッション照合中...")
+    log_func(f"[INFO] [{account_name}] Threads画面のセッション照合中 (URL: {page.url})...")
 
     # 1. まずワンクリック連携ボタンを試行
     for cont_sel in [
@@ -1834,46 +1866,42 @@ def ensure_authenticated_session(page, context, account, filepath, log_func=prin
             acc_state["pure_profile_mode"] = True
         return True
 
-    # 2. それでもログイン画面のまま進まない場合 ➔ ID/PWによる自動ログイン処理
+    # 2. セッションIDが切れていた場合 ➔ 入力されているID/PWで即座に自動ログインを実行！
     if password:
-        if acc_state:
-            now_ts = time.time()
-            if acc_state.get("login_cooldown_started"):
-                if now_ts >= acc_state.get("login_cooldown_until", 0):
-                    # 15分の安全冷却が完了！ID/PWで自動ログインを実行
-                    log_func(f"[INFO] ⏰ [{account_name}] 15分間の安全冷却が完了しました。ID/PWによるプロファイル自動ログインを実行します...")
-                    ok = execute_id_pw_login(page, context, account_name, password, log_func=log_func)
-                    if ok:
-                        acc_state["login_cooldown_until"] = 0
-                        acc_state["login_cooldown_started"] = False
-                        acc_state["pure_profile_mode"] = True
-                        return True
-                    else:
-                        acc_state["login_cooldown_until"] = time.time() + 900
-                        acc_state["login_cooldown_started"] = True
-                        log_func(f"[WARN] ⏳ [{account_name}] ID/PW自動再ログインに失敗しました。15分後に再試行します。")
-                        return False
-                else:
-                    rem = int(acc_state.get("login_cooldown_until", 0) - now_ts)
-                    log_func(f"[WARN] ⏳ [{account_name}] Metaの安全制限解除（冷却インターバル）のため、あと {rem // 60}分{rem % 60}秒 待機後にID/PWで自動再ログインを実行します。")
-                    return False
-            else:
-                # 初回強制ログアウト検知！15分冷却を開始
-                acc_state["login_cooldown_until"] = time.time() + 900
-                acc_state["login_cooldown_started"] = True
+        log_func("=" * 60)
+        log_func(f"[INFO] 🔐 [{account_name}] セッション失効を検知。Excelに入力されている【ID/パスワード】で自動ログインを実行します！")
+        log_func("=" * 60)
+
+        # 壊れたセッションCookieを除去してクリーンにログイン
+        try:
+            context.clear_cookies()
+            time.sleep(0.5)
+        except Exception:
+            pass
+
+        ok = execute_id_pw_login(page, context, account_name, password, log_func=log_func)
+        if ok:
+            p_dir = os.path.join(BASE_DIR, f"chrome_profiles/{account_name}")
+            save_portable_session_file(context, p_dir, account_name, log_func)
+            if acc_state:
+                acc_state["login_cooldown_until"] = 0
+                acc_state["login_cooldown_started"] = False
                 acc_state["pure_profile_mode"] = True
-                log_func("=" * 60)
-                log_func(f"[WARN] ⏳ [{account_name}] 強制ログアウト（セッション失効）を検知しました！")
-                log_func(f"[WARN] 🛡️ Metaのボット検知・電話番号（SMS）ロックを完全に回避するため、15分間の冷却インターバル後に【ID/PW自動ログイン】を実行します。")
-                log_func(f"[INFO] ✨ 今後はsessionidを一切使用せず、ID/PWによる正規プロファイルで完全自動維持します。")
-                log_func("=" * 60)
-                return False
+            # 失効した古いトークンをクリア
+            if isinstance(account, dict):
+                account["auth_token"] = ""
+            # ホームへアクセス
+            try:
+                page.goto("https://www.threads.net/", timeout=30000, wait_until="domcontentloaded")
+                time.sleep(2)
+            except Exception:
+                pass
+            return True
         else:
-            # acc_stateなし（手動ログイン確認等）
-            log_func(f"[INFO] [{account_name}] パスワードを検出。ID/PWによる自動ログインを実行します...")
-            return execute_id_pw_login(page, context, account_name, password, log_func=log_func)
+            log_func(f"[WARN] ❌ [{account_name}] ID/PW自動ログインに失敗しました。パスワードをご確認ください。")
+            return False
     else:
-        log_func(f"[WARN] [{account_name}] パスワードが「アカウント情報.xlsx」に未記入のため、ID/PW自動ログインを実行できません。Excelに「パスワード」列を追加してご記入ください。")
+        log_func(f"[WARN] [{account_name}] パスワードが「アカウント情報.xlsx」に未記入のため、ID/PW自動ログインを実行できません。Excelの「パスワード」列にパスワードをご記入ください。")
         return False
 
 def resolve_image_path(raw_path, post_text=""):
