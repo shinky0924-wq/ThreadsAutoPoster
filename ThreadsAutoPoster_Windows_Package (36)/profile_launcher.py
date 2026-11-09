@@ -909,7 +909,7 @@ class ProfileLauncherApp:
                 wb = openpyxl.Workbook()
                 ws = wb.active
                 ws.title = "アカウント設定"
-                ws.append(["アカウントID", "sessionid", "プロファイル名", "有効/無効", "備考"])
+                ws.append(["アカウントID", "パスワード", "sessionid", "有効/無効", "備考"])
             else:
                 wb = openpyxl.load_workbook(ACCOUNT_FILE)
                 ws = None
@@ -922,37 +922,35 @@ class ProfileLauncherApp:
 
             headers = [str(c).strip() if c is not None else "" for c in next(ws.iter_rows(values_only=True))]
             id_col = 1
-            sess_col = 2
-            prof_col = 3
+            pass_col = 2
+            sess_col = 3
             stat_col = 4
             notes_col = 5
 
             for idx, h in enumerate(headers, start=1):
-                if "アカウントID" in h or "アカウント名" in h: id_col = idx
+                if "アカウントID" in h or "アカウント名" in h or h == "ID": id_col = idx
+                elif "パスワード" in h or "password" in h.lower() or h.lower() == "pw": pass_col = idx
                 elif "sessionid" in h.lower() or "auth" in h.lower(): sess_col = idx
-                elif "プロファイル" in h: prof_col = idx
                 elif "有効" in h or "ステータス" in h: stat_col = idx
                 elif "備考" in h: notes_col = idx
 
             exists = False
             for row in range(2, ws.max_row + 1):
-                cur_id = str(ws.cell(row=row, column=id_col).value or "").strip()
-                if cur_id == account_name:
+                cur_id = str(ws.cell(row=row, column=id_col).value or "").strip().lstrip("@")
+                if cur_id == account_name.lstrip("@"):
                     ws.cell(row=row, column=sess_col, value=token)
-                    ws.cell(row=row, column=prof_col, value=account_name)
                     ws.cell(row=row, column=stat_col, value="有効")
-                    ws.cell(row=row, column=notes_col, value="sessionidからプロファイル作成・保存済")
+                    ws.cell(row=row, column=notes_col, value="アカウントIDプロファイル自動管理")
                     exists = True
                     break
 
             if not exists:
-                max_c = max(id_col, sess_col, prof_col, stat_col, notes_col)
+                max_c = max(id_col, pass_col, sess_col, stat_col, notes_col)
                 new_row = [""] * max_c
-                new_row[id_col - 1] = account_name
+                new_row[id_col - 1] = account_name.lstrip("@")
                 new_row[sess_col - 1] = token
-                new_row[prof_col - 1] = account_name
                 new_row[stat_col - 1] = "有効"
-                new_row[notes_col - 1] = "sessionidから新規登録"
+                new_row[notes_col - 1] = "アカウントIDプロファイル自動管理"
                 ws.append(new_row)
 
             wb.save(ACCOUNT_FILE)

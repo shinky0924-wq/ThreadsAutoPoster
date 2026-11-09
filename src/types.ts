@@ -2,6 +2,7 @@ export interface AccountInfo {
   id: string;
   authToken: string;
   userId: string;
+  password?: string; // ID/PW自動ログイン用
   notes: string;
   minIntervalMinutes: number;
   maxIntervalMinutes: number;

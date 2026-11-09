@@ -582,8 +582,9 @@ class ProfileEditorApp:
             acc_id = str(acc.get("アカウントID") or acc.get("アカウント名") or acc.get("アカウント") or "").strip()
             if not acc_id or acc_id.lower() == "nan":
                 continue
-            seen_ids.add(acc_id.lstrip("@").lower())
-            prof_name = str(acc.get("プロファイル名") or acc.get("プロファイル") or acc_id).strip()
+            clean_id = acc_id.lstrip("@").strip()
+            seen_ids.add(clean_id.lower())
+            prof_name = clean_id
             raw_token = str(acc.get("auth_token") or acc.get("Authトークン_sessionid") or acc.get("sessionid") or "").strip()
             password_val = str(acc.get("パスワード") or acc.get("password") or acc.get("PW") or acc.get("Pass") or acc.get("暗証番号") or "").strip()
             status_val = str(acc.get("有効/無効") or acc.get("有効無効") or acc.get("ステータス") or "有効").strip()
@@ -597,7 +598,7 @@ class ProfileEditorApp:
             fp_label = "🛡️ 固定端末指紋済" if has_fp else "⚡ 自動付与"
 
             item_id = self.tree.insert("", "end", values=(
-                f"@{acc_id.lstrip('@')}",
+                f"@{clean_id}",
                 f"chrome_profiles/{prof_name}",
                 sess_label,
                 fp_label,
@@ -605,7 +606,7 @@ class ProfileEditorApp:
             ))
 
             acc_obj = {
-                "id": acc_id.lstrip("@"),
+                "id": clean_id,
                 "prof_name": prof_name,
                 "prof_dir": prof_dir,
                 "token": raw_token,

@@ -777,10 +777,10 @@ def auto_bootstrap_countermeasure_profiles(accounts_data, log_func=print):
     bootstrapped_count = 0
     for acc in accounts_data:
         acc_id = str(acc.get("アカウントID") or acc.get("アカウント名") or acc.get("アカウント") or "").strip()
-        if not acc_id or acc_id.lower() == "nan":
+        clean_id = acc_id.lstrip("@").strip()
+        if not clean_id or clean_id.lower() == "nan":
             continue
-
-        prof_name = str(acc.get("プロファイル名") or acc.get("プロファイル") or acc_id).strip()
+        prof_name = clean_id
         prof_dir = os.path.join(BASE_DIR, f"chrome_profiles/{prof_name}")
         os.makedirs(prof_dir, exist_ok=True)
 
@@ -3660,11 +3660,11 @@ class ThreadsPosterGUI:
             return
 
         first_acc = valid_accounts[0]
-        first_id = str(first_acc.get("アカウントID") or first_acc.get("アカウント名") or "").strip()
-        first_prof = str(first_acc.get("プロファイル名") or first_acc.get("プロファイル") or first_id).strip()
+        first_id = str(first_acc.get("アカウントID") or first_acc.get("アカウント名") or "").strip().lstrip("@")
+        first_prof = first_id
         dis_text = f" | ⚠️ 停止中: {len(disabled_accounts)}件 (@{', @'.join(disabled_accounts)})" if disabled_accounts else ""
         self.lbl_account_info.config(
-            text=f"👤 有効: {len(valid_accounts)}件{dis_text} | メインID: @{first_id} | プロファイル: {first_prof} (profile_launcher対応)",
+            text=f"👤 有効: {len(valid_accounts)}件{dis_text} | メインID: @{first_id} | プロファイル: {first_prof}",
             fg="#e4e4e7"
         )
         self.log(f"[INFO] アカウント情報読み込み完了: {len(valid_accounts)}件のアカウント設定を検出 (ID: @{first_id}, プロファイル: {first_prof})")
@@ -4352,9 +4352,8 @@ class ThreadsPosterGUI:
             return
 
         target_acc = valid_accounts[0]
-        target_acc_name = str(target_acc.get("アカウントID") or target_acc.get("アカウント名") or "").strip()
-
-        prof_name = str(target_acc.get("プロファイル名") or target_acc.get("プロファイル") or target_acc_name).strip()
+        target_acc_name = str(target_acc.get("アカウントID") or target_acc.get("アカウント名") or "").strip().lstrip("@")
+        prof_name = target_acc_name
         prof_dir = os.path.join(BASE_DIR, f"chrome_profiles/{prof_name}")
         os.makedirs(prof_dir, exist_ok=True)
 
@@ -4706,14 +4705,11 @@ class ThreadsPosterGUI:
         posts_file = acc_state["posts_file"]
         cycle_num = acc_state.get("cycle_num", 1)
 
-        prof_name_from_acc = str(account.get("プロファイル名") or account.get("プロファイル") or "").strip()
+        clean_acc_id = account_name.lstrip("@").strip()
+        profile_subpath = f"chrome_profiles/{clean_acc_id}"
+        profile_dir = os.path.join(BASE_DIR, profile_subpath)
+        os.makedirs(profile_dir, exist_ok=True)
         custom_settings = read_account_settings_from_post_file(posts_file)
-        profile_subpath = prof_name_from_acc or custom_settings.get("profile_dir", "")
-        if not profile_subpath or any(k in profile_subpath for k in ["コミュニティ", "トピック", "モード", "間隔", "ツイート", "ポスト", "時間", "nan"]):
-            profile_subpath = f"chrome_profiles/{account_name}"
-        elif not profile_subpath.startswith("chrome_profiles") and not os.path.isabs(profile_subpath):
-            profile_subpath = f"chrome_profiles/{profile_subpath}"
-        profile_dir = os.path.join(BASE_DIR, profile_subpath) if not os.path.isabs(profile_subpath) else profile_subpath
 
         if "min_interval_sec" in custom_settings:
             min_delay = custom_settings["min_interval_sec"]
@@ -5032,15 +5028,11 @@ class ThreadsPosterGUI:
         row_indices = daily_data["row_indices"]
         sheet_name = daily_data["sheet_name"]
 
-        prof_name_from_acc = str(account.get("プロファイル名") or account.get("プロファイル") or "").strip()
-        custom_settings = read_account_settings_from_post_file(posts_file)
-        profile_subpath = prof_name_from_acc or custom_settings.get("profile_dir", "")
-        if not profile_subpath or any(k in profile_subpath for k in ["コミュニティ", "トピック", "モード", "間隔", "ツイート", "ポスト"]):
-            profile_subpath = f"chrome_profiles/{account_name}"
-        elif not profile_subpath.startswith("chrome_profiles") and not os.path.isabs(profile_subpath):
-            profile_subpath = f"chrome_profiles/{profile_subpath}"
-        profile_dir = os.path.join(BASE_DIR, profile_subpath) if not os.path.isabs(profile_subpath) else profile_subpath
+        clean_acc_id = account_name.lstrip("@").strip()
+        profile_subpath = f"chrome_profiles/{clean_acc_id}"
+        profile_dir = os.path.join(BASE_DIR, profile_subpath)
         os.makedirs(profile_dir, exist_ok=True)
+        custom_settings = read_account_settings_from_post_file(posts_file)
 
         # 過去のクラッシュ残骸(SingletonLock)を事前除去
         for lk in ["SingletonLock", "SingletonCookie", "SingletonSocket"]:

@@ -876,8 +876,9 @@ export default function App() {
                     <tr>
                       <th className="py-2.5 px-3">アカウントID</th>
                       <th className="py-2.5 px-3">状態 (有効/無効)</th>
+                      <th className="py-2.5 px-3">パスワード</th>
+                      <th className="py-2.5 px-3">Chromeプロファイル (自動生成)</th>
                       <th className="py-2.5 px-3">sessionid (セッションCookie)</th>
-                      <th className="py-2.5 px-3">Chromeプロファイル (永続化)</th>
                       <th className="py-2.5 px-3">待機間隔</th>
                       <th className="py-2.5 px-3">未投稿 / 総数</th>
                       <th className="py-2.5 px-3 text-right">Excel出力</th>
@@ -888,7 +889,6 @@ export default function App() {
                       const pList = accountPosts[acc.id] || [];
                       const unposted = pList.filter((p) => p.status === '未投稿').length;
                       const isAccActive = acc.enabled !== false;
-                      const profName = acc.profileDir ? acc.profileDir.replace('chrome_profiles/', '') : acc.id;
                       return (
                         <tr key={acc.id} className="hover:bg-zinc-800/30">
                           <td className="py-2.5 px-3 font-semibold text-white">
@@ -914,21 +914,28 @@ export default function App() {
                             </button>
                           </td>
                           <td className="py-2.5 px-3 font-mono text-[11px] text-zinc-400">
+                            {acc.password ? (
+                              <span className="text-zinc-300 font-semibold">••••••••</span>
+                            ) : (
+                              <span className="text-zinc-500 italic">未設定 (Excel記入可)</span>
+                            )}
+                          </td>
+                          <td className="py-2.5 px-3 font-mono text-zinc-300">
+                            <span className="px-2 py-0.5 rounded bg-zinc-950 border border-zinc-700 text-indigo-300 text-[11px]">
+                              📁 chrome_profiles/{acc.id}
+                            </span>
+                            <span className="ml-2 text-[10px] text-emerald-400 font-sans">
+                              (アカウントID自動生成)
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-3 font-mono text-[11px] text-zinc-400">
                             {acc.authToken && !acc.authToken.startsWith('ここに') ? (
                               <span className="text-emerald-400 font-semibold" title={acc.authToken}>
                                 {acc.authToken.length > 20 ? `${acc.authToken.slice(0, 18)}...` : acc.authToken}
                               </span>
                             ) : (
-                              <span className="text-zinc-600">未設定</span>
+                              <span className="text-zinc-600">不要 (ID/PW自動ログイン)</span>
                             )}
-                          </td>
-                          <td className="py-2.5 px-3 font-mono text-zinc-300">
-                            <span className="px-2 py-0.5 rounded bg-zinc-950 border border-zinc-700 text-indigo-300 text-[11px]">
-                              📁 chrome_profiles/{profName}
-                            </span>
-                            <span className="ml-2 text-[10px] text-emerald-400 font-sans">
-                              (profile_launcher対応)
-                            </span>
                           </td>
                           <td className="py-2.5 px-3 text-zinc-300">
                             {acc.minIntervalMinutes}〜{acc.maxIntervalMinutes}分

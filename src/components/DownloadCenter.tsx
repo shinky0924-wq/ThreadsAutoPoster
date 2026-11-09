@@ -254,12 +254,12 @@ export const DownloadCenter: React.FC<DownloadCenterProps> = ({ accounts = [] })
                   <span className="font-mono font-bold text-white text-xs">アカウント情報.xlsx</span>
                 </div>
                 <span className="px-2 py-0.5 rounded text-[10px] font-mono border border-emerald-800 bg-emerald-950/30 text-emerald-300">
-                  ID/PW・sessionid削除済
+                  プロファイル名削除・自動生成版
                 </span>
               </div>
               <p className="text-zinc-400 text-[11px]">
-                列構成: <code className="text-white">['アカウントID', 'プロファイル名', '有効/無効', '備考']</code>。<br />
-                パスワードやsessionidは一切記載不要で安全に運用できます。
+                列構成: <code className="text-white">['アカウントID', 'パスワード', 'sessionid', '有効/無効', '備考']</code>。<br />
+                プロファイル名は不要となり、アカウントIDでプロファイルフォルダが完全自動生成されます。
               </p>
             </div>
             <div className="flex justify-end pt-2 border-t border-zinc-800/80">
@@ -268,7 +268,7 @@ export const DownloadCenter: React.FC<DownloadCenterProps> = ({ accounts = [] })
                 className="flex items-center gap-1.5 px-3.5 py-2 bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 text-white font-bold rounded-lg text-xs cursor-pointer shadow-md transition-all active:scale-95"
               >
                 <Download className="w-3.5 h-3.5" />
-                <span>📊 アカウント情報.xlsx をダウンロード</span>
+                <span>📊 最新版 アカウント情報.xlsx をダウンロード</span>
               </button>
             </div>
           </div>

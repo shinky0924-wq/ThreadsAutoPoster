@@ -38,7 +38,7 @@ export const AccountSelector: React.FC<AccountSelectorProps> = ({
   const [tempAccount, setTempAccount] = useState<AccountInfo>(currentAccount);
   const [isAddingAccount, setIsAddingAccount] = useState(false);
   const [newAccountId, setNewAccountId] = useState('');
-  const [newProfileName, setNewProfileName] = useState('');
+  const [newPassword, setNewPassword] = useState('');
   const [showCheckpointModal, setShowCheckpointModal] = useState(false);
   const [showRedirectModal, setShowRedirectModal] = useState(false);
 
@@ -69,24 +69,25 @@ export const AccountSelector: React.FC<AccountSelectorProps> = ({
     e.preventDefault();
     if (!newAccountId.trim()) return;
     const cleanId = newAccountId.trim().replace(/^@/, '');
-    const cleanProfile = newProfileName.trim() || cleanId;
     const newAcc: AccountInfo = {
       id: cleanId,
+      password: newPassword.trim(),
       authToken: '',
-      userId: '',
-      notes: 'profile_launcher対応アカウント',
+      userId: cleanId,
+      notes: 'ID/PW自動ログイン・プロファイル自動生成対応',
       minIntervalMinutes: 120,
       maxIntervalMinutes: 360,
       activeHours: '0:00-0:00',
       mode: 1,
-      profileDir: `chrome_profiles/${cleanProfile}`,
+      // プロファイル名はアカウントIDで自動生成
+      profileDir: `chrome_profiles/${cleanId}`,
       topics: ['信太山新地', '大阪求人'],
       currentTopicIndex: 0,
       enabled: true,
     };
     onAddAccount(newAcc);
     setNewAccountId('');
-    setNewProfileName('');
+    setNewPassword('');
     setIsAddingAccount(false);
   };
 
@@ -379,10 +380,10 @@ export const AccountSelector: React.FC<AccountSelectorProps> = ({
             className="bg-zinc-900 border border-zinc-700 text-xs text-white px-2.5 py-1.5 rounded focus:outline-none focus:border-emerald-500 flex-1 min-w-[160px]"
           />
           <input
-            type="text"
-            placeholder="プロファイル名 (省略時はID名: sll15802)"
-            value={newProfileName}
-            onChange={(e) => setNewProfileName(e.target.value)}
+            type="password"
+            placeholder="パスワード (強制ログアウト時自動復帰用)"
+            value={newPassword}
+            onChange={(e) => setNewPassword(e.target.value)}
             className="bg-zinc-900 border border-zinc-700 text-xs text-white px-2.5 py-1.5 rounded focus:outline-none focus:border-emerald-500 flex-1 min-w-[200px]"
           />
           <button
@@ -471,12 +472,12 @@ export const AccountSelector: React.FC<AccountSelectorProps> = ({
         <div className="bg-zinc-950 p-3 rounded-lg border border-zinc-700 space-y-3 text-xs">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div>
-              <label className="text-zinc-400 font-medium block mb-1">Chromeプロファイルフォルダ名 (profile_launcher対応)</label>
+              <label className="text-zinc-400 font-medium block mb-1">ログインパスワード (強制ログアウト時自動復帰用)</label>
               <input
-                type="text"
-                value={tempAccount.profileDir}
-                onChange={(e) => setTempAccount({ ...tempAccount, profileDir: e.target.value })}
-                placeholder="例: chrome_profiles/sll15802"
+                type="password"
+                value={tempAccount.password || ''}
+                onChange={(e) => setTempAccount({ ...tempAccount, password: e.target.value })}
+                placeholder="Instagram/Threadsパスワード"
                 className="w-full bg-zinc-900 border border-zinc-700 text-white text-xs px-2.5 py-1.5 rounded focus:outline-none focus:border-emerald-500 font-mono"
               />
             </div>
