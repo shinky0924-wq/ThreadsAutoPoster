@@ -148,27 +148,57 @@ def find_account_file():
     return candidates[0]
 
 def read_excel_records(filepath):
-    if not os.path.exists(filepath):
+    if not filepath or not os.path.exists(filepath):
         return []
+
+    wb = None
+    # 1. ExcelファイルがMicrosoft Excel等で開かれている場合のファイルロック回避 (バイナリ共有読込 + 3回リトライ)
+    for attempt in range(3):
+        try:
+            with open(filepath, "rb") as f_in:
+                import io
+                content_bytes = f_in.read()
+            wb = openpyxl.load_workbook(io.BytesIO(content_bytes), data_only=True)
+            break
+        except Exception as e_open:
+            if attempt < 2:
+                time.sleep(0.3)
+            else:
+                try:
+                    wb = openpyxl.load_workbook(filepath, data_only=True)
+                except Exception as e_final:
+                    print(f"[ERROR] Excel読み込みエラー ({filepath}): {e_final}")
+                    return []
+
+    if not wb:
+        return []
+
     try:
-        wb = openpyxl.load_workbook(filepath, data_only=True)
         target_ws = None
         target_header_row_idx = 1
-        
+
+        # アカウント関連シートを優先探索
+        candidate_sheets = []
         for sname in wb.sheetnames:
-            ws = wb[sname]
+            if any(k in sname.lower() for k in ["アカウント", "account", "設定", "config", "ユーザー"]):
+                candidate_sheets.append(wb[sname])
+        for sname in wb.sheetnames:
+            if wb[sname] not in candidate_sheets:
+                candidate_sheets.append(wb[sname])
+
+        for ws in candidate_sheets:
             all_rows = list(ws.iter_rows(values_only=True))
             for r_idx, row in enumerate(all_rows[:15], start=1):
                 if not row:
                     continue
-                row_cells = [str(c).strip() for c in row if c is not None]
-                if any(k in row_cells for k in ["ポスト文章", "投稿本文", "ツイート文章", "アカウントID", "アカウント名", "auth_token"]):
+                row_cells_norm = [re.sub(r'[\s\u3000_\-:=]+', '', str(c).strip().lower()) for c in row if c is not None]
+                if any(any(k in cell for k in ["アカウント", "account", "ユーザー", "username", "userid", "ポスト文章", "投稿本文", "ツイート文章", "auth_token", "sessionid", "パスワード", "password"]) or cell in ["id", "uid"] for cell in row_cells_norm):
                     target_ws = ws
                     target_header_row_idx = r_idx
                     break
             if target_ws:
                 break
-                
+
         if not target_ws:
             target_ws = wb.active
             target_header_row_idx = 1
@@ -176,24 +206,52 @@ def read_excel_records(filepath):
         rows = list(target_ws.iter_rows(values_only=True))
         sheet_name = target_ws.title
         wb.close()
-        
+
         if not rows or len(rows) < target_header_row_idx:
             return []
-            
+
         header_row = rows[target_header_row_idx - 1]
         headers = [str(h).strip() if h is not None else f"col_{i}" for i, h in enumerate(header_row)]
-        
+
         records = []
         for r_idx, row in enumerate(rows[target_header_row_idx:], start=target_header_row_idx + 1):
             if not row or all(c is None or str(c).strip() == "" for c in row):
                 continue
             r_dict = {"_row_idx": r_idx, "_sheet_name": sheet_name}
             for h, val in zip(headers, row):
-                r_dict[h] = "" if val is None else val
+                val_clean = "" if val is None else str(val).strip()
+                r_dict[h] = val_clean
+
+                # ヘッダー名の正規化・表記揺れを100%吸収
+                norm_h = re.sub(r'[\s\u3000_\-:=]+', '', str(h).strip().lower())
+                if any(k in norm_h for k in ["アカウント", "account", "ユーザー", "username", "userid"]) or norm_h in ["id", "uid"]:
+                    r_dict["アカウントID"] = val_clean
+                    r_dict["アカウント名"] = val_clean
+                    r_dict["アカウント"] = val_clean
+                    r_dict["id"] = val_clean
+                elif any(k in norm_h for k in ["パスワード", "password", "暗証番号"]) or norm_h in ["pw", "pass"]:
+                    r_dict["パスワード"] = val_clean
+                    r_dict["password"] = val_clean
+                    r_dict["PW"] = val_clean
+                    r_dict["Pass"] = val_clean
+                elif any(k in norm_h for k in ["sessionid", "authtoken", "トークン", "token", "セッション"]):
+                    r_dict["sessionid"] = val_clean
+                    r_dict["auth_token"] = val_clean
+                elif any(k in norm_h for k in ["有効", "無効", "ステータス", "status", "状態"]):
+                    r_dict["有効/無効"] = val_clean
+                    r_dict["ステータス"] = val_clean
+                elif any(k in norm_h for k in ["備考", "メモ", "note", "notes"]):
+                    r_dict["備考"] = val_clean
+
+            # 「有効/無効」列がExcelにない場合、デフォルトで「有効」と判定（ユーザーが2列だけ作成した場合の完全保護）
+            if "有効/無効" not in r_dict or not r_dict["有効/無効"]:
+                r_dict["有効/無効"] = "有効"
+                r_dict["ステータス"] = "有効"
+
             records.append(r_dict)
         return records
     except Exception as e:
-        print(f"[ERROR] Excel読み込みエラー: {filepath} ({e})")
+        print(f"[ERROR] Excelパース例外 ({filepath}): {e}")
         return []
 
 def read_account_settings_from_post_file(filepath):
@@ -3672,20 +3730,27 @@ class ThreadsPosterGUI:
                 valid_accounts.append(acc)
 
         if not valid_accounts:
-            self.lbl_account_info.config(text="有効なアカウント設定がありません（アカウントID列をご確認ください）")
-            self.lbl_posts_info.config(text="―")
-            self.log("[WARN] アカウント情報.xlsx に有効な「アカウントID」が記入されていません。")
+            if disabled_accounts:
+                self.lbl_account_info.config(text=f"⚠️ {len(disabled_accounts)}件のアカウントが「無効」に設定されています", fg="#fbbf24")
+                self.lbl_posts_info.config(text="―")
+                self.log(f"[WARN] ⚠️ アカウント情報.xlsx のアカウント（@{', @'.join(disabled_accounts)}）が「無効」に設定されています。「有効/無効」列を「有効」にして保存してください。")
+            else:
+                self.lbl_account_info.config(text="⚠️ 有効なアカウント設定がありません（Excel保存・セル確定をご確認ください）", fg="#f87171")
+                self.lbl_posts_info.config(text="―")
+                self.log(f"[WARN] ⚠️ 『{os.path.basename(self.account_config_path)}』に有効なアカウントが検出されませんでした。ExcelでEnterキーを押してセル入力を確定し、上書き保存（Ctrl+S）してから「🔄 Excel再読込」を押してください。")
             return
 
         first_acc = valid_accounts[0]
         first_id = str(first_acc.get("アカウントID") or first_acc.get("アカウント名") or "").strip().lstrip("@")
         first_prof = first_id
+        first_pw = str(first_acc.get("パスワード") or "").strip()
+        pw_info = "🔑 PW登録済" if first_pw else "⚠️ PW未登録"
         dis_text = f" | ⚠️ 停止中: {len(disabled_accounts)}件 (@{', @'.join(disabled_accounts)})" if disabled_accounts else ""
         self.lbl_account_info.config(
-            text=f"👤 有効: {len(valid_accounts)}件{dis_text} | メインID: @{first_id} | プロファイル: {first_prof}",
+            text=f"👤 有効: {len(valid_accounts)}件{dis_text} | メインID: @{first_id} ({pw_info}) | プロファイル: {first_prof}",
             fg="#e4e4e7"
         )
-        self.log(f"[INFO] アカウント情報読み込み完了: {len(valid_accounts)}件のアカウント設定を検出 (ID: @{first_id}, プロファイル: {first_prof})")
+        self.log(f"[INFO] アカウント情報読み込み完了: {len(valid_accounts)}件のアカウント設定を検出 (ID: @{first_id}, パスワード: {'設定済 (***)' if first_pw else '未設定'}, プロファイル: {first_prof})")
 
         posts_file = self._find_posts_file(first_id)
         if not posts_file or not os.path.exists(posts_file):
@@ -3736,9 +3801,10 @@ class ThreadsPosterGUI:
             self.log(f"[INFO] プレビュー#{i}: [ポスト文章] {short_txt} | [{img_info}]")
 
     def _find_posts_file(self, account_id):
+        clean_id = str(account_id or "").strip().lstrip("@")
         candidates = [
-            os.path.join(BASE_DIR, f"{account_id}.xlsx"),
-            os.path.join(os.getcwd(), f"{account_id}.xlsx"),
+            os.path.join(BASE_DIR, f"{clean_id}.xlsx"),
+            os.path.join(os.getcwd(), f"{clean_id}.xlsx"),
         ]
         for c in candidates:
             if os.path.exists(c):
@@ -3747,7 +3813,7 @@ class ThreadsPosterGUI:
         if os.path.exists(fallback_main):
             try:
                 import shutil
-                target_dest = os.path.join(BASE_DIR, f"{account_id}.xlsx")
+                target_dest = os.path.join(BASE_DIR, f"{clean_id}.xlsx")
                 shutil.copyfile(fallback_main, target_dest)
                 return target_dest
             except Exception:
@@ -4472,6 +4538,23 @@ class ThreadsPosterGUI:
             messagebox.showerror("エラー", f"'{self.account_config_path}' が見つかりません。")
             return
 
+        # 起動直前に最新のExcelデータ（ID・パスワード）を自動再読込
+        self.load_excel_data()
+
+        accounts = read_excel_records(self.account_config_path)
+        active = [a for a in accounts if str(a.get("アカウントID") or "").strip()]
+        if not active:
+            messagebox.showwarning(
+                "アカウント未検出",
+                f"『{os.path.basename(self.account_config_path)}』に有効なアカウントが読み込めませんでした。\n\n"
+                "【確認事項】\n"
+                "1. Excelで入力中のセルを確定（Enterキーを押す）\n"
+                "2. Excelファイルを上書き保存（Ctrl+S）\n"
+                "3. 1行目に「アカウントID」「パスワード」が入力されているか\n\n"
+                "ご確認のうえ、再度お試しください。"
+            )
+            return
+
         self.is_running = True
         self.stop_requested = False
         self.btn_start.config(state="disabled")
@@ -4722,6 +4805,17 @@ class ThreadsPosterGUI:
         account_name = acc_state["name"]
         posts_file = acc_state["posts_file"]
         cycle_num = acc_state.get("cycle_num", 1)
+
+        # アカウント情報.xlsx から最新データ（パスワード等）を即時再取得
+        if self.account_config_path and os.path.exists(self.account_config_path):
+            try:
+                for lr in read_excel_records(self.account_config_path):
+                    if str(lr.get("アカウントID") or "").strip().lstrip("@") == account_name.lstrip("@"):
+                        account = lr
+                        acc_state["account"] = lr
+                        break
+            except Exception:
+                pass
 
         clean_acc_id = account_name.lstrip("@").strip()
         profile_subpath = f"chrome_profiles/{clean_acc_id}"
