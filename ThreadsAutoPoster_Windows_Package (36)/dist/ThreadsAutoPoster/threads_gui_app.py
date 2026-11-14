@@ -13,6 +13,7 @@ openpyxlによる軽量・安全なExcel直接読み込み＆更新（NumPy/Pand
 
 import os
 import sys
+import json
 import time
 import random
 import re
@@ -70,6 +71,76 @@ def log_execution(msg):
             f.flush()
     except Exception:
         pass
+
+LOG_DIR = os.path.join(BASE_DIR, "log")
+IMAGES_DIR = os.path.join(BASE_DIR, "images")
+_THREAD_LOG_LOCAL = threading.local()
+_KNOWN_ACCOUNT_NAMES = set()
+_LOG_LEVEL_TAGS = {
+    "INFO", "WARN", "WARNING", "ERROR", "SUCCESS", "DEBUG", "*", "PYTHON",
+    "初回作成", "既存利用", "手動Chrome起動", "ブラウザ起動", "ブラウザ完全終了・省メモリ",
+    "モード0: 上から順", "モード1: ランダム", "ポスト文章", "画像なし", "ステップ1", "ステップ2",
+}
+
+def sanitize_account_folder_name(account_name):
+    if not account_name:
+        return ""
+    cleaned = str(account_name).strip().lstrip("@").strip()
+    cleaned = re.sub(r'[\\/:*?"<>|]+', "_", cleaned)
+    return cleaned.strip()
+
+def get_account_log_path(account_name):
+    clean_acc = sanitize_account_folder_name(account_name)
+    os.makedirs(LOG_DIR, exist_ok=True)
+    if not clean_acc:
+        return os.path.join(LOG_DIR, "system.log")
+    return os.path.join(LOG_DIR, f"{clean_acc}.log")
+
+def get_account_images_dir(account_name, create=True):
+    clean_acc = sanitize_account_folder_name(account_name)
+    if create:
+        os.makedirs(IMAGES_DIR, exist_ok=True)
+    if not clean_acc:
+        return IMAGES_DIR
+    acc_dir = os.path.join(IMAGES_DIR, clean_acc)
+    if create:
+        os.makedirs(acc_dir, exist_ok=True)
+    return acc_dir
+
+def extract_account_name_from_msg(msg):
+    if not msg:
+        return ""
+    s_msg = str(msg)
+    for m in re.finditer(r'\[([^\[\]\r\n]+)\]', s_msg):
+        token = m.group(1).strip().lstrip("@").strip()
+        if not token or token in _LOG_LEVEL_TAGS:
+            continue
+        if token in _KNOWN_ACCOUNT_NAMES:
+            return token
+        if re.match(r'^[a-zA-Z0-9._-]{2,64}$', token) and token.upper() != token:
+            return token
+    for known in sorted(_KNOWN_ACCOUNT_NAMES, key=len, reverse=True):
+        if f"@{known}" in s_msg:
+            return known
+    return ""
+
+def log_to_account_file(account_name, full_line):
+    clean_acc = sanitize_account_folder_name(account_name)
+    if not clean_acc:
+        return
+    try:
+        acc_log_path = get_account_log_path(clean_acc)
+        with open(acc_log_path, "a", encoding="utf-8") as f_acc:
+            f_acc.write(full_line if full_line.endswith("\n") else (full_line + "\n"))
+            f_acc.flush()
+    except Exception:
+        pass
+
+try:
+    os.makedirs(LOG_DIR, exist_ok=True)
+    os.makedirs(IMAGES_DIR, exist_ok=True)
+except Exception:
+    pass
 
 log_startup("Python script execution started. sys.executable: " + str(sys.executable))
 log_startup("Python version: " + str(sys.version.split()[0]) + " | Working dir: " + str(os.getcwd()))
@@ -160,7 +231,7 @@ def read_excel_records(filepath):
                 content_bytes = f_in.read()
             wb = openpyxl.load_workbook(io.BytesIO(content_bytes), data_only=True)
             break
-        except Exception as e_open:
+        except Exception:
             if attempt < 2:
                 time.sleep(0.3)
             else:
@@ -174,33 +245,68 @@ def read_excel_records(filepath):
         return []
 
     try:
+        fname_base = os.path.basename(filepath).lower()
+        is_account_file = any(k in fname_base for k in ["アカウント", "account"])
+
         target_ws = None
         target_header_row_idx = 1
 
-        # アカウント関連シートを優先探索
-        candidate_sheets = []
-        for sname in wb.sheetnames:
-            if any(k in sname.lower() for k in ["アカウント", "account", "設定", "config", "ユーザー"]):
-                candidate_sheets.append(wb[sname])
-        for sname in wb.sheetnames:
-            if wb[sname] not in candidate_sheets:
-                candidate_sheets.append(wb[sname])
+        if is_account_file:
+            candidate_sheets = []
+            for sname in wb.sheetnames:
+                if any(k in sname.lower() for k in ["アカウント", "account", "ユーザー", "user"]):
+                    candidate_sheets.append(wb[sname])
+            for sname in wb.sheetnames:
+                if wb[sname] not in candidate_sheets:
+                    candidate_sheets.append(wb[sname])
 
-        for ws in candidate_sheets:
-            all_rows = list(ws.iter_rows(values_only=True))
-            for r_idx, row in enumerate(all_rows[:15], start=1):
-                if not row:
-                    continue
-                row_cells_norm = [re.sub(r'[\s\u3000_\-:=]+', '', str(c).strip().lower()) for c in row if c is not None]
-                if any(any(k in cell for k in ["アカウント", "account", "ユーザー", "username", "userid", "ポスト文章", "投稿本文", "ツイート文章", "auth_token", "sessionid", "パスワード", "password"]) or cell in ["id", "uid"] for cell in row_cells_norm):
-                    target_ws = ws
-                    target_header_row_idx = r_idx
+            for ws in candidate_sheets:
+                all_rows = list(ws.iter_rows(values_only=True))
+                for r_idx, row in enumerate(all_rows[:15], start=1):
+                    if not row:
+                        continue
+                    row_cells_norm = [re.sub(r'[\s　_\-:=]+', '', str(c).strip().lower()) for c in row if c is not None]
+                    if any(any(k in cell for k in ["アカウント", "account", "ユーザー", "username", "userid", "auth_token", "sessionid", "パスワード", "password"]) or cell in ["id", "uid"] for cell in row_cells_norm):
+                        target_ws = ws
+                        target_header_row_idx = r_idx
+                        break
+                if target_ws:
                     break
-            if target_ws:
-                break
+        else:
+            # 投稿リストファイルの場合（<account_id>.xlsx 等）:
+            # 1. シート名に「投稿」「post」「tweet」「リスト」が含まれるシートを最優先
+            # 2. シート名に「設定」「config」「setting」が含まれるシートは設定用のため絶対にスキップ！
+            candidate_sheets = []
+            for sname in wb.sheetnames:
+                s_lower = sname.lower()
+                if any(k in s_lower for k in ["投稿", "post", "tweet", "リスト"]):
+                    candidate_sheets.append(wb[sname])
+            for sname in wb.sheetnames:
+                s_lower = sname.lower()
+                if not any(k in s_lower for k in ["設定", "config", "setting", "日常"]) and wb[sname] not in candidate_sheets:
+                    candidate_sheets.append(wb[sname])
+            for sname in wb.sheetnames:
+                if wb[sname] not in candidate_sheets:
+                    candidate_sheets.append(wb[sname])
+
+            for ws in candidate_sheets:
+                if any(k in ws.title.lower() for k in ["設定", "config", "setting"]) and len(candidate_sheets) > 1:
+                    continue
+                all_rows = list(ws.iter_rows(values_only=True))
+                for r_idx, row in enumerate(all_rows[:15], start=1):
+                    if not row:
+                        continue
+                    row_cells_norm = [re.sub(r'[\s　_\-:=]+', '', str(c).strip().lower()) for c in row if c is not None]
+                    if any(any(k in cell for k in ["ポスト文章", "投稿本文", "ツイート文章", "posttext", "本文", "ポスト内容", "投稿内容"]) for cell in row_cells_norm):
+                        target_ws = ws
+                        target_header_row_idx = r_idx
+                        break
+                if target_ws:
+                    break
 
         if not target_ws:
-            target_ws = wb.active
+            non_setting = [wb[s] for s in wb.sheetnames if not any(k in s.lower() for k in ["設定", "config", "setting"])]
+            target_ws = non_setting[0] if non_setting else wb.active
             target_header_row_idx = 1
 
         rows = list(target_ws.iter_rows(values_only=True))
@@ -222,9 +328,13 @@ def read_excel_records(filepath):
                 val_clean = "" if val is None else str(val).strip()
                 r_dict[h] = val_clean
 
-                # ヘッダー名の正規化・表記揺れを100%吸収
-                norm_h = re.sub(r'[\s\u3000_\-:=]+', '', str(h).strip().lower())
-                if any(k in norm_h for k in ["アカウント", "account", "ユーザー", "username", "userid"]) or norm_h in ["id", "uid"]:
+                norm_h = re.sub(r'[\s　_\-:=]+', '', str(h).strip().lower())
+                if any(k in norm_h for k in ["ポスト文章", "投稿本文", "ツイート文章", "posttext", "本文", "内容"]) or norm_h in ["text", "post"]:
+                    r_dict["ポスト文章"] = val_clean
+                    r_dict["投稿本文"] = val_clean
+                    r_dict["ツイート文章"] = val_clean
+                    r_dict["本文"] = val_clean
+                elif any(k in norm_h for k in ["アカウント", "account", "ユーザー", "username", "userid"]) or norm_h in ["id", "uid"]:
                     r_dict["アカウントID"] = val_clean
                     r_dict["アカウント名"] = val_clean
                     r_dict["アカウント"] = val_clean
@@ -237,16 +347,38 @@ def read_excel_records(filepath):
                 elif any(k in norm_h for k in ["sessionid", "authtoken", "トークン", "token", "セッション"]):
                     r_dict["sessionid"] = val_clean
                     r_dict["auth_token"] = val_clean
-                elif any(k in norm_h for k in ["有効", "無効", "ステータス", "status", "状態"]):
-                    r_dict["有効/無効"] = val_clean
+                elif any(k in norm_h for k in ["ステータス", "status", "状態"]):
                     r_dict["ステータス"] = val_clean
+                elif any(k in norm_h for k in ["有効", "無効"]):
+                    r_dict["有効/無効"] = val_clean
+                elif any(k in norm_h for k in ["画像", "image", "media"]):
+                    r_dict["画像ファイルパス"] = val_clean
+                    r_dict["画像"] = val_clean
+                elif any(k in norm_h for k in ["コミュニティ", "トピック", "タグ", "topic"]):
+                    r_dict["コミュニティまたはトピック"] = val_clean
+                    r_dict["トピック"] = val_clean
                 elif any(k in norm_h for k in ["備考", "メモ", "note", "notes"]):
                     r_dict["備考"] = val_clean
 
-            # 「有効/無効」列がExcelにない場合、デフォルトで「有効」と判定（ユーザーが2列だけ作成した場合の完全保護）
-            if "有効/無効" not in r_dict or not r_dict["有効/無効"]:
-                r_dict["有効/無効"] = "有効"
-                r_dict["ステータス"] = "有効"
+            if is_account_file:
+                if not r_dict.get("アカウントID") and len(row) > 0 and row[0] is not None and str(row[0]).strip():
+                    val_a = str(row[0]).strip()
+                    r_dict["アカウントID"] = val_a
+                    r_dict["アカウント名"] = val_a
+                    r_dict["アカウント"] = val_a
+                    r_dict["id"] = val_a
+                if not r_dict.get("パスワード") and len(row) > 1 and row[1] is not None and str(row[1]).strip():
+                    val_b = str(row[1]).strip()
+                    r_dict["パスワード"] = val_b
+                    r_dict["password"] = val_b
+                    r_dict["PW"] = val_b
+                    r_dict["Pass"] = val_b
+                if "有効/無効" not in r_dict or not r_dict["有効/無効"]:
+                    r_dict["有効/無効"] = "有効"
+            else:
+                # 投稿リストの場合: ステータスが空欄なら「未投稿」として初期化
+                if "ステータス" not in r_dict or not r_dict["ステータス"]:
+                    r_dict["ステータス"] = "未投稿"
 
             records.append(r_dict)
         return records
@@ -716,9 +848,9 @@ def restore_portable_session_if_needed(context, profile_dir, account_name, log_f
         return False
 
     portable_file = os.path.join(profile_dir, "portable_session.json")
-    if not os.path.exists(portable_file):
+    if not os.path.exists(portable_file) or os.path.getsize(portable_file) < 5:
         portable_file = os.path.join(profile_dir, "cookies.json")
-    if not os.path.exists(portable_file):
+    if not os.path.exists(portable_file) or os.path.getsize(portable_file) < 5:
         return False
 
     try:
@@ -958,9 +1090,27 @@ def safe_launch_persistent_context(p, profile_dir, headless=False, log_func=prin
     # Metaの自動化検知を誘発するため削除し、ignore_default_args で自然に隠蔽
     args = [
         "--lang=ja-JP",
-        "--no-sandbox",
-        "--disable-dev-shm-usage"
+        "--disable-dev-shm-usage",
+        "--test-type",
+        "--disable-session-crashed-bubble",
+        "--hide-crash-restore-bubble"
     ]
+    if sys.platform != "win32":
+        args.append("--no-sandbox")
+
+    # Chromeの「ページを復元しますか？」ダイアログを抑制（Preferencesのexit_typeをNormalに自動修正）
+    for pref_sub in ["Default/Preferences", "Preferences"]:
+        pref_path = os.path.join(profile_dir, pref_sub)
+        if os.path.exists(pref_path):
+            try:
+                with open(pref_path, "r", encoding="utf-8") as pf:
+                    p_text = pf.read()
+                p_text = p_text.replace('"exit_type":"Crashed"', '"exit_type":"Normal"')
+                p_text = p_text.replace('"exited_cleanly":false', '"exited_cleanly":true')
+                with open(pref_path, "w", encoding="utf-8") as pf:
+                    pf.write(p_text)
+            except Exception:
+                pass
 
     for attempt in range(1, 3):
         try:
@@ -968,7 +1118,6 @@ def safe_launch_persistent_context(p, profile_dir, headless=False, log_func=prin
                 user_data_dir=profile_dir,
                 headless=headless,
                 channel="chrome",
-                user_agent=fp.get("user_agent"),
                 locale=fp.get("locale", "ja-JP"),
                 timezone_id=fp.get("timezone_id", "Asia/Tokyo"),
                 viewport=fp.get("viewport", {"width": 1280, "height": 850}),
@@ -976,11 +1125,10 @@ def safe_launch_persistent_context(p, profile_dir, headless=False, log_func=prin
                 args=args,
                 ignore_default_args=["--enable-automation"]
             )
-            # navigator.webdriver を隠蔽して通常の人間のブラウザとして偽装
+            # navigator.webdriver を隠蔽して通常の人間のブラウザとして維持（window.chromeは実Chromeのものを保持）
             try:
                 context.add_init_script("""
                     Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-                    window.chrome = { runtime: {} };
                 """)
             except Exception:
                 pass
@@ -1371,7 +1519,7 @@ def auto_refresh_and_save_session(context, account_name, profile_dir, account_fi
                 updated = False
                 for row in range(2, ws.max_row + 1):
                     cid = str(ws.cell(row=row, column=id_col).value or "").strip()
-                    if cid == account_name:
+                    if cid.lstrip("@").strip().lower() == account_name.lstrip("@").strip().lower():
                         cur_val = str(ws.cell(row=row, column=sess_col).value or "").strip()
                         if cur_val != latest_sessionid:
                             ws.cell(row=row, column=sess_col, value=latest_sessionid)
@@ -1392,6 +1540,7 @@ def auto_refresh_and_save_session(context, account_name, profile_dir, account_fi
 def detect_phone_checkpoint_screen(page):
     """
     Metaの携帯電話番号認証（SMS / WhatsApp確認）要求画面を即時検知
+    ※ 通常のログイン画面（ユーザーネーム/電話番号入力欄）との誤検知を100%防止
     """
     if not page:
         return False, ""
@@ -1401,7 +1550,19 @@ def detect_phone_checkpoint_screen(page):
             cur_url = (page.url or "").lower()
         except Exception:
             pass
-        if any(k in cur_url for k in ["/challenge/", "/checkpoint/", "challenge_type=phone", "phone_number"]):
+
+        # 通常のログイン画面やThreadsホームは絶対にチェックポイントではない
+        if any(k in cur_url for k in ["/accounts/login", "/login", "threads.net/@", "instagram.com/direct"]):
+            return False, ""
+
+        # 通常のユーザーネーム/パスワード入力欄が表示されている場合はログイン画面
+        try:
+            if page.locator('input[name="username"]').first.is_visible(timeout=200) or                page.locator('input[name="password"]').first.is_visible(timeout=200):
+                return False, ""
+        except Exception:
+            pass
+
+        if any(k in cur_url for k in ["/challenge/", "/checkpoint/"]):
             return True, f"認証URL検知 ({cur_url})"
 
         content = ""
@@ -1411,24 +1572,20 @@ def detect_phone_checkpoint_screen(page):
             pass
 
         keywords = [
-            "携帯電話番号を入力",
             "SMSまたはWhatsAppで送信されたコードでこの携帯電話番号を認証する必要があります",
-            "コードを送信",
             "電話番号を認証する必要があります",
-            "Enter your mobile number",
-            "Send code",
+            "セキュリティコードを入力",
+            "認証コードを入力",
+            "Enter your confirmation code",
         ]
         for kw in keywords:
             if kw in content:
                 return True, f"画面テキスト検知「{kw}」"
 
         checkpoint_selectors = [
-            'button:has-text("コードを送信")',
-            'div[role="button"]:has-text("コードを送信")',
-            'input[placeholder*="電話番号"]',
-            'input[aria-label*="電話番号"]',
-            'input[type="tel"]',
-            'text="携帯電話番号を入力"',
+            'input[name="security_code"]',
+            'input[name="verificationCode"]',
+            'button:has-text("コードを再送信")',
             'text="SMSまたはWhatsApp"'
         ]
         for sel in checkpoint_selectors:
@@ -1444,15 +1601,28 @@ def detect_phone_checkpoint_screen(page):
 
 def safe_goto_threads(page, context, session_token, account_name, log_func=print, timeout=60000):
     """
-    Threadsホーム (https://www.threads.net/) へ安全にアクセスします。
-    net::ERR_TOO_MANY_REDIRECTS（リダイレクトループ / Cookieを削除してください）が発生した場合、
-    エラーのままスキップして次アカウントへ飛ぶのではなく、
-    「Cookie を削除してみてください」指示に従ってCookieと循環キャッシュを自動クリアし、
-    セッションを再設定して正常にThreadsを開き直してから投稿を実行できるように自己修復します。
+    Threadsホーム (https://www.threads.net/) または ログイン画面 (https://www.threads.net/login) へ安全にアクセスします。
+    セッションIDが無い場合や失効している場合は、無駄なリダイレクトループを避けて直接ログイン画面を開きます。
+    net::ERR_TOO_MANY_REDIRECTS や about:blank を検知した場合は、CookieをクリアしてThreadsログイン画面へ自己修復遷移します。
     """
+    token_str = str(session_token or "").strip()
+    has_valid_token = bool(token_str and token_str.lower() not in ["", "nan", "none"] and not token_str.startswith("ここに"))
+
+    # Chromeプロファイル内に既存のCookie（手動ログイン済みセッション等）がある場合は必ずホームから開く
+    has_profile_cookies = False
+    try:
+        prof_cks = context.cookies(["https://www.threads.net", "https://www.threads.com", "https://www.instagram.com"])
+        has_profile_cookies = len(prof_cks) > 0
+    except Exception:
+        pass
+
+    # セッションIDまたはプロファイルCookieがある場合はThreadsホームへ直接アクセス
+    initial_url = "https://www.threads.net/" if (has_valid_token or has_profile_cookies) else "https://www.threads.net/login"
+    
     redirect_detected = False
     try:
-        page.goto("https://www.threads.net/", timeout=timeout, wait_until="domcontentloaded")
+        log_func(f"[INFO] 🌐 [{account_name}] Threadsアクセス中 ({initial_url})...")
+        page.goto(initial_url, timeout=timeout, wait_until="domcontentloaded")
         time.sleep(2.5)
 
         cur_u = (page.url or "").lower()
@@ -1484,95 +1654,51 @@ def safe_goto_threads(page, context, session_token, account_name, log_func=print
             log_func(f"[WARN] [{account_name}] ページ接続エラー ({err_str[:60]}) を検知しました。")
 
     if redirect_detected or "about:blank" in (page.url or "").lower():
-        log_func(f"[INFO] 🧹 [{account_name}] セッション失効 / about:blank / リダイレクトループを検知。競合Cookieを全消去してログイン画面へ遷移します...")
+        log_func(f"[INFO] 🧹 [{account_name}] セッション失効 / about:blank / リダイレクトループを検知。Threads/Instagramの競合Cookieを整理してログイン画面へ自己修復遷移します...")
         try:
-            context.clear_cookies()
+            for d_target in ["threads.net", "threads.com", "instagram.com"]:
+                try:
+                    context.clear_cookies(domain=d_target)
+                except Exception:
+                    pass
             time.sleep(1.0)
         except Exception as ce:
             log_func(f"[DEBUG] clear_cookies: {ce}")
 
-        # 直接クリーンにログイン画面へアクセス
-        for target_url in ["https://www.threads.net/login", "https://www.instagram.com/accounts/login/"]:
+        # 直接クリーンにThreadsログイン画面へアクセス
+        for target_url in ["https://www.threads.net/login", "https://www.threads.net/"]:
             try:
-                page.goto(target_url, timeout=30000, wait_until="domcontentloaded")
-                time.sleep(2)
+                page.goto(target_url, timeout=35000, wait_until="domcontentloaded")
+                time.sleep(2.5)
                 cur_after = (page.url or "").lower()
                 if "about:blank" not in cur_after:
-                    log_func(f"[INFO] 🚪 [{account_name}] 正常にログイン画面 ({page.url}) を開きました。")
+                    log_func(f"[INFO] 🚪 [{account_name}] 正常に画面 ({page.url}) を開きました。")
                     return True
             except Exception:
                 pass
 
     return True
 
-def set_account_status_in_excel(filepath, account_name, status="無効", reason="携帯電話番号認証画面検知"):
+def set_account_status_in_excel(filepath, account_name, status="有効", reason=""):
     """
-    アカウント情報.xlsx の「有効/無効」列を更新（無ければ自動新設）し、該当アカウントを「無効」に設定して保存
+    アカウント情報.xlsx はユーザーが手動管理するため、プログラムから勝手に「無効」に書き換えることはしません。
     """
-    try:
-        if not filepath or not os.path.exists(filepath):
-            return False
-        import openpyxl
-        wb = openpyxl.load_workbook(filepath)
-        target_ws = None
-        for sname in wb.sheetnames:
-            if "アカウント" in sname or "account" in sname.lower():
-                target_ws = wb[sname]
-                break
-        if not target_ws:
-            target_ws = wb.active
-
-        header_row_idx = 1
-        for r_idx, row in enumerate(target_ws.iter_rows(max_row=10, values_only=True), start=1):
-            if row and any(k in [str(c).strip() for c in row if c is not None] for k in ["アカウントID", "アカウント名", "auth_token"]):
-                header_row_idx = r_idx
-                break
-
-        headers = [str(target_ws.cell(row=header_row_idx, column=c).value or "").strip() for c in range(1, target_ws.max_column + 1)]
-        id_col = None
-        status_col = None
-        notes_col = None
-
-        for c_idx, h in enumerate(headers, start=1):
-            if any(k in h for k in ["アカウントID", "アカウント名", "アカウント"]):
-                id_col = c_idx
-            elif any(k in h for k in ["有効/無効", "有効無効", "ステータス", "状態"]):
-                status_col = c_idx
-            elif any(k in h for k in ["備考", "メモ", "notes"]):
-                notes_col = c_idx
-
-        if not id_col:
-            id_col = 1
-
-        if not status_col:
-            status_col = len(headers) + 1
-            target_ws.cell(row=header_row_idx, column=status_col, value="有効/無効")
-
-        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        updated = False
-
-        for r_num in range(header_row_idx + 1, target_ws.max_row + 1):
-            val = str(target_ws.cell(row=r_num, column=id_col).value or "").strip()
-            if val == str(account_name).strip():
-                target_ws.cell(row=r_num, column=status_col, value=status)
-                if notes_col:
-                    cur_note = str(target_ws.cell(row=r_num, column=notes_col).value or "").strip()
-                    target_ws.cell(row=r_num, column=notes_col, value=f"{cur_note} [{now_str} 自動停止: {reason}]".strip())
-                updated = True
-                break
-
-        wb.save(filepath)
-        wb.close()
-        return updated
-    except Exception as e:
-        print(f"[ERROR] アカウント情報.xlsx 更新エラー: {e}")
-        return False
+    return False
 
 
 def detect_threads_logged_in(page):
-    # 1. ページ内部の Relay / 初期化データからログイン済みユーザーを判定（言語・UI変更に最も強い判定法）
+    cur_u = (page.url or "").lower()
+    # ログイン画面またはabout:blankの場合は確実に未認証
+    if "/login" in cur_u or "about:blank" in cur_u:
+        return False, "ログイン画面表示中"
+
     try:
         content = page.content()
+        # ログイン画面テキストがある場合は未認証
+        if any(w in content for w in ["Instagramアカウントでログイン", "Log in with Instagram", "パスワードを忘れた場合"]):
+            return False, "ログイン画面表示中"
+
+        # 1. ページ内部の Relay / 初期化データからログイン済みユーザーを判定
         if '"viewer":{' in content and ('"username":"' in content or '"id":"' in content):
             if '"viewer":null' not in content:
                 import re
@@ -1603,7 +1729,7 @@ def detect_threads_logged_in(page):
     ]
     for sel in success_selectors:
         try:
-            if page.locator(sel).first.is_visible(timeout=600):
+            if page.locator(sel).first.is_visible(timeout=500):
                 return True, f"ログイン済み要素 ({sel}) を検出"
         except Exception:
             pass
@@ -1619,7 +1745,7 @@ def detect_threads_logged_in(page):
     ]
     for sel in unauth_selectors:
         try:
-            if page.locator(sel).first.is_visible(timeout=600):
+            if page.locator(sel).first.is_visible(timeout=500):
                 return False, f"未ログイン要素 ({sel}) を検出"
         except Exception:
             pass
@@ -1643,12 +1769,87 @@ def save_context_cookies_to_excel(context, filepath, account_name, log_func=prin
         log_func(f"[WARN] sessionid 自動保存エラー: {e}")
     return ""
 
+def find_login_form_inputs(page, timeout_sec=8):
+    """
+    現在の画面（Threads公式ログイン画面またはInstagramログイン画面）から
+    ユーザーネーム欄とパスワード欄を安定・確実に自動検出します（最新Threads UI完全対応）。
+    """
+    user_loc = None
+    pass_loc = None
+
+    u_selectors = [
+        'input[placeholder*="ユーザーネーム"]',
+        'input[placeholder*="携帯電話番号"]',
+        'input[placeholder*="メールアドレス"]',
+        'input[aria-label*="ユーザーネーム"]',
+        'input[aria-label*="ユーザー名"]',
+        'input[aria-label*="電話番号"]',
+        'input[name="username"]',
+        'input[autocomplete="username"]',
+        'input[type="text"]'
+    ]
+    p_selectors = [
+        'input[placeholder*="パスワード"]',
+        'input[aria-label*="パスワード"]',
+        'input[type="password"]',
+        'input[name="password"]',
+        'input[autocomplete="current-password"]'
+    ]
+
+    start_t = time.time()
+    while time.time() - start_t < timeout_sec:
+        # パスワード欄を最優先で特定
+        for p_sel in p_selectors:
+            try:
+                loc = page.locator(p_sel).first
+                if loc.is_visible(timeout=200):
+                    pass_loc = loc
+                    break
+            except Exception:
+                pass
+
+        # ユーザーネーム欄を特定
+        for u_sel in u_selectors:
+            try:
+                loc = page.locator(u_sel).first
+                if loc.is_visible(timeout=200):
+                    user_loc = loc
+                    break
+            except Exception:
+                pass
+
+        # フォールバック: 画面上の全可視inputから割り当て
+        if not user_loc or not pass_loc:
+            try:
+                inputs = page.locator('input:visible').all()
+                cand_texts = []
+                cand_passes = []
+                for inp in inputs:
+                    itype = (inp.get_attribute("type") or "text").lower()
+                    if itype in ["password"]:
+                        cand_passes.append(inp)
+                    elif itype in ["text", "email", "tel"] or not itype:
+                        cand_texts.append(inp)
+                if cand_passes and not pass_loc:
+                    pass_loc = cand_passes[0]
+                if cand_texts and not user_loc:
+                    user_loc = cand_texts[0]
+            except Exception:
+                pass
+
+        if user_loc and pass_loc:
+            break
+        time.sleep(0.5)
+
+    return user_loc, pass_loc
+
+
 def execute_id_pw_login(page, context, account_name, password, log_func=print):
     """
-    【ID/PW自動ログイン】
-    セッションIDに一切依存せず、ExcelのIDとパスワードを使ってChromeプロファイル上で即時自動ログインします。
-    ログイン完了後はプロファイル内部のSQLite/LocalStorageに認証が永続化され、
-    次回以降はsessionid不要でログイン済み起動が可能になります。
+    【Threads直接ID/PW自動ログイン】
+    Threadsのログイン画面（「Instagramアカウントでログイン」フォーム）に、
+    Excelに登録されたアカウントID（例: takiishinchi01）とパスワード（例: shinki0924）を
+    確実に入力し、「ログイン」ボタンをクリックして正規セッションを即時確立します。
     """
     clean_id = str(account_name or "").lstrip("@").strip()
     clean_pw = str(password or "").strip()
@@ -1656,216 +1857,340 @@ def execute_id_pw_login(page, context, account_name, password, log_func=print):
         log_func(f"[WARN] ⚠️ [{account_name}] パスワードがExcelに登録されていないため、ID/PW自動ログインをスキップします。")
         return False
 
-    log_func(f"[INFO] 🔐 [{account_name}] 【ID/PWプロファイル自動ログイン】を開始します（ID: @{clean_id}）...")
+    log_func("=" * 60)
+    log_func(f"[INFO] 🔐 [{account_name}] 【Threads ID/PW自動ログイン実行】 (ID: @{clean_id})")
+    log_func("=" * 60)
 
     try:
-        # 失効Cookieによるリダイレクトループを確実に防ぐため、Cookieを全消去
-        try:
-            context.clear_cookies()
-            time.sleep(0.5)
-        except Exception:
-            pass
+        cur_u = (page.url or "").lower()
+        log_func(f"[INFO] 🔍 [{account_name}] 画面 (URL: {page.url}) の入力フォームを確認中...")
 
-        cur_url = (page.url or "").lower()
-        if "about:blank" in cur_url or "/login" not in cur_url:
-            for login_url in ["https://www.threads.net/login", "https://www.instagram.com/accounts/login/"]:
+        # 画面が about:blank または Threadsログイン画面でない場合は直接Threadsログインへ移動
+        if "about:blank" in cur_u or ("threads.net" not in cur_u and "instagram.com" not in cur_u):
+            log_func(f"[INFO] 🌐 [{account_name}] Threads公式ログイン画面 (https://www.threads.net/login) へアクセスします...")
+            try:
+                page.goto("https://www.threads.net/login", timeout=35000, wait_until="domcontentloaded")
+                time.sleep(2.5)
+            except Exception as e_goto:
+                log_func(f"[WARN] [{account_name}] ログイン画面アクセス警告: {e_goto}")
+
+        # 入力フォーム検出（最大10秒待機）
+        user_loc, pass_loc = find_login_form_inputs(page, timeout_sec=10)
+
+        # もしThreads画面で入力欄が出ず「Instagramアカウントでログイン」等のボタンのみの場合はクリック
+        if not user_loc or not pass_loc:
+            for sso_sel in [
+                'button:has-text("Instagramアカウントでログイン")',
+                'button:has-text("Instagramでログイン")',
+                'div[role="button"]:has-text("Instagramアカウントでログイン")',
+                'div[role="button"]:has-text("Instagramでログイン")',
+                'a[href*="/login"]'
+            ]:
                 try:
-                    page.goto(login_url, timeout=30000, wait_until="domcontentloaded")
-                    time.sleep(2)
-                    if "about:blank" not in (page.url or "").lower():
-                        break
+                    sso_btn = page.locator(sso_sel).first
+                    if sso_btn.is_visible(timeout=400):
+                        log_func(f"[INFO] 🔘 [{account_name}] ログイン展開ボタン ({sso_sel}) をクリックします...")
+                        sso_btn.click()
+                        time.sleep(2.0)
+                        user_loc, pass_loc = find_login_form_inputs(page, timeout_sec=6)
+                        if user_loc and pass_loc:
+                            break
                 except Exception:
                     pass
 
-        # 1. まずワンクリック連携ボタン（「〇〇としてログイン」「Instagramでログイン」）があれば試す
-        for cont_sel in [
-            'button:has-text("としてログイン")',
-            'div[role="button"]:has-text("としてログイン")',
-            'span:has-text("としてログイン")',
-            f'button:has-text("{clean_id}")',
-            'button:has-text("Continue as")',
-            'button:has-text("次へ")'
-        ]:
-            try:
-                c_btn = page.locator(cont_sel).first
-                if c_btn.is_visible(timeout=800):
-                    log_func(f"[INFO] [{account_name}] ワンクリック連携ボタン ({cont_sel}) を検出。自動クリックして復帰試行...")
-                    c_btn.click(force=True)
-                    time.sleep(3)
-                    is_ok, reason = detect_threads_logged_in(page)
-                    if is_ok:
-                        log_func(f"[SUCCESS] 🎉 [{account_name}] ワンクリック連携によりプロファイル復帰成功！（{reason}）")
-                        p_dir = os.path.join(BASE_DIR, f"chrome_profiles/{account_name}")
-                        save_portable_session_file(context, p_dir, account_name, log_func)
-                        return True
-            except Exception:
-                pass
-
-        # 2. Instagramでログインボタンがあればクリックして入力フォームを展開
-        for ig_sel in [
-            'div[role="button"]:has-text("Instagramでログイン")',
-            'button:has-text("Instagramでログイン")',
-            'span:has-text("Instagramでログイン")',
-            'a:has-text("Instagramでログイン")',
-            'button:has-text("Log in with Instagram")'
-        ]:
-            try:
-                btn = page.locator(ig_sel).first
-                if btn.is_visible(timeout=1000):
-                    log_func(f"[INFO] [{account_name}] 「Instagramでログイン」をクリックしてフォームを展開...")
-                    btn.click(force=True)
-                    time.sleep(2.5)
-                    break
-            except Exception:
-                pass
-
-        # 3. ユーザー名・パスワード入力フォームを検索
-        user_loc = None
-        for u_sel in ['input[name="username"]', 'input[autocomplete="username"]', 'input[aria-label*="ユーザーネーム"]', 'input[aria-label*="ユーザー名"]', 'input[placeholder*="ユーザーネーム"]', 'input[placeholder*="ユーザー名"]', 'input[type="text"]']:
-            try:
-                loc = page.locator(u_sel).first
-                if loc.is_visible(timeout=1500):
-                    user_loc = loc
-                    break
-            except Exception:
-                pass
-
-        pass_loc = None
-        for p_sel in ['input[name="password"]', 'input[autocomplete="current-password"]', 'input[type="password"]']:
-            try:
-                loc = page.locator(p_sel).first
-                if loc.is_visible(timeout=1500):
-                    pass_loc = loc
-                    break
-            except Exception:
-                pass
-
-        # Threads側でフォームが見つからない場合、Instagram公式ログインへフォールバック
+        # それでも見つからない場合のInstagram直接アクセス
         if not user_loc or not pass_loc:
-            log_func(f"[INFO] [{account_name}] Threads側フォーム未検出のため、Instagramログイン画面へアクセスします...")
-            try:
-                page.goto("https://www.instagram.com/accounts/login/", timeout=30000, wait_until="domcontentloaded")
-                time.sleep(2.5)
-                for u_sel in ['input[name="username"]', 'input[type="text"]']:
-                    try:
-                        loc = page.locator(u_sel).first
-                        if loc.is_visible(timeout=1500):
-                            user_loc = loc
-                            break
-                    except Exception:
-                        pass
-                for p_sel in ['input[name="password"]', 'input[type="password"]']:
-                    try:
-                        loc = page.locator(p_sel).first
-                        if loc.is_visible(timeout=1500):
-                            pass_loc = loc
-                            break
-                    except Exception:
-                        pass
-            except Exception as e:
-                log_func(f"[WARN] Instagramフォールバック遷移エラー: {e}")
+            if "instagram.com" not in (page.url or "").lower():
+                log_func(f"[INFO] 🌐 [{account_name}] Threadsログイン画面で入力欄が見つからないため、Instagram認証画面へ遷移します...")
+                try:
+                    page.goto("https://www.instagram.com/accounts/login/", timeout=35000, wait_until="domcontentloaded")
+                    time.sleep(3.0)
+                    user_loc, pass_loc = find_login_form_inputs(page, timeout_sec=8)
+                except Exception as e_goto:
+                    log_func(f"[WARN] [{account_name}] Instagram遷移警告: {e_goto}")
 
         if not user_loc or not pass_loc:
-            log_func(f"[WARN] [{account_name}] ログイン入力フォームが見つかりませんでした (URL: {page.url})。")
+            log_func(f"[ERROR] ❌ [{account_name}] ログイン入力欄（ユーザーネーム・パスワード）が検出できませんでした (現在のURL: {page.url})。")
             return False
 
-        # 人間らしいキーストローク（ランダム遅延）で入力
-        log_func(f"[INFO] [{account_name}] 人間らしいタイピングでID・パスワードをフォームに入力中...")
+        # 入力フォームにアカウントIDとパスワードを確実に全選択クリア＆入力
+        log_func(f"[INFO] ✍️ [{account_name}] ログイン画面のユーザー名欄に『{clean_id}』を入力中...")
         user_loc.click()
         time.sleep(0.3)
-        user_loc.fill("")
-        time.sleep(0.2)
-        import random
-        user_loc.type(clean_id, delay=random.randint(50, 110))
-        time.sleep(0.5)
+        try:
+            user_loc.press("Control+A")
+            user_loc.press("Backspace")
+        except Exception:
+            pass
+        user_loc.fill(clean_id)
+        try:
+            user_loc.evaluate("(el, val) => { el.value = val; el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); }", clean_id)
+        except Exception:
+            pass
+        time.sleep(0.4)
 
+        log_func(f"[INFO] ✍️ [{account_name}] パスワード欄にパスワードを入力中...")
         pass_loc.click()
         time.sleep(0.3)
-        pass_loc.fill("")
-        time.sleep(0.2)
-        pass_loc.type(clean_pw, delay=random.randint(50, 110))
-        time.sleep(0.8)
+        try:
+            pass_loc.press("Control+A")
+            pass_loc.press("Backspace")
+        except Exception:
+            pass
+        pass_loc.fill(clean_pw)
+        try:
+            pass_loc.evaluate("(el, val) => { el.value = val; el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); }", clean_pw)
+        except Exception:
+            pass
+        time.sleep(0.5)
 
-        # ログイン送信
+        # 送信ボタン（「ログイン」または「Log in」）をクリック
         submit_btn = None
-        for s_sel in ['button[type="submit"]', 'button:has-text("ログイン")', 'div[role="button"]:has-text("ログイン")', 'button:has-text("Log in")']:
+        for s_sel in [
+            'button:has-text("ログイン")',
+            'div[role="button"]:has-text("ログイン")',
+            'button[type="submit"]',
+            'form button',
+            'form div[role="button"]',
+            'div:has-text("ログイン")[role="button"]',
+            'span:has-text("ログイン")',
+            'button:has-text("Log in")',
+            'button:has-text("Log In")'
+        ]:
             try:
                 b = page.locator(s_sel).first
-                if b.is_visible(timeout=1000):
+                if b.is_visible(timeout=500):
                     submit_btn = b
                     break
             except Exception:
                 pass
 
         if submit_btn:
-            submit_btn.click()
+            log_func(f"[INFO] 🚀 [{account_name}] 「ログイン」ボタンをクリックしました。Instagram認証ラグ待機中...")
+            try:
+                submit_btn.click()
+            except Exception:
+                pass_loc.press("Enter")
         else:
+            log_func(f"[INFO] 🚀 [{account_name}] Enterキーでログイン情報を送信しました。Instagram認証ラグ待機中...")
             pass_loc.press("Enter")
 
-        log_func(f"[INFO] [{account_name}] ログイン情報を送信しました。認証完了を待機中...")
-        time.sleep(4)
+        # -----------------------------------------------------------------
+        # 【ラグ待機＆Instagramログイン確認フェーズ】
+        # Instagram/Meta側の認証処理・通信ラグがあるため、最大60秒間しっかり待機。
+        # recaptcha / challenge / checkpoint 画面を「ログイン完了」と誤検知することを100%防止！
+        # -----------------------------------------------------------------
+        log_func(f"[INFO] ⏳ [{account_name}] Instagramの認証処理・通信ラグを待機しています（最大60秒）...")
+        instagram_logged_in = False
+        recaptcha_announced = False
+        
+        for wait_i in range(1, 61):
+            time.sleep(1.0)
+            cur_u = (page.url or "").lower()
 
-        # ポップアップ（「ログイン情報を保存」「後で」等）の自動処理
-        for pop_sel in [
-            'button:has-text("ログイン情報を保存")',
-            'button:has-text("後で")',
-            'div[role="button"]:has-text("後で")',
-            'button:has-text("次へ")',
-            'button:has-text("Save info")',
-            'button:has-text("Not now")'
-        ]:
+            # 1. パスワード不一致等の致命的エラー検知
             try:
-                pop = page.locator(pop_sel).first
-                if pop.is_visible(timeout=1000):
-                    log_func(f"[INFO] [{account_name}] ポップアップ ({pop_sel}) を自動クリックしました。")
-                    pop.click(force=True)
-                    time.sleep(2)
+                page_content = page.content()
+                if any(w in page_content for w in ["パスワードが正しくありません", "ユーザーネームが正しくありません", "Incorrect Password", "The password you entered is incorrect"]):
+                    log_func(f"[ERROR] ❌ [{account_name}] パスワード不一致のエラーが返されました。エクセルのパスワードをご確認ください。")
+                    return False
+                if "利用規約" in page_content and "一時的に停止" in page_content:
+                    log_func(f"[CRITICAL] 🚨 [{account_name}] アカウント一時停止画面を検知しました。")
+                    return False
             except Exception:
                 pass
 
-        # 携帯電話認証チェック
-        is_cp, cp_why = detect_phone_checkpoint_screen(page)
-        if is_cp:
-            log_func(f"[CRITICAL] 🚨 [{account_name}] 携帯電話番号認証（SMS）要求を検知しました: {cp_why}")
-            return False
+            # 2. reCAPTCHA / セキュリティ確認画面の検知（誤検知防止ガード！）
+            is_recaptcha_or_challenge = any(k in cur_u for k in [
+                "recaptcha", "auth_platform", "challenge", "checkpoint", "two_factor", "two_step_verification"
+            ])
+            if not is_recaptcha_or_challenge:
+                try:
+                    if any(w in page.content() for w in ["recaptcha", "ロボットではありません", "セキュリティチェック", "認証コード"]):
+                        is_recaptcha_or_challenge = True
+                except Exception:
+                    pass
 
-        # 最終判定
-        for _ in range(12):
+            if is_recaptcha_or_challenge:
+                if not recaptcha_announced or wait_i % 10 == 0:
+                    log_func("=" * 60)
+                    log_func(f"[WARN] 🤖 [{account_name}] Metaのセキュリティ確認画面（reCAPTCHA等）を検知しました！")
+                    log_func(f"[INFO] 👉 開いているブラウザ画面でロボット確認（チェックボックス等）を行ってください。認証完了を自動待機しています... ({wait_i}/60秒)")
+                    log_func("=" * 60)
+                    recaptcha_announced = True
+
+                # reCAPTCHA画面の「次へ」「確認」「送信」ボタンがあれば自動クリックも試行
+                for c_btn_sel in [
+                    'button:has-text("次へ")',
+                    'button:has-text("送信")',
+                    'button:has-text("確認")',
+                    'button:has-text("Continue")',
+                    'button:has-text("Submit")'
+                ]:
+                    try:
+                        cand_b = page.locator(c_btn_sel).first
+                        if cand_b.is_visible(timeout=200):
+                            cand_b.click()
+                    except Exception:
+                        pass
+                continue  # reCAPTCHA解除完了までThreadsに勝手に遷移させない！
+
+            # 3. 「ログイン情報を保存」「後で」「Save Info」「Not Now」等のポップアップ処理
+            for pop_sel in [
+                'button:has-text("後で")',
+                'div[role="button"]:has-text("後で")',
+                'button:has-text("ログイン情報を保存")',
+                'button:has-text("情報を保存")',
+                'button:has-text("Save info")',
+                'button:has-text("Not now")',
+                'button:has-text("次へ")'
+            ]:
+                try:
+                    pop = page.locator(pop_sel).first
+                    if pop.is_visible(timeout=300):
+                        log_func(f"[INFO] 🔘 [{account_name}] 画面上のダイアログ ({pop_sel}) を自動クリックしました。")
+                        pop.click(force=True)
+                        time.sleep(1.0)
+                except Exception:
+                    pass
+
+            # 4. 認証Cookie (sessionid) の生成確認（recaptchaやlogin画面にいないこと）
+            try:
+                all_cookies = context.cookies()
+                has_sess = any(c.get("name") == "sessionid" and len(str(c.get("value") or "")) > 15 for c in all_cookies)
+                if has_sess and not any(k in cur_u for k in ["/login", "recaptcha", "auth_platform", "challenge", "checkpoint"]):
+                    log_func(f"[SUCCESS] 🔑 [{account_name}] Instagram正規セッションCookie (sessionid) の生成を確認しました！")
+                    instagram_logged_in = True
+                    break
+            except Exception:
+                pass
+
+            # 5. Threads画面に直接到達・認証済み判定
+            if "threads.net" in cur_u and "/login" not in cur_u:
+                is_ok, _ = detect_threads_logged_in(page)
+                if is_ok:
+                    instagram_logged_in = True
+                    break
+
+            # 6. Instagram正規画面（フィード・プロフィール）へ到達確認
+            if "instagram.com" in cur_u and not any(k in cur_u for k in ["/accounts/login", "recaptcha", "auth_platform", "challenge", "checkpoint", "about:blank"]):
+                log_func(f"[SUCCESS] 🚪 [{account_name}] Instagram正規画面へのログイン完了を確認しました (URL: {page.url})。")
+                instagram_logged_in = True
+                break
+
+            if wait_i % 5 == 0 and not is_recaptcha_or_challenge:
+                log_func(f"[INFO] ⏳ [{account_name}] 認証待機中... ({wait_i}/60秒)")
+
+        time.sleep(2.0)
+
+        # -----------------------------------------------------------------
+        # 【Threads連携フェーズ】
+        # Instagram側でログイン完了が確認された後、Threadsホームへ安全に遷移・連携
+        # -----------------------------------------------------------------
+        cur_u = (page.url or "").lower()
+        if "threads.net" not in cur_u or "/login" in cur_u:
+            log_func(f"[INFO] 🌐 [{account_name}] Instagramログイン完了を確認！Threadsホーム画面へ遷移してセッションを確立します...")
+            try:
+                page.goto("https://www.threads.net/", timeout=45000, wait_until="domcontentloaded")
+                time.sleep(3.5)
+            except Exception as e_th:
+                log_func(f"[WARN] [{account_name}] Threadsホーム遷移警告: {e_th}")
+
+        # Threadsで「〇〇として続行」「Instagramでログイン」ボタンがあればクリックして紐付け
+        for cont_sel in [
+            'button:has-text("としてログイン")',
+            'div[role="button"]:has-text("としてログイン")',
+            'span:has-text("としてログイン")',
+            f'button:has-text("{clean_id}")',
+            'button:has-text("Continue as")',
+            'button:has-text("Instagramでログイン")',
+            'div[role="button"]:has-text("Instagramでログイン")',
+            'span:has-text("Instagramでログイン")',
+            'button:has-text("Instagramで続行")',
+            'button:has-text("次へ")'
+        ]:
+            try:
+                c_btn = page.locator(cont_sel).first
+                if c_btn.is_visible(timeout=1000):
+                    log_func(f"[INFO] 🔗 [{account_name}] Threads連携ボタン ({cont_sel}) を検出。自動クリックしました。")
+                    c_btn.click(force=True)
+                    time.sleep(3.5)
+                    break
+            except Exception:
+                pass
+
+        # 最終認証判定（最大25秒）
+        for _ in range(25):
             is_ok, reason = detect_threads_logged_in(page)
-            if is_ok or "/login" not in (page.url or "").lower():
-                log_func(f"[SUCCESS] 🎉 [{account_name}] 【ID/PWログイン大成功！】正規プロファイルが復活しました！")
+            if is_ok:
+                log_func(f"[SUCCESS] 🎉 [{account_name}] 【ID/PW完全自動ログイン大成功！】正規プロファイルを確立しました！（{reason}）")
                 p_dir = os.path.join(BASE_DIR, f"chrome_profiles/{account_name}")
                 save_portable_session_file(context, p_dir, account_name, log_func)
                 return True
-            time.sleep(1)
+            time.sleep(1.0)
 
+        final_u = (page.url or "").lower()
+        if "threads.net" in final_u and not any(k in final_u for k in ["/login", "recaptcha", "auth_platform", "challenge"]):
+            log_func(f"[SUCCESS] 🎉 [{account_name}] Threadsホーム画面への到達を確認し、認証成功と判定しました！")
+            p_dir = os.path.join(BASE_DIR, f"chrome_profiles/{account_name}")
+            save_portable_session_file(context, p_dir, account_name, log_func)
+            return True
+
+        log_func(f"[WARN] ❌ [{account_name}] ログイン後の認証確認が完了しませんでした (URL: {page.url})。")
         return False
     except Exception as e:
         log_func(f"[ERROR] [{account_name}] ID/PW自動ログイン例外: {e}")
         return False
+
 
 def ensure_authenticated_session(page, context, account, filepath, log_func=print, wait_timeout_sec=30, acc_state=None):
     account_name = str(account.get("アカウントID") or account.get("アカウント名") or account.get("アカウント") or account if isinstance(account, dict) else account).strip().lstrip("@")
     password = ""
     if isinstance(account, dict):
         password = str(account.get("パスワード") or account.get("password") or account.get("PW") or account.get("Pass") or account.get("暗証番号") or "").strip()
+    
+    # Excelからのフェイルセーフ取得
     if not password and filepath and os.path.exists(filepath):
         try:
             recs = read_excel_records(filepath)
             for r in recs:
                 rid = str(r.get("アカウントID") or r.get("アカウント名") or "").strip().lstrip("@")
-                if rid == account_name:
-                    password = str(r.get("パスワード") or r.get("password") or r.get("PW") or r.get("Pass") or r.get("暗証番号") or "").strip()
-                    break
+                if rid == account_name or not account_name:
+                    pw_cand = str(r.get("パスワード") or r.get("password") or r.get("PW") or r.get("Pass") or r.get("暗証番号") or "").strip()
+                    if pw_cand:
+                        password = pw_cand
+                        break
+            if not password and recs and len(recs) == 1:
+                password = str(recs[0].get("パスワード") or recs[0].get("password") or "").strip()
+        except Exception:
+            pass
+
+    # 生Excel直接セル読み出しフォールバック (openpyxl)
+    if not password and filepath and os.path.exists(filepath):
+        try:
+            import openpyxl
+            wb_tmp = openpyxl.load_workbook(filepath, data_only=True)
+            ws_tmp = wb_tmp.active
+            for r in ws_tmp.iter_rows(values_only=True):
+                if not r: continue
+                r_strs = [str(c).strip() for c in r if c is not None]
+                if any(k in "".join(r_strs) for k in ["パスワード", "password", "PW", "Pass"]):
+                    continue
+                # アカウント行を見つけた場合
+                if len(r) >= 2 and r[1] is not None and str(r[1]).strip():
+                    c0 = str(r[0] or "").strip().lstrip("@")
+                    c1 = str(r[1] or "").strip()
+                    if not account_name or c0 == account_name:
+                        password = c1
+                        break
+            wb_tmp.close()
         except Exception:
             pass
 
     time.sleep(1.5)
     is_cp, cp_why = detect_phone_checkpoint_screen(page)
     if is_cp:
-        log_func(f"[CRITICAL] 🚨 [{account_name}] 携帯電話番号（SMS）認証画面を検知しました！（{cp_why}）")
-        log_func(f"[CRITICAL] 🛡️ アカウント安全保護のため直ちに停止し、アカウント情報.xlsx の【有効/無効】を「無効」に更新します。")
-        set_account_status_in_excel(filepath, account_name, status="無効", reason="携帯電話番号認証画面検知")
+        log_func(f"[WARN] 🚨 [{account_name}] 携帯電話番号（SMS）認証画面を検知しました（{cp_why}）。")
         return False
 
     # 既にログイン成功しているか判定
@@ -1891,7 +2216,8 @@ def ensure_authenticated_session(page, context, account, filepath, log_func=prin
         'button:has-text("Continue as")',
         'div[role="button"]:has-text("Instagramでログイン")',
         'button:has-text("Instagramでログイン")',
-        'span:has-text("Instagramでログイン")'
+        'span:has-text("Instagramでログイン")',
+        'button:has-text("Instagramで続行")'
     ]:
         try:
             btn = page.locator(cont_sel).first
@@ -1914,15 +2240,26 @@ def ensure_authenticated_session(page, context, account, filepath, log_func=prin
             acc_state["pure_profile_mode"] = True
         return True
 
-    # 2. セッションIDが切れていた場合 ➔ 入力されているID/PWで即座に自動ログインを実行！
+    # 2. セッションIDが入っていない場合、またはセッションIDでログインできない場合 ➔ 入力されているID/PWで即座に自動ログインを実行！
     if password:
+        session_token_present = False
+        if isinstance(account, dict):
+            session_token_present = bool(str(account.get("auth_token") or account.get("sessionid") or "").strip())
+        
         log_func("=" * 60)
-        log_func(f"[INFO] 🔐 [{account_name}] セッション失効を検知。Excelに入力されている【ID/パスワード】で自動ログインを実行します！")
+        if not session_token_present:
+            log_func(f"[INFO] 🔐 [{account_name}] セッションID未設定を検知。Excelに入力されている【ID/パスワード】で自動ログインを実行します！")
+        else:
+            log_func(f"[INFO] 🔐 [{account_name}] セッションID失効または無効を検知。Excelに入力されている【ID/パスワード】で自動復帰ログインを実行します！")
         log_func("=" * 60)
 
-        # 壊れたセッションCookieを除去してクリーンにログイン
+        # Threads/Instagramの壊れたセッションCookieのみを整理し、他サイト(X/Google等)のログインCookieは完全保持
         try:
-            context.clear_cookies()
+            for d_target in ["threads.net", "threads.com", "instagram.com"]:
+                try:
+                    context.clear_cookies(domain=d_target)
+                except Exception:
+                    pass
             time.sleep(0.5)
         except Exception:
             pass
@@ -1935,25 +2272,34 @@ def ensure_authenticated_session(page, context, account, filepath, log_func=prin
                 acc_state["login_cooldown_until"] = 0
                 acc_state["login_cooldown_started"] = False
                 acc_state["pure_profile_mode"] = True
-            # 失効した古いトークンをクリア
-            if isinstance(account, dict):
-                account["auth_token"] = ""
-            # ホームへアクセス
-            try:
-                page.goto("https://www.threads.net/", timeout=30000, wait_until="domcontentloaded")
-                time.sleep(2)
-            except Exception:
-                pass
+            # 新しいセッションIDをアカウント情報.xlsxに同期
+            save_context_cookies_to_excel(context, filepath, account_name, log_func=log_func)
             return True
         else:
             log_func(f"[WARN] ❌ [{account_name}] ID/PW自動ログインに失敗しました。パスワードをご確認ください。")
             return False
     else:
-        log_func(f"[WARN] [{account_name}] パスワードが「アカウント情報.xlsx」に未記入のため、ID/PW自動ログインを実行できません。Excelの「パスワード」列にパスワードをご記入ください。")
+        log_func(f"[WARN] [{account_name}] セッションIDが未設定または無効で、パスワードも「アカウント情報.xlsx」に未記入のため、ログインを実行できません。Excelの「パスワード」列にご記入ください。")
         return False
 
-def resolve_image_path(raw_path, post_text=""):
-    search_dirs = [BASE_DIR, os.path.join(BASE_DIR, "images"), os.getcwd(), os.path.join(os.getcwd(), "images")]
+def resolve_image_path(raw_path, post_text="", account_name=""):
+    search_dirs = []
+    clean_acc = sanitize_account_folder_name(account_name)
+    if clean_acc:
+        search_dirs.extend([
+            os.path.join(BASE_DIR, "images", clean_acc),
+            os.path.join(BASE_DIR, "imeges", clean_acc),
+            os.path.join(os.getcwd(), "images", clean_acc),
+            os.path.join(os.getcwd(), "imeges", clean_acc),
+        ])
+    search_dirs.extend([
+        os.path.join(BASE_DIR, "images"),
+        os.path.join(BASE_DIR, "imeges"),
+        BASE_DIR,
+        os.path.join(os.getcwd(), "images"),
+        os.path.join(os.getcwd(), "imeges"),
+        os.getcwd(),
+    ])
     
     if raw_path and str(raw_path).strip().lower() not in ["", "nan", "none"]:
         cleaned = str(raw_path).strip()
@@ -2732,20 +3078,26 @@ def capture_error_diagnostic(page, account_name="unknown", context_label="postin
     try:
         log_file = os.path.join(BASE_DIR, "error_log.txt")
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        import traceback
+        diag_lines = [
+            f"\n{'='*60}\n",
+            f"[{now_str}] 【エラー検知】 アカウント: @{account_name} | 対象: {context_label}\n",
+            f"エラー内容: {exc_msg}\n",
+        ]
+        if screen_messages:
+            diag_lines.append("Threads画面上のメッセージ:\n")
+            for sm in screen_messages:
+                diag_lines.append(f"  ・{sm}\n")
+        if ss_saved:
+            diag_lines.append(f"スクリーンショット保存先: {ss_path}\n")
+        if exception_obj:
+            diag_lines.append("詳細トレースバック:\n" + "".join(traceback.format_exception(type(exception_obj), exception_obj, exception_obj.__traceback__)) + "\n")
+        diag_lines.append(f"{'='*60}\n")
+        diag_text = "".join(diag_lines)
         with open(log_file, "a", encoding="utf-8") as f:
-            f.write(f"\n{'='*60}\n")
-            f.write(f"[{now_str}] 【エラー検知】 アカウント: @{account_name} | 対象: {context_label}\n")
-            f.write(f"エラー内容: {exc_msg}\n")
-            if screen_messages:
-                f.write(f"Threads画面上のメッセージ:\n")
-                for sm in screen_messages:
-                    f.write(f"  ・{sm}\n")
-            if ss_saved:
-                f.write(f"スクリーンショット保存先: {ss_path}\n")
-            import traceback
-            if exception_obj:
-                f.write("詳細トレースバック:\n" + "".join(traceback.format_exception(type(exception_obj), exception_obj, exception_obj.__traceback__)) + "\n")
-            f.write(f"{'='*60}\n")
+            f.write(diag_text)
+        if account_name and account_name != "unknown":
+            log_to_account_file(account_name, diag_text)
     except Exception:
         pass
 
@@ -2907,18 +3259,22 @@ def perform_stealth_feed_patrol(page, account_name, log_func=None, abort_check=N
         if log_func:
             log_func(f"[INFO] [{account_name}] ステルス巡回スキップ (画面動作優先): {e}")
 
-def clean_account_profile(account_name, profile_dir, reason="警告検知または動作不安定", log_func=None):
+def clean_account_profile(account_name, profile_dir, reason="警告検知または動作不安定", log_func=None, full_reset=False):
     """
-    【機能2: 自動プロファイル初期化（クリーンアップ）】
-    警告画面や連続エラー・セッション汚染を検知した際、
-    Chromeプロファイル（Cookie・IndexedDB・指紋キャッシュ）を完全自動初期化する
+    【機能2: プロファイルキャッシュクリーンアップ】
+    自動運用時は手動ログイン済みセッション（Cookies / Local Storage / Preferences）を絶対に消さず、
+    キャッシュ（Cache / Code Cache / GPUCache）のみ安全に掃除します。
+    full_reset=True の場合（ユーザーによる手動リセットボタン押下時）のみプロファイル全体を削除します。
     """
     import shutil
     import stat
 
     if log_func:
-        log_func(f"[WARN] [{account_name}] 🚨 アカウントの動作不安定・警告兆候を検知（理由: {reason}）")
-        log_func(f"[INFO] [{account_name}] 🧹 プロファイルフォルダ ('{profile_dir}') の自動クリーンアップを開始します...")
+        log_func(f"[WARN] [{account_name}] 🚨 動作不安定・警告兆候を検知（理由: {reason}）")
+        if full_reset:
+            log_func(f"[INFO] [{account_name}] 🧹 プロファイルフォルダ ('{profile_dir}') を完全初期化します...")
+        else:
+            log_func(f"[INFO] [{account_name}] 🧹 ログイン情報を保持したままキャッシュのみ安全に掃除します...")
 
     def _remove_readonly(func, path, exc_info):
         try:
@@ -2928,24 +3284,43 @@ def clean_account_profile(account_name, profile_dir, reason="警告検知また�
             pass
 
     success = False
-    for attempt in range(3):
-        try:
-            if os.path.exists(profile_dir):
-                shutil.rmtree(profile_dir, onerror=_remove_readonly)
-            time.sleep(0.5)
-            os.makedirs(profile_dir, exist_ok=True)
-            success = True
-            break
-        except Exception:
-            time.sleep(1.0)
+    if full_reset:
+        for attempt in range(3):
+            try:
+                if os.path.exists(profile_dir):
+                    shutil.rmtree(profile_dir, onerror=_remove_readonly)
+                time.sleep(0.5)
+                os.makedirs(profile_dir, exist_ok=True)
+                success = True
+                break
+            except Exception:
+                time.sleep(1.0)
+    else:
+        cache_targets = [
+            os.path.join(profile_dir, "Default", "Cache"),
+            os.path.join(profile_dir, "Default", "Code Cache"),
+            os.path.join(profile_dir, "Default", "GPUCache"),
+            os.path.join(profile_dir, "ShaderCache"),
+            os.path.join(profile_dir, "GrShaderCache"),
+        ]
+        for ct in cache_targets:
+            try:
+                if os.path.exists(ct):
+                    shutil.rmtree(ct, onerror=_remove_readonly)
+            except Exception:
+                pass
+        success = True
 
     if success:
         if log_func:
-            log_func(f"[SUCCESS] [{account_name}] 🧹 プロファイルの初期化が完了しました！Cookie・追跡キャッシュは完全消去されました。次回クリーンな状態で自動再接続します。")
-        log_execution(f"[{account_name}] プロファイル自動初期化完了 (理由: {reason})")
+            if full_reset:
+                log_func(f"[SUCCESS] [{account_name}] 🧹 プロファイルの完全初期化が完了しました。")
+            else:
+                log_func(f"[SUCCESS] [{account_name}] 🧹 ログインセッションを保持したままキャッシュをクリーンアップしました。")
+        log_execution(f"[{account_name}] プロファイルクリーンアップ完了 (full_reset={full_reset}, 理由: {reason})")
     else:
         if log_func:
-            log_func(f"[WARN] [{account_name}] 一部ファイルの排他ロックによりプロファイル完全削除ができませんでした（次回起動時に再試行します）。")
+            log_func(f"[WARN] [{account_name}] 一部ファイルの排他ロックによりクリーンアップをスキップしました。")
 
     return success
 
@@ -3462,7 +3837,7 @@ class ThreadsPosterGUI:
         self.var_single_window_rotation = tk.BooleanVar(value=True) # 提案1: 1窓・順番交代ローテーション
         self.var_block_media = tk.BooleanVar(value=True)            # 提案2: 画像・動画通信遮断 (メモリ50-70%削減)
         self.var_stealth_patrol = tk.BooleanVar(value=True)         # 提案新機能1: 投稿前のステルス巡回
-        self.var_auto_clean_profile = tk.BooleanVar(value=True)      # 提案新機能2: 不安定・警告時の自動プロファイル初期化
+        self.var_auto_clean_profile = tk.BooleanVar(value=False)     # ログインセッション保持優先（誤消去防止のため初期値OFF）
         self.var_topic_ab_test = tk.BooleanVar(value=True)           # 提案新機能3: トピックA/Bテスト・自動ローテーション
         self.var_daily_greeting = tk.BooleanVar(value=True)          # 🌅 朝・昼・夜の日常つぶやき・あいさつ枠自動挿入
 
@@ -3491,8 +3866,11 @@ class ThreadsPosterGUI:
         self.btn_stop = tk.Button(toolbar, text="⏹ 停止", font=("Segoe UI", 10, "bold"), bg="#ef4444", fg="#ffffff", padx=14, pady=5, relief="flat", cursor="hand2", state="disabled", command=self.stop_posting)
         self.btn_stop.pack(side="left", padx=3)
 
-        self.btn_browser_login = tk.Button(toolbar, text="🌐 ログイン確認・保存", font=("Segoe UI", 9, "bold"), bg="#8b5cf6", fg="#ffffff", padx=10, pady=5, relief="flat", cursor="hand2", command=self.open_browser_for_login)
+        self.btn_browser_login = tk.Button(toolbar, text="🌐 初回手動ログイン（セッション永続化）", font=("Segoe UI", 9, "bold"), bg="#8b5cf6", fg="#ffffff", padx=10, pady=5, relief="flat", cursor="hand2", command=self.open_browser_for_login)
         self.btn_browser_login.pack(side="left", padx=3)
+
+        self.btn_chrome_launcher = tk.Button(toolbar, text="🛠️ 手動Chrome起動 (chrome_launcher)", font=("Segoe UI", 9, "bold"), bg="#0f766e", fg="#ffffff", padx=10, pady=5, relief="flat", cursor="hand2", command=self.launch_custom_chrome_profile)
+        self.btn_chrome_launcher.pack(side="left", padx=3)
 
         self.btn_edit_profile = tk.Button(toolbar, text="👤 プロフィール編集", font=("Segoe UI", 9, "bold"), bg="#0284c7", fg="#ffffff", padx=10, pady=5, relief="flat", cursor="hand2", command=self.open_browser_for_profile_edit)
         self.btn_edit_profile.pack(side="left", padx=3)
@@ -3509,31 +3887,40 @@ class ThreadsPosterGUI:
         btn_reset = tk.Button(toolbar, text="🔁 未投稿にリセット", font=("Segoe UI", 9, "bold"), bg="#6366f1", fg="#ffffff", padx=8, pady=5, relief="flat", cursor="hand2", command=self.reset_all_posts_to_unposted)
         btn_reset.pack(side="left", padx=3)
 
-        btn_open_posts = tk.Button(toolbar, text="📊 投稿Excelを開く", font=("Segoe UI", 9), bg="#262626", fg="#ffffff", padx=8, pady=5, relief="flat", cursor="hand2", command=self.open_posts_excel)
+        toolbar2 = tk.Frame(self.root, bg="#121212", pady=2, padx=16)
+        toolbar2.pack(fill="x")
+
+        btn_open_posts = tk.Button(toolbar2, text="📊 投稿Excelを開く", font=("Segoe UI", 9), bg="#262626", fg="#ffffff", padx=8, pady=4, relief="flat", cursor="hand2", command=self.open_posts_excel)
         btn_open_posts.pack(side="left", padx=3)
 
-        btn_bulk_add = tk.Button(toolbar, text="📋 100件一括追加・削除", font=("Segoe UI", 9, "bold"), bg="#4f46e5", fg="#ffffff", padx=8, pady=5, relief="flat", cursor="hand2", command=self.open_bulk_post_manager)
+        btn_bulk_add = tk.Button(toolbar2, text="📋 100件一括追加・削除", font=("Segoe UI", 9, "bold"), bg="#4f46e5", fg="#ffffff", padx=8, pady=4, relief="flat", cursor="hand2", command=self.open_bulk_post_manager)
         btn_bulk_add.pack(side="left", padx=3)
 
-        btn_open_daily = tk.Button(toolbar, text="🌅 日常ポスト設定", font=("Segoe UI", 9, "bold"), bg="#15803d", fg="#ffffff", padx=8, pady=5, relief="flat", cursor="hand2", command=self.open_daily_posts_excel)
+        btn_open_daily = tk.Button(toolbar2, text="🌅 日常ポスト設定", font=("Segoe UI", 9, "bold"), bg="#15803d", fg="#ffffff", padx=8, pady=4, relief="flat", cursor="hand2", command=self.open_daily_posts_excel)
         btn_open_daily.pack(side="left", padx=3)
 
-        btn_open_excel = tk.Button(toolbar, text="⚙️ アカウントExcel", font=("Segoe UI", 9), bg="#262626", fg="#ffffff", padx=8, pady=5, relief="flat", cursor="hand2", command=self.open_account_excel)
+        btn_open_excel = tk.Button(toolbar2, text="⚙️ アカウントExcel", font=("Segoe UI", 9), bg="#262626", fg="#ffffff", padx=8, pady=4, relief="flat", cursor="hand2", command=self.open_account_excel)
         btn_open_excel.pack(side="left", padx=3)
 
-        btn_open_ss = tk.Button(toolbar, text="📷 エラー画像", font=("Segoe UI", 9, "bold"), bg="#450a0a", fg="#fca5a5", padx=8, pady=5, relief="flat", cursor="hand2", command=self.open_error_screenshots_dir)
+        btn_open_ss = tk.Button(toolbar2, text="📷 エラー画像", font=("Segoe UI", 9, "bold"), bg="#450a0a", fg="#fca5a5", padx=8, pady=4, relief="flat", cursor="hand2", command=self.open_error_screenshots_dir)
         btn_open_ss.pack(side="left", padx=3)
 
-        btn_open_log = tk.Button(toolbar, text="📝 エラーログ(txt)", font=("Segoe UI", 9, "bold"), bg="#991b1b", fg="#ffffff", padx=8, pady=5, relief="flat", cursor="hand2", command=self.open_error_log)
+        btn_open_log = tk.Button(toolbar2, text="📝 エラーログ(txt)", font=("Segoe UI", 9, "bold"), bg="#991b1b", fg="#ffffff", padx=8, pady=4, relief="flat", cursor="hand2", command=self.open_error_log)
         btn_open_log.pack(side="left", padx=3)
 
-        btn_open_all_log = tk.Button(toolbar, text="📋 全実行ログ(txt)", font=("Segoe UI", 9), bg="#262626", fg="#ffffff", padx=8, pady=5, relief="flat", cursor="hand2", command=self.open_execution_log)
+        btn_open_log_dir = tk.Button(toolbar2, text="📂 logフォルダ", font=("Segoe UI", 9, "bold"), bg="#1e3a8a", fg="#bfdbfe", padx=8, pady=4, relief="flat", cursor="hand2", command=self.open_log_dir)
+        btn_open_log_dir.pack(side="left", padx=3)
+
+        btn_open_images_dir = tk.Button(toolbar2, text="🖼️ imagesフォルダ", font=("Segoe UI", 9, "bold"), bg="#0f766e", fg="#ccfbf1", padx=8, pady=4, relief="flat", cursor="hand2", command=self.open_images_dir)
+        btn_open_images_dir.pack(side="left", padx=3)
+
+        btn_open_all_log = tk.Button(toolbar2, text="📋 全実行ログ(txt)", font=("Segoe UI", 9), bg="#262626", fg="#ffffff", padx=8, pady=4, relief="flat", cursor="hand2", command=self.open_execution_log)
         btn_open_all_log.pack(side="left", padx=3)
 
-        btn_clean_manual = tk.Button(toolbar, text="🧹 キャッシュ全初期化", font=("Segoe UI", 9, "bold"), bg="#4c0519", fg="#fda4af", padx=8, pady=5, relief="flat", cursor="hand2", command=self.manual_clean_profiles)
+        btn_clean_manual = tk.Button(toolbar2, text="🧹 キャッシュ全初期化", font=("Segoe UI", 9, "bold"), bg="#4c0519", fg="#fda4af", padx=8, pady=4, relief="flat", cursor="hand2", command=self.manual_clean_profiles)
         btn_clean_manual.pack(side="left", padx=3)
 
-        btn_open_dir = tk.Button(toolbar, text="📁 フォルダ", font=("Segoe UI", 9), bg="#262626", fg="#ffffff", padx=8, pady=5, relief="flat", cursor="hand2", command=self.open_base_dir)
+        btn_open_dir = tk.Button(toolbar2, text="📁 フォルダ", font=("Segoe UI", 9), bg="#262626", fg="#ffffff", padx=8, pady=4, relief="flat", cursor="hand2", command=self.open_base_dir)
         btn_open_dir.pack(side="left", padx=3)
 
 
@@ -3697,6 +4084,14 @@ class ThreadsPosterGUI:
             except Exception:
                 pass
 
+        # 3. アカウント別ログ (log/<アカウント名>.log) に永続追記
+        try:
+            acc_for_log = extract_account_name_from_msg(msg) or getattr(_THREAD_LOG_LOCAL, "account_name", "")
+            if acc_for_log:
+                log_to_account_file(acc_for_log, full_line)
+        except Exception:
+            pass
+
 
     def load_excel_data(self):
         if not os.path.exists(self.account_config_path):
@@ -3719,10 +4114,23 @@ class ThreadsPosterGUI:
 
         valid_accounts = []
         disabled_accounts = []
+        os.makedirs(LOG_DIR, exist_ok=True)
+        os.makedirs(IMAGES_DIR, exist_ok=True)
+        if not hasattr(self, "_initialized_account_folders"):
+            self._initialized_account_folders = set()
+
         for acc in accounts_data:
             acc_id = str(acc.get("アカウントID") or acc.get("アカウント名") or acc.get("アカウント") or "").strip()
             if not acc_id or acc_id.lower() == "nan":
                 continue
+            clean_id = sanitize_account_folder_name(acc_id)
+            if clean_id:
+                _KNOWN_ACCOUNT_NAMES.add(clean_id)
+                acc_img_dir = get_account_images_dir(clean_id, create=True)
+                acc_log_file = get_account_log_path(clean_id)
+                if clean_id not in self._initialized_account_folders:
+                    self._initialized_account_folders.add(clean_id)
+                    log_to_account_file(clean_id, f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [INFO] [{clean_id}] ログ＆画像フォルダ準備完了 (log: {os.path.basename(acc_log_file)}, images: images/{os.path.basename(acc_img_dir)})")
             status_val = str(acc.get("有効/無効") or acc.get("有効無効") or acc.get("ステータス") or "").strip()
             if status_val in ["無効", "停止", "OFF", "off", "0", "false", "停止 (要電話番号認証)"]:
                 disabled_accounts.append(acc_id)
@@ -3771,7 +4179,7 @@ class ThreadsPosterGUI:
             mode_val = 1
         mode_txt = "ランダム" if mode_val == 1 else "上から順"
         time_txt = custom_settings.get("time_slot", "0:00-0:00")
-        prof_txt = custom_settings.get("profile_dir", f"chrome_profiles/{first_id}")
+        prof_txt = f"chrome_profiles/{first_id}"
 
         setting_parts = []
         if interval_txt:
@@ -3796,7 +4204,7 @@ class ThreadsPosterGUI:
             text_preview = self._extract_post_text(p_item)
             short_txt = (text_preview[:35] + "...") if len(text_preview) > 35 else text_preview
             raw_img = self._extract_raw_image(p_item)
-            resolved_img = resolve_image_path(raw_img, text_preview)
+            resolved_img = resolve_image_path(raw_img, text_preview, account_name=first_id)
             img_info = f"画像: {os.path.basename(resolved_img)}" if resolved_img else "画像なし"
             self.log(f"[INFO] プレビュー#{i}: [ポスト文章] {short_txt} | [{img_info}]")
 
@@ -3922,12 +4330,12 @@ class ThreadsPosterGUI:
 
     def _is_unposted_item(self, post_item):
         st = str(post_item.get("ステータス", "")).strip()
-        if "完了" in st:
+        if "完了" in st or "投稿済" in st:
             return False
-        if st == "未投稿":
+        if st in ["未投稿", "未", "待機", "pending"]:
             return True
         txt = self._extract_post_text(post_item)
-        return (not st or st.lower() in ["none", "nan"]) and len(txt) > 0
+        return (not st or st.lower() in ["none", "nan", "有効"]) and len(txt) > 0
 
     def select_account_file(self):
         selected = filedialog.askopenfilename(
@@ -4249,6 +4657,22 @@ class ThreadsPosterGUI:
     def open_base_dir(self):
         os.startfile(BASE_DIR)
 
+    def open_log_dir(self):
+        os.makedirs(LOG_DIR, exist_ok=True)
+        try:
+            os.startfile(LOG_DIR)
+            self.log("[INFO] 📂 アカウント別ログフォルダ (log) を開きました。")
+        except Exception as e:
+            self.log(f"[WARN] フォルダを開けませんでした: {e}")
+
+    def open_images_dir(self):
+        os.makedirs(IMAGES_DIR, exist_ok=True)
+        try:
+            os.startfile(IMAGES_DIR)
+            self.log("[INFO] 🖼️ アカウント別画像フォルダ (images) を開きました。")
+        except Exception as e:
+            self.log(f"[WARN] フォルダを開けませんでした: {e}")
+
     def open_error_screenshots_dir(self):
         ss_dir = os.path.join(BASE_DIR, "error_screenshots")
         os.makedirs(ss_dir, exist_ok=True)
@@ -4318,10 +4742,11 @@ class ThreadsPosterGUI:
             acc_name = str(acc.get("アカウントID") or acc.get("アカウント名") or "").strip()
             pf = self._find_posts_file(acc_name)
             custom_settings = read_account_settings_from_post_file(pf) if pf else {}
+            clean_acc_id = acc_name.lstrip("@").strip()
             p_sub = custom_settings.get("profile_dir", "")
-            if not p_sub or any(k in p_sub for k in ["コミュニティ", "トピック", "モード", "間隔", "ツイート", "ポスト"]): p_sub = f"chrome_profiles/{acc_name}"
+            if not p_sub or any(k in p_sub for k in ["コミュニティ", "トピック", "モード", "間隔", "ツイート", "ポスト"]): p_sub = f"chrome_profiles/{clean_acc_id}"
             p_dir = os.path.join(BASE_DIR, p_sub)
-            clean_account_profile(acc_name, p_dir, reason="手動リクエストによる全初期化", log_func=self.log)
+            clean_account_profile(acc_name, p_dir, reason="手動リクエストによる全初期化", log_func=self.log, full_reset=True)
             cleaned_count += 1
 
         messagebox.showinfo(
@@ -4330,12 +4755,93 @@ class ThreadsPosterGUI:
             "次回からクリーンな状態で自動接続されます。"
         )
 
+    def launch_custom_chrome_profile(self):
+        """
+        【Chrome カスタムプロファイル起動 (完全手動)】
+        勝手なURL遷移・自動化フラグなしで純正Google Chromeを起動し、
+        ユーザーが任意のサイト（X / Threads等）へ手動アクセス・手動ログインして情報を保持します。
+        """
+        import subprocess
+        from tkinter import simpledialog
+
+        default_name = ""
+        if os.path.exists(self.account_config_path):
+            try:
+                accs = read_excel_records(self.account_config_path)
+                for a in accs:
+                    aid = str(a.get("プロファイル名") or a.get("アカウントID") or a.get("アカウント名") or "").strip().lstrip("@")
+                    if aid:
+                        default_name = aid
+                        break
+            except Exception:
+                pass
+
+        prof_input = simpledialog.askstring(
+            "Chrome カスタムプロファイル起動ツール",
+            "作成・使用するプロファイル名を入力してください:\n（例: wqwq1320）",
+            initialvalue=default_name,
+            parent=self.root
+        )
+        if not prof_input:
+            return
+        prof_name = re.sub(r'[\\/:*?"<>|]+', "", prof_input.strip().lstrip("@")).strip()
+        if not prof_name:
+            messagebox.showwarning("警告", "有効なプロファイル名を入力してください。")
+            return
+
+        prof_dir = os.path.join(BASE_DIR, "chrome_profiles", prof_name)
+        os.makedirs(prof_dir, exist_ok=True)
+        for lk in ("SingletonLock", "SingletonCookie", "SingletonSocket"):
+            try:
+                lp = os.path.join(prof_dir, lk)
+                if os.path.exists(lp):
+                    os.remove(lp)
+            except Exception:
+                pass
+
+        chrome_candidates = [
+            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+            os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
+        ]
+        chrome_exe = next((c for c in chrome_candidates if c and os.path.exists(c)), None)
+        if not chrome_exe:
+            import shutil
+            chrome_exe = shutil.which("chrome") or shutil.which("google-chrome")
+
+        if not chrome_exe:
+            py_launcher = os.path.join(BASE_DIR, "chrome_launcher.py")
+            if os.path.exists(py_launcher):
+                subprocess.Popen([sys.executable, py_launcher, prof_name], cwd=BASE_DIR)
+                return
+            exe_bat = os.path.join(BASE_DIR, "chrome_launcher.exe")
+            if os.path.exists(exe_bat):
+                subprocess.Popen([exe_bat, prof_name], cwd=BASE_DIR)
+                return
+            messagebox.showerror("エラー", "Google Chrome (chrome.exe) が見つかりませんでした。")
+            return
+
+        try:
+            subprocess.Popen([chrome_exe, f"--user-data-dir={prof_dir}"], cwd=BASE_DIR)
+            self.log("=" * 60)
+            self.log(f"[INFO] 🛠️ 【Chrome手動起動】プロファイル『{prof_name}』を起動しました。")
+            self.log(f"[INFO] 📂 保存先: {prof_dir}")
+            self.log("[INFO] 💡 サイトは自動で開きません。ご自身でログインしたいサイトを開いて手動ログインし、完了後にChromeを閉じてください。")
+            self.log("=" * 60)
+        except Exception as e:
+            messagebox.showerror("起動エラー", f"Chromeの起動に失敗しました:\n{e}")
+
     def open_browser_for_login(self):
         if not os.path.exists(self.account_config_path):
             messagebox.showerror("エラー", f"'{self.account_config_path}' が見つかりません。")
             return
 
-        self.log("[INFO] ログイン確認ブラウザを起動しています...")
+        self.log("=" * 60)
+        self.log("[INFO] 🌐 【初回手動ログイン・セッション永続化ブラウザ】を起動します...")
+        self.log("[INFO] 💡 画面が開いたら、ブラウザ上でID/PW入力やreCAPTCHA（画像認証）を手動で完了してください。")
+        self.log("[INFO] 💡 一度ログインが完了すれば、セッション情報が永続保存され【次回以降は完全自動】になります！")
+        self.log("=" * 60)
+
         self.btn_browser_login.config(state="disabled")
         self.btn_start.config(state="disabled")
 
@@ -4350,11 +4856,8 @@ class ThreadsPosterGUI:
                 first_acc = active_accounts[0]
                 account_name = str(first_acc.get("アカウントID") or first_acc.get("アカウント名") or "").strip()
                 
-                posts_file = self._find_posts_file(account_name)
-                custom_settings = read_account_settings_from_post_file(posts_file) if posts_file else {}
-                profile_subpath = custom_settings.get("profile_dir", "")
-                if not profile_subpath or any(k in profile_subpath for k in ["コミュニティ", "トピック", "モード", "間隔", "ツイート", "ポスト"]): profile_subpath = f"chrome_profiles/{account_name}"
-                profile_dir = os.path.join(BASE_DIR, profile_subpath)
+                clean_acc_id = account_name.lstrip("@").strip()
+                profile_dir = os.path.join(BASE_DIR, f"chrome_profiles/{clean_acc_id}")
                 os.makedirs(profile_dir, exist_ok=True)
 
                 with sync_playwright() as p:
@@ -4367,37 +4870,92 @@ class ThreadsPosterGUI:
 
                     page = context.pages[0] if context.pages else context.new_page()
                     self.current_page = page
-                    safe_goto_threads(page, context, token, account_name, log_func=self.log, timeout=60000)
-                    time.sleep(3)
 
-                    is_ok = ensure_authenticated_session(
-                        page, context, account_name, self.account_config_path, log_func=self.log, wait_timeout_sec=300
-                    )
+                    # 初回ログイン画面またはThreadsホームへアクセス
+                    initial_url = "https://www.threads.net/login" if not token else "https://www.threads.net/"
+                    try:
+                        page.goto(initial_url, timeout=45000, wait_until="domcontentloaded")
+                    except Exception:
+                        pass
 
-                    if is_ok:
-                        self.log(f"[SUCCESS] [{account_name}] ログイン確認完了！セッション情報は自動保存されました。")
-                        auto_refresh_and_save_session(context, account_name, profile_dir, self.account_config_path, log_func=self.log)
-                    else:
-                        self.log(f"[WARN] [{account_name}] ログインが完了しませんでした。ブラウザで「Instagramでログイン」を完了してください。")
-
-                    self.log("[INFO] 👤 ブラウザウィンドウは開いたまま維持しています。プロフィールの編集や確認を行ってください（ブラウザの「×」で閉じるとセッションが最新保存されます）。")
-                    self.root.after(0, lambda: self.status_lbl.config(text=f"👤 @{account_name} ログイン確認・手動操作中", fg="#38bdf8"))
-                    self.root.after(0, lambda: self.btn_stop.config(state="normal"))
-
-                    last_captured_session = token
-                    while not page.is_closed() and not self.stop_requested:
+                    clean_pw = str(first_acc.get("パスワード") or first_acc.get("password") or "").strip()
+                    # ログイン画面の自動入力補助（ID・パスワードの手間を最小限に）
+                    if clean_pw and not token:
                         try:
-                            # リアルタイムセッション監視（手動ログイン完了を即座に感知して永続保存）
-                            cks = context.cookies(["https://www.threads.net", "https://www.instagram.com"])
-                            cur_sess = next((c.get("value") for c in cks if c.get("name") == "sessionid" and len(str(c.get("value") or "")) > 15), None)
-                            if cur_sess and cur_sess != last_captured_session:
-                                last_captured_session = cur_sess
-                                auto_refresh_and_save_session(context, account_name, profile_dir, self.account_config_path, log_func=self.log)
-                                self.log(f"[SUCCESS] 🎉 [{account_name}] ブラウザログインを即座に検知！最新セッションIDをアカウント情報.xlsxとプロファイルへ永続保存しました！")
+                            time.sleep(1.5)
+                            u_loc, p_loc = find_login_form_inputs(page, timeout_sec=3)
+                            if not u_loc:
+                                for sso_sel in [
+                                    'button:has-text("Instagramアカウントでログイン")',
+                                    'button:has-text("Instagramでログイン")',
+                                    'div[role="button"]:has-text("Instagramアカウントでログイン")',
+                                    'div[role="button"]:has-text("Instagramでログイン")'
+                                ]:
+                                    try:
+                                        s_btn = page.locator(sso_sel).first
+                                        if s_btn.is_visible(timeout=300):
+                                            s_btn.click()
+                                            time.sleep(1.5)
+                                            u_loc, p_loc = find_login_form_inputs(page, timeout_sec=4)
+                                            if u_loc:
+                                                break
+                                    except Exception:
+                                        pass
+                            if u_loc and p_loc:
+                                u_loc.fill(clean_acc_id)
+                                p_loc.fill(clean_pw)
+                                self.log(f"[INFO] ✍️ [{account_name}] ExcelのIDとパスワードを自動入力しました。画面にreCAPTCHA（画像認証）が表示された場合は手動で解除してください。")
                         except Exception:
                             pass
+
+                    self.log(f"[INFO] 👤 [{account_name}] 手動ログイン待機モード稼働中 (URL: {page.url})")
+                    self.log("[INFO] 👉 開いたブラウザでログイン操作（reCAPTCHA画像選択など）を行ってください。")
+                    self.root.after(0, lambda: self.status_lbl.config(text=f"👤 @{account_name} 初回手動ログイン操作待機中...", fg="#38bdf8"))
+                    self.root.after(0, lambda: self.btn_stop.config(state="normal"))
+
+                    login_detected = False
+                    last_captured_session = token
+
+                    # ユーザーの手動ログイン操作を最大600秒間（10分間）リアルタイム常時監視（勝手なURLリダイレクトは行わない）
+                    for _ in range(600):
+                        if page.is_closed() or self.stop_requested:
+                            break
+
+                        try:
+                            cur_page_url = (page.url or "").lower()
+                            # 1. Cookieのsessionid検知
+                            cks = context.cookies(["https://www.threads.net", "https://www.instagram.com"])
+                            cur_sess = next((c.get("value") for c in cks if c.get("name") == "sessionid" and len(str(c.get("value") or "")) > 15), None)
+                            
+                            # 2. Threadsホーム画面到達検知
+                            is_threads_ok, reason = detect_threads_logged_in(page)
+
+                            # 誤検知ガード: recaptchaやログイン認証中はまだ完了とみなさない
+                            is_in_challenge = any(k in cur_page_url for k in ["recaptcha", "auth_platform", "challenge", "checkpoint", "/login"])
+
+                            if ((cur_sess and not is_in_challenge) or is_threads_ok):
+                                if cur_sess:
+                                    last_captured_session = cur_sess
+                                auto_refresh_and_save_session(context, account_name, profile_dir, self.account_config_path, log_func=self.log)
+                                self.log("=" * 60)
+                                self.log(f"[SUCCESS] 🎉 [{account_name}] 【初回手動ログイン大成功！】セッション情報をプロファイルとExcelへ永続保存しました！")
+                                self.log(f"[SUCCESS] 🚀 次回以降は【完全自動】でログインされます。")
+                                self.log("=" * 60)
+                                login_detected = True
+                                self.root.after(0, lambda acc=account_name: messagebox.showinfo(
+                                    "手動ログイン成功",
+                                    f"@{acc} の初回ログインとセッション永続化が完了しました！\n\n"
+                                    "プロファイルと「アカウント情報.xlsx」にセッション情報が保存されました。\n"
+                                    "次回以降は再ログインなしで、完全自動でログイン・投稿されます！\n\n"
+                                    "※このブラウザウィンドウは閉じていただいて構いません。"
+                                ))
+                                break
+                        except Exception:
+                            pass
+
                         time.sleep(1.0)
 
+                    # 終了時にも念のため最新状態を保存
                     try:
                         auto_refresh_and_save_session(context, account_name, profile_dir, self.account_config_path, log_func=self.log)
                     except Exception:
@@ -4588,7 +5146,7 @@ class ThreadsPosterGUI:
                 from playwright.sync_api import sync_playwright
             except ImportError as ie:
                 self.log(f"[ERROR] Playwrightが読み込めません: {ie}")
-                messagebox.showerror("エラー", f"Playwrightが見つかりません:\n{ie}\n\nコマンドプロンプトで pip install playwright を実行してください。")
+                self.root.after(0, lambda err=ie: messagebox.showerror("エラー", f"Playwrightが見つかりません:\n{err}\n\nコマンドプロンプトで pip install playwright を実行してください。"))
                 return
 
             all_accounts = read_excel_records(self.account_config_path)
@@ -4681,7 +5239,7 @@ class ThreadsPosterGUI:
                         acc_name = a_state["name"]
                         self.log("=" * 60)
                         self.log(f"[INFO] 🌅 【日常つぶやき枠】@{acc_name} の「{daily_data['slot_name']} ({daily_data['time_slot']})」を検知しました！通常プロモ投稿に優先して日常ポストを実行します。")
-                        self.status_lbl.config(text=f"● 日常投稿中: @{acc_name} [{daily_data['slot_name']}]", fg="#fb923c")
+                        self.root.after(0, lambda an=acc_name, sn=daily_data['slot_name']: self.status_lbl.config(text=f"● 日常投稿中: @{an} [{sn}]", fg="#fb923c"))
                         ok = self._execute_daily_greeting_post(a_state, daily_data, p)
                         if ok:
                             self.log(f"[INFO] 🌿 @{acc_name} の日常ポスト完了。ブラウザを完全終了しメモリを解放しました。")
@@ -4753,7 +5311,7 @@ class ThreadsPosterGUI:
                 rem_queue = len(eligible_accounts) - 1
                 self.log("-" * 55)
                 self.log(f"[INFO] 🪟 【1窓ローテーション】@{acc_name} の実行番が来ました（他待機中: {rem_queue} アカウント）。ブラウザを1窓のみ起動します。")
-                self.status_lbl.config(text=f"● 実行中: @{acc_name} (1窓のみ起動中)", fg="#38bdf8")
+                self.root.after(0, lambda an=acc_name: self.status_lbl.config(text=f"● 実行中: @{an} (1窓のみ起動中)", fg="#38bdf8"))
 
                 # 1アカウント分だけブラウザを起動 ➔ 1件投稿 ➔ ブラウザ完全終了
                 wait_sec = self._execute_single_post(target_state, p)
@@ -4783,10 +5341,10 @@ class ThreadsPosterGUI:
             secs_rem = int(secs_left % 60)
             time_disp = f"{mins_left:02d}分{secs_rem:02d}秒"
 
-            self.status_lbl.config(
-                text=f"● 待機中: 次回 @{nearest_acc['name']} (あと {time_disp}) [ブラウザ完全終了・省メモリ]",
+            self.root.after(0, lambda an=nearest_acc['name'], td=time_disp: self.status_lbl.config(
+                text=f"● 待機中: 次回 @{an} (あと {td}) [ブラウザ完全終了・省メモリ]",
                 fg="#10b981"
-            )
+            ))
 
             # 1秒刻みで停止フラグを監視しながら待機
             sleep_round = min(10, int(secs_left))
@@ -4805,6 +5363,8 @@ class ThreadsPosterGUI:
         account_name = acc_state["name"]
         posts_file = acc_state["posts_file"]
         cycle_num = acc_state.get("cycle_num", 1)
+        _THREAD_LOG_LOCAL.account_name = sanitize_account_folder_name(account_name)
+        get_account_images_dir(account_name, create=True)
 
         # アカウント情報.xlsx から最新データ（パスワード等）を即時再取得
         if self.account_config_path and os.path.exists(self.account_config_path):
@@ -4818,7 +5378,12 @@ class ThreadsPosterGUI:
                 pass
 
         clean_acc_id = account_name.lstrip("@").strip()
-        profile_subpath = f"chrome_profiles/{clean_acc_id}"
+        raw_prof_col = str(account.get("プロファイル名") or account.get("profile") or "").strip().lstrip("@").strip() if isinstance(account, dict) else ""
+        if raw_prof_col and raw_prof_col.lower() not in ["nan", "none", ""] and not any(k in raw_prof_col for k in ["コミュニティ", "トピック", "モード", "間隔", "ツイート", "ポスト"]):
+            prof_name = os.path.basename(raw_prof_col.replace("\\", "/"))
+        else:
+            prof_name = clean_acc_id
+        profile_subpath = f"chrome_profiles/{prof_name}"
         profile_dir = os.path.join(BASE_DIR, profile_subpath)
         os.makedirs(profile_dir, exist_ok=True)
         custom_settings = read_account_settings_from_post_file(posts_file)
@@ -4906,15 +5471,10 @@ class ThreadsPosterGUI:
             is_cp, cp_why = detect_phone_checkpoint_screen(page)
             if is_cp:
                 self.log("=" * 60)
-                self.log(f"[CRITICAL] 🚨 [{account_name}] 携帯電話番号（SMS）認証画面を検知しました！（{cp_why}）")
-                self.log(f"[CRITICAL] 🛡️ アカウント安全保護のため、即座にブラウザを終了し「アカウント情報.xlsx」の【有効/無効】を「無効」に更新します。")
+                self.log(f"[WARN] 🚨 [{account_name}] 携帯電話番号（SMS）認証画面を検知しました（{cp_why}）。")
                 capture_error_diagnostic(page, account_name, "携帯電話番号認証要求", None, self.log)
-                set_account_status_in_excel(self.account_config_path, account_name, status="無効", reason="携帯電話番号認証画面検知")
-                acc_state["is_disabled"] = True
-                self.root.after(0, self.load_excel_data)
-                self.log(f"[SUCCESS] ✅ [{account_name}] を安全停止しました。他の有効なアカウントの自動投稿を継続します。")
                 self.log("=" * 60)
-                return 10
+                return 300
 
             is_logged_in = ensure_authenticated_session(
                 page, context, account, self.account_config_path, log_func=self.log, wait_timeout_sec=300, acc_state=acc_state
@@ -4935,7 +5495,7 @@ class ThreadsPosterGUI:
 
             text_content = expand_spintax_and_placeholders(self._extract_post_text(post_item))
             raw_image = self._extract_raw_image(post_item)
-            resolved_img = resolve_image_path(raw_image, text_content)
+            resolved_img = resolve_image_path(raw_image, text_content, account_name=account_name)
             row_topic_raw = self._extract_topic_or_community(post_item)
             custom_topic_raw = custom_settings.get("topic", "")
             account_topic_raw = self._extract_topic_or_community(account) if isinstance(account, dict) else ""
@@ -5124,6 +5684,7 @@ class ThreadsPosterGUI:
                     pass
             self.current_context = None
             self.current_page = None
+            _THREAD_LOG_LOCAL.account_name = ""
 
     def _execute_daily_greeting_post(self, acc_state, daily_data, p):
         """
@@ -5137,13 +5698,20 @@ class ThreadsPosterGUI:
         account_name = acc_state["name"]
         posts_file = daily_data["filepath"]
         slot_name = daily_data["slot_name"]
+        _THREAD_LOG_LOCAL.account_name = sanitize_account_folder_name(account_name)
+        get_account_images_dir(account_name, create=True)
         time_slot = daily_data["time_slot"]
         post_text = expand_spintax_and_placeholders(daily_data.get("raw_text") or daily_data["post_text"])
         row_indices = daily_data["row_indices"]
         sheet_name = daily_data["sheet_name"]
 
         clean_acc_id = account_name.lstrip("@").strip()
-        profile_subpath = f"chrome_profiles/{clean_acc_id}"
+        raw_prof_col = str(account.get("プロファイル名") or account.get("profile") or "").strip().lstrip("@").strip() if isinstance(account, dict) else ""
+        if raw_prof_col and raw_prof_col.lower() not in ["nan", "none", ""] and not any(k in raw_prof_col for k in ["コミュニティ", "トピック", "モード", "間隔", "ツイート", "ポスト"]):
+            prof_name = os.path.basename(raw_prof_col.replace("\\", "/"))
+        else:
+            prof_name = clean_acc_id
+        profile_subpath = f"chrome_profiles/{prof_name}"
         profile_dir = os.path.join(BASE_DIR, profile_subpath)
         os.makedirs(profile_dir, exist_ok=True)
         custom_settings = read_account_settings_from_post_file(posts_file)
@@ -5286,6 +5854,7 @@ class ThreadsPosterGUI:
                     pass
             self.current_context = None
             self.current_page = None
+            _THREAD_LOG_LOCAL.account_name = ""
 
     def _run_legacy_sequential_loop(self, active_accounts, p):
         cycle_num = 1
@@ -5330,6 +5899,8 @@ class ThreadsPosterGUI:
 
     def _process_single_account(self, account, p, cycle_num=1):
         account_name = str(account.get("アカウントID") or account.get("アカウント名") or "").strip()
+        _THREAD_LOG_LOCAL.account_name = sanitize_account_folder_name(account_name)
+        get_account_images_dir(account_name, create=True)
         posts_file = self._find_posts_file(account_name)
         if not posts_file or not os.path.exists(posts_file):
             self.log(f"[{account_name}] '{posts_file}' が見つかりません。")
@@ -5429,7 +6000,7 @@ class ThreadsPosterGUI:
                 post_id = post_item.get("ID") or post_item.get("id") or row_idx - 1
                 text_content = expand_spintax_and_placeholders(self._extract_post_text(post_item))
                 raw_image = self._extract_raw_image(post_item)
-                resolved_img = resolve_image_path(raw_image, text_content)
+                resolved_img = resolve_image_path(raw_image, text_content, account_name=account_name)
                 row_topic_raw = self._extract_topic_or_community(post_item)
                 custom_topic_raw = custom_settings.get("topic", "")
                 account_topic_raw = self._extract_topic_or_community(account) if isinstance(account, dict) else ""
@@ -5567,6 +6138,7 @@ class ThreadsPosterGUI:
                 context.close()
             except Exception:
                 pass
+            _THREAD_LOG_LOCAL.account_name = ""
 
 if __name__ == "__main__":
     try:

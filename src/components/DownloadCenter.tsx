@@ -15,10 +15,19 @@ import {
   ShieldCheck,
   AlertTriangle
 } from 'lucide-react';
-import { RAW_THREADS_GUI_APP_PY } from '../data/rawScript';
+import {
+  RAW_THREADS_GUI_APP_PY,
+  RAW_THREADS_CLI_PY,
+  RAW_CHROME_LAUNCHER_PY,
+  RAW_CHROME_LAUNCHER_CS,
+  RAW_CHROME_LAUNCHER_BAT,
+  RAW_BUILD_CHROME_LAUNCHER_BAT,
+  RAW_BUILD_EXE_BAT
+} from '../data/rawScript';
 import { RAW_PROFILE_LAUNCHER_PY } from '../data/rawProfileLauncher';
 import { AccountInfo } from '../types';
 import { exportAccountsConfigWorkbook } from '../utils/excelUtils';
+import { createZipBlob } from '../utils/zipUtils';
 
 interface DownloadCenterProps {
   accounts?: AccountInfo[];
@@ -62,6 +71,59 @@ export const DownloadCenter: React.FC<DownloadCenterProps> = ({ accounts = [] })
       URL.revokeObjectURL(blobUrl);
       setDownloadSuccess('profile_launcher.py (ログイン・プロファイル生成ツール) のダウンロードを開始しました！');
       setTimeout(() => setDownloadSuccess(null), 4000);
+    } catch (err: any) {
+      console.error(err);
+    }
+  };
+
+  const triggerBlobDownload = (blob: Blob, filename: string, msg: string) => {
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(blobUrl);
+    setDownloadSuccess(msg);
+    setTimeout(() => setDownloadSuccess(null), 5000);
+  };
+
+  const downloadChromeLauncherDirectly = () => {
+    try {
+      const blob = new Blob([RAW_CHROME_LAUNCHER_PY], { type: 'text/x-python;charset=utf-8' });
+      triggerBlobDownload(blob, 'chrome_launcher.py', 'chrome_launcher.py (完全手動Chromeプロファイル起動ツール) のダウンロードを開始しました！');
+    } catch (err: any) {
+      console.error(err);
+    }
+  };
+
+  const downloadTextFileBlob = (content: string, filename: string, label: string) => {
+    try {
+      const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+      triggerBlobDownload(blob, filename, `${label} (${filename}) のダウンロードを開始しました！`);
+    } catch (err: any) {
+      console.error(err);
+    }
+  };
+
+  const downloadUpdateOnlyZipDirectly = () => {
+    try {
+      const zipBlob = createZipBlob([
+        { name: 'threads_gui_app.py', content: RAW_THREADS_GUI_APP_PY },
+        { name: 'threads_auto_poster_cli.py', content: RAW_THREADS_CLI_PY },
+        { name: 'chrome_launcher.py', content: RAW_CHROME_LAUNCHER_PY },
+        { name: 'ChromeLauncher.cs', content: RAW_CHROME_LAUNCHER_CS },
+        { name: 'chrome_launcher.bat', content: RAW_CHROME_LAUNCHER_BAT },
+        { name: 'chrome_launcher_起動.bat', content: RAW_CHROME_LAUNCHER_BAT },
+        { name: 'build_chrome_launcher_exe.bat', content: RAW_BUILD_CHROME_LAUNCHER_BAT },
+        { name: 'build_exe.bat', content: RAW_BUILD_EXE_BAT },
+      ]);
+      triggerBlobDownload(
+        zipBlob,
+        'ThreadsAutoPoster_update_only.zip',
+        'ThreadsAutoPoster_update_only.zip (全8ファイルの更新パック・Excel保護版) をブラウザから直接生成・ダウンロードしました！'
+      );
     } catch (err: any) {
       console.error(err);
     }
@@ -128,6 +190,89 @@ export const DownloadCenter: React.FC<DownloadCenterProps> = ({ accounts = [] })
           <span>{downloadSuccess}</span>
         </div>
       )}
+
+      {/* 🛠️ Chrome Custom Profile Launcher Card */}
+      <div className="p-5 rounded-2xl bg-gradient-to-br from-teal-950/70 via-zinc-950 to-zinc-950 border-2 border-teal-500/80 shadow-2xl space-y-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-2">
+              <span className="p-2 rounded-lg bg-teal-600 text-white shadow-lg">
+                <FolderOpen className="w-6 h-6" />
+              </span>
+              <div>
+                <h4 className="text-base font-bold text-white flex items-center gap-2">
+                  chrome_launcher (完全手動プロファイル起動ツール)
+                  <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-teal-950 text-teal-300 border border-teal-700 font-mono">
+                    初回手動・2回目以降自動
+                  </span>
+                </h4>
+                <p className="text-zinc-300 text-xs">
+                  プロファイル名（例: <code className="text-white font-mono">wqwq1320</code>）を入力するだけで純正Chromeを起動。勝手なURL遷移なしで手動ログインし、2回目以降はそのまま自動運用できます。
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              onClick={downloadUpdateOnlyZipDirectly}
+              className="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold rounded-xl shadow-lg text-xs cursor-pointer transition-all active:scale-95"
+            >
+              <Download className="w-4 h-4" />
+              <span>🔄 更新用ファイルのみ ZIP（ブラウザ直接生成・Excel保護）</span>
+            </button>
+
+            <button
+              onClick={downloadPythonDirectly}
+              className="flex items-center gap-2 px-3.5 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-emerald-300 font-bold rounded-xl border border-emerald-700/70 text-xs cursor-pointer transition-all"
+            >
+              <Download className="w-4 h-4" />
+              <span>threads_gui_app.py</span>
+            </button>
+
+            <button
+              onClick={downloadChromeLauncherDirectly}
+              className="flex items-center gap-2 px-3.5 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-teal-300 font-bold rounded-xl border border-teal-700/80 text-xs cursor-pointer transition-all"
+            >
+              <Download className="w-4 h-4" />
+              <span>chrome_launcher.py</span>
+            </button>
+
+            <button
+              onClick={() => downloadTextFileBlob(RAW_CHROME_LAUNCHER_CS, 'ChromeLauncher.cs', 'C#ソース')}
+              className="flex items-center gap-2 px-3 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-medium rounded-xl border border-zinc-700 text-xs cursor-pointer transition-all"
+            >
+              <Download className="w-4 h-4" />
+              <span>ChromeLauncher.cs</span>
+            </button>
+
+            <button
+              onClick={() => downloadTextFileBlob(RAW_CHROME_LAUNCHER_BAT, 'chrome_launcher.bat', 'EXE生成＆起動バッチ')}
+              className="flex items-center gap-2 px-3 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-medium rounded-xl border border-zinc-700 text-xs cursor-pointer transition-all"
+            >
+              <Download className="w-4 h-4" />
+              <span>chrome_launcher.bat</span>
+            </button>
+
+            <button
+              onClick={() => downloadTextFileBlob(RAW_BUILD_CHROME_LAUNCHER_BAT, 'build_chrome_launcher_exe.bat', 'EXEビルドバッチ')}
+              className="flex items-center gap-2 px-3 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-medium rounded-xl border border-zinc-700 text-xs cursor-pointer transition-all"
+            >
+              <Download className="w-4 h-4" />
+              <span>build_chrome_launcher_exe.bat</span>
+            </button>
+          </div>
+        </div>
+
+        <div className="p-3 rounded-xl bg-zinc-900/90 border border-zinc-800 text-[11px] text-zinc-300 space-y-1.5">
+          <div className="font-bold text-teal-300">🔄 既存フォルダへの上書きアップデート方法（Device Guard対策・アカウント別log/images対応）:</div>
+          <div>
+            「<strong>🔄 更新用ファイルのみ ZIP</strong>」はブラウザメモリから直接ZIPを生成します。展開したファイルを現在の実行フォルダ（例: <code className="text-zinc-200 font-mono">dist\ThreadsAutoPoster</code>）へ上書きコピーしてください。<br />
+            ※ 最新版ではアカウントごとのログ（<code className="text-white font-mono">log\アカウント名.log</code>）とアカウントごとの画像フォルダ（<code className="text-white font-mono">images\アカウント名\</code> / <code className="text-white font-mono">imeges\アカウント名\</code> にも対応）を自動生成・自動参照します。<br />
+            ※ Windows の <strong>Device Guard</strong> により未署名 `.exe` がブロックされる環境に対応するため、<code className="text-white font-mono">chrome_launcher.bat</code> は署名済み Python（<code className="text-white font-mono">chrome_launcher.py</code>）を最優先で直接起動します。
+          </div>
+        </div>
+      </div>
 
       {/* 🌟 Primary Feature Card: profile_launcher.py (NEW TOOL) */}
       <div className="p-5 rounded-2xl bg-gradient-to-br from-violet-950/80 via-zinc-950 to-zinc-950 border-2 border-violet-500/80 shadow-2xl space-y-4">
