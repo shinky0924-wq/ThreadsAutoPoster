@@ -2,14 +2,11 @@ import * as XLSX from 'xlsx';
 import { AccountInfo, PostItem, DailyGreetingSlot } from '../types';
 import { extractUserIdFromToken } from './spintax';
 
-/**
- * Exports current account and post data into authentic .xlsx format
- */
-export function exportAccountWorkbook(
+function buildAccountWorkbook(
   account: AccountInfo,
   posts: PostItem[],
   dailySlots: DailyGreetingSlot[]
-) {
+): XLSX.WorkBook {
   const wb = XLSX.utils.book_new();
 
   // 1. 設定 Sheet
@@ -66,7 +63,32 @@ export function exportAccountWorkbook(
   const wsDaily = XLSX.utils.aoa_to_sheet(dailyRows);
   XLSX.utils.book_append_sheet(wb, wsDaily, '日常ポスト');
 
+  return wb;
+}
+
+/**
+ * Exports current account and post data into authentic .xlsx format
+ */
+export function exportAccountWorkbook(
+  account: AccountInfo,
+  posts: PostItem[],
+  dailySlots: DailyGreetingSlot[]
+) {
+  const wb = buildAccountWorkbook(account, posts, dailySlots);
   XLSX.writeFile(wb, `${account.id}.xlsx`);
+}
+
+/**
+ * Builds .xlsx bytes (Uint8Array) for bundling inside a ZIP archive
+ */
+export function buildAccountWorkbookBytes(
+  account: AccountInfo,
+  posts: PostItem[],
+  dailySlots: DailyGreetingSlot[]
+): Uint8Array {
+  const wb = buildAccountWorkbook(account, posts, dailySlots);
+  const out = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+  return new Uint8Array(out);
 }
 
 /**

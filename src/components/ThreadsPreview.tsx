@@ -22,6 +22,7 @@ interface ThreadsPreviewProps {
   countdownSeconds: number;
   onPostNow: () => void;
   selectedTopic?: string;
+  customImages?: Record<string, string>;
 }
 
 export const ThreadsPreview: React.FC<ThreadsPreviewProps> = ({
@@ -32,6 +33,7 @@ export const ThreadsPreview: React.FC<ThreadsPreviewProps> = ({
   countdownSeconds,
   onPostNow,
   selectedTopic,
+  customImages,
 }) => {
   const formatCountdown = (secs: number) => {
     const m = Math.floor(secs / 60);
@@ -39,7 +41,7 @@ export const ThreadsPreview: React.FC<ThreadsPreviewProps> = ({
     return `${m}分${s < 10 ? '0' : ''}${s}秒`;
   };
 
-  const imageSrc = nextPost ? resolveImagePath(nextPost.imagePath, nextPost.text) : '';
+  const imageSrc = nextPost ? resolveImagePath(nextPost.imagePath, nextPost.text, customImages) : '';
   const displayText = nextPost ? parseSpintax(nextPost.text) : '未投稿のポストがありません。';
 
   return (

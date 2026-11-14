@@ -57,9 +57,18 @@ export function extractUserIdFromToken(token: string): string {
 /**
  * Resolves image path from cell or detects embedded image filename in post text
  */
-export function resolveImagePath(rawImgPath?: string, postText?: string): string {
+export function resolveImagePath(
+  rawImgPath?: string,
+  postText?: string,
+  customImages?: Record<string, string>
+): string {
   if (rawImgPath && rawImgPath.trim()) {
     const clean = rawImgPath.trim();
+    if (customImages) {
+      const base = clean.split(/[\\/]/).pop() || clean;
+      if (customImages[clean]) return customImages[clean];
+      if (customImages[base]) return customImages[base];
+    }
     if (clean.includes('image2.png')) return '/images/image2.png';
     if (clean.includes('image.png')) return '/images/image.png';
     if (clean.startsWith('http://') || clean.startsWith('https://') || clean.startsWith('data:')) {

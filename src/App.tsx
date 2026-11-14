@@ -17,6 +17,7 @@ import { SessionModal } from './components/SessionModal';
 import { exportAccountWorkbook, exportAccountsConfigWorkbook, parseExcelFile } from './utils/excelUtils';
 import { parseSpintax, resolveImagePath, extractUserIdFromToken } from './utils/spintax';
 import { DownloadCenter } from './components/DownloadCenter';
+import { GeneratorStudio } from './components/GeneratorStudio';
 import { RAW_THREADS_GUI_APP_PY, RAW_PROFILE_LAUNCHER_PY, RAW_PROFILE_EDITOR_PY } from './data/rawScript';
 import { 
   FileSpreadsheet, 
@@ -28,7 +29,8 @@ import {
   FileText,
   AlertCircle,
   Package,
-  Rocket
+  Rocket,
+  Wand2
 } from 'lucide-react';
 
 export default function App() {
@@ -84,7 +86,8 @@ export default function App() {
   const [isStealthing, setIsStealthing] = useState(false);
   const [statusText, setStatusText] = useState('待機中 (Excel読込済)');
   const [countdownSeconds, setCountdownSeconds] = useState(0);
-  const [activeTab, setActiveTab] = useState<'posts' | 'preview' | 'daily' | 'logs' | 'accounts' | 'downloads'>('posts');
+  const [activeTab, setActiveTab] = useState<'posts' | 'generator' | 'preview' | 'daily' | 'logs' | 'accounts' | 'downloads'>('generator');
+  const [generatedImagesMap, setGeneratedImagesMap] = useState<Record<string, Record<string, string>>>({});
   const [sessionModalOpen, setSessionModalOpen] = useState(false);
 
   // Sync to localStorage
@@ -695,8 +698,20 @@ export default function App() {
         {/* Navigation Tabs */}
         <div className="flex items-center gap-1.5 border-b border-zinc-800 pb-2 text-xs overflow-x-auto">
           <button
+            onClick={() => setActiveTab('generator')}
+            className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg font-medium transition-all cursor-pointer whitespace-nowrap shrink-0 ${
+              activeTab === 'generator'
+                ? 'bg-emerald-600 text-white font-bold shadow-sm'
+                : 'text-emerald-300 hover:text-white hover:bg-emerald-950/60 border border-emerald-500/40'
+            }`}
+          >
+            <Wand2 className="w-3.5 h-3.5" />
+            <span>AI不要・投稿＆画像生成テスト</span>
+          </button>
+
+          <button
             onClick={() => setActiveTab('posts')}
-            className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg font-medium transition-all cursor-pointer whitespace-nowrap ${
+            className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg font-medium transition-all cursor-pointer whitespace-nowrap shrink-0 ${
               activeTab === 'posts'
                 ? 'bg-zinc-800 text-white font-bold border border-zinc-700 shadow-sm'
                 : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900'
@@ -806,6 +821,25 @@ export default function App() {
             />
           )}
 
+          {activeTab === 'generator' && (
+            <GeneratorStudio
+              currentAccount={currentAccount}
+              dailySlots={dailySlots}
+              onApplyToAccountPosts={(newItems, replaceExisting, imgs) => {
+                setGeneratedImagesMap((prev) => ({
+                  ...prev,
+                  [currentAccount.id]: {
+                    ...(replaceExisting ? {} : prev[currentAccount.id] || {}),
+                    ...imgs,
+                  },
+                }));
+                handleBulkAddPosts(newItems, replaceExisting);
+              }}
+              onSwitchToTab={(tab) => setActiveTab(tab)}
+              onLog={(level, message) => addLog(level, message)}
+            />
+          )}
+
           {activeTab === 'preview' && (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               <ThreadsPreview
@@ -818,6 +852,7 @@ export default function App() {
                   if (nextPost) await executeSinglePost(nextPost);
                 }}
                 selectedTopic={nextTopic}
+                customImages={generatedImagesMap[currentAccount.id]}
               />
               <ConsoleLogs logs={logs} onClear={() => setLogs([])} />
             </div>
