@@ -103,10 +103,13 @@ if not defined PYW_EXE (
 )
 
 :: 5. Check required packages (quick silent check)
-"%PY_EXE%" %PY_ARGS% -c "import openpyxl; import playwright" >nul 2>&1
+"%PY_EXE%" %PY_ARGS% -c "import openpyxl; import playwright; import PIL" >nul 2>&1
 if %errorlevel% neq 0 (
     echo ライブラリを確認・自動導入しています (初回のみ約1分)...
-    "%PY_EXE%" %PY_ARGS% -m pip install --user openpyxl playwright >nul 2>&1
+    "%PY_EXE%" %PY_ARGS% -m pip install openpyxl playwright pillow >nul 2>&1
+    if %errorlevel% neq 0 (
+        "%PY_EXE%" %PY_ARGS% -m pip install --user openpyxl playwright pillow >nul 2>&1
+    )
     "%PY_EXE%" %PY_ARGS% -m playwright install chromium >nul 2>&1
 )
 

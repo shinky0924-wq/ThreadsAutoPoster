@@ -1,6 +1,60 @@
 import * as XLSX from 'xlsx';
-import { AccountInfo, PostItem, DailyGreetingSlot } from '../types';
+import { AccountInfo, AccountDesignProfile, PostItem, DailyGreetingSlot } from '../types';
 import { extractUserIdFromToken } from './spintax';
+
+function normalizeTone(raw?: string): AccountDesignProfile['tone'] | undefined {
+  if (!raw) return undefined;
+  const v = raw.trim().toLowerCase();
+  if (v === 'polite' || v.includes('丁寧') || v.includes('誠実')) return 'polite';
+  if (v === 'friendly' || v.includes('フレンド') || v.includes('親近')) return 'friendly';
+  if (v === 'expert' || v.includes('プロ') || v.includes('解説')) return 'expert';
+  if (v === 'empathetic' || v.includes('共感') || v.includes('エモ')) return 'empathetic';
+  return undefined;
+}
+
+function toneToJapaneseLabel(tone?: AccountDesignProfile['tone']): string {
+  switch (tone) {
+    case 'friendly': return 'フレンドリー';
+    case 'expert': return 'プロ解説';
+    case 'empathetic': return '共感';
+    case 'polite':
+    default: return tone ? '丁寧' : '';
+  }
+}
+
+function normalizeImageStyle(raw?: string): AccountDesignProfile['imageStyle'] | undefined {
+  if (!raw) return undefined;
+  const v = raw.trim().toLowerCase();
+  if (v === 'auto' || v.includes('自動おまかせ') || v.includes('最適化')) return 'auto';
+  if (v === 'magazine_clean' || v.includes('雑誌') || v.includes('エディトリアル')) return 'magazine_clean';
+  if (v === 'chat_bubble' || v.includes('吹き出し') || v.includes('会話')) return 'chat_bubble';
+  if (v === 'neon_night' || v.includes('ネオン')) return 'neon_night';
+  if (v === 'step_roadmap' || v.includes('ステップ') || v.includes('ロードマップ')) return 'step_roadmap';
+  if (v === 'qa_card' || v.includes('q&a') || v.includes('神回答')) return 'qa_card';
+  if (v === 'photo_overlay' || v.includes('写真') || v.includes('文字入れ')) return 'photo_overlay';
+  if (v === 'diagram_card' || v.includes('図解')) return 'diagram_card';
+  if (v === 'checklist' || v.includes('チェック')) return 'checklist';
+  if (v === 'all_mix' || v.includes('全テンプレート')) return 'all_mix';
+  if (v === 'mix' || v.includes('ミックス')) return 'mix';
+  return undefined;
+}
+
+function imageStyleToLabel(style?: AccountDesignProfile['imageStyle']): string {
+  switch (style) {
+    case 'auto': return '自動おまかせ（設計に合わせて最適化）';
+    case 'magazine_clean': return '雑誌エディトリアル風';
+    case 'chat_bubble': return '吹き出し会話SNS風';
+    case 'neon_night': return 'ネオン夜風';
+    case 'step_roadmap': return 'ステップ図解';
+    case 'qa_card': return 'Q&A神回答カード';
+    case 'photo_overlay': return '背景写真＋自動文字入れ';
+    case 'diagram_card': return 'SNS図解カード';
+    case 'checklist': return '保存用チェックリスト';
+    case 'all_mix': return '全テンプレートミックス';
+    case 'mix': return 'ミックス';
+    default: return '';
+  }
+}
 
 function buildAccountWorkbook(
   account: AccountInfo,
@@ -62,6 +116,26 @@ function buildAccountWorkbook(
   });
   const wsDaily = XLSX.utils.aoa_to_sheet(dailyRows);
   XLSX.utils.book_append_sheet(wb, wsDaily, '日常ポスト');
+
+  // 4. アカウント設計 Sheet (Optional, ignored safely by Python auto poster)
+  if (account.design) {
+    const d = account.design;
+    const designRows: any[][] = [
+      ['項目', '設定値'],
+      ['ジャンル', d.genre || ''],
+      ['ターゲット', d.target || ''],
+      ['口調', toneToJapaneseLabel(d.tone)],
+      ['悩み', d.painPoint || ''],
+      ['強みポイント', d.benefitPoints || ''],
+      ['誘導文CTA', d.cta || ''],
+      ['誘導URL', d.url || ''],
+      ['トピック', d.topic || ''],
+      ['画像スタイル', imageStyleToLabel(d.imageStyle)],
+    ];
+    const wsDesign = XLSX.utils.aoa_to_sheet(designRows);
+    wsDesign['!cols'] = [{ wch: 18 }, { wch: 60 }];
+    XLSX.utils.book_append_sheet(wb, wsDesign, 'アカウント設計');
+  }
 
   return wb;
 }
@@ -171,15 +245,18 @@ export async function parseExcelFile(
             const enabledCol = headers.findIndex((h) => h.includes('有効') || h.includes('ステータス') || h.includes('状態'));
             const notesCol = headers.findIndex((h) => h.includes('備考') || h.includes('note'));
 
+            const getCell = (row: any[], idx: number) =>
+              idx !== -1 && row[idx] !== undefined && row[idx] !== null ? String(row[idx]).trim() : '';
+
             const parsedAccounts: Partial<AccountInfo>[] = [];
             for (let r = headerIdx + 1; r < rawRows.length; r++) {
               const row = rawRows[r];
               if (!row || !row[accIdCol]) continue;
               const accId = String(row[accIdCol]).trim().replace(/^@/, '');
               if (!accId) continue;
-              const passVal = passCol !== -1 && row[passCol] ? String(row[passCol]).trim() : '';
-              const tokenVal = sessionCol !== -1 && row[sessionCol] ? String(row[sessionCol]).trim() : '';
-              const statusStr = enabledCol !== -1 && row[enabledCol] ? String(row[enabledCol]).trim() : '有効';
+              const passVal = getCell(row, passCol);
+              const tokenVal = getCell(row, sessionCol);
+              const statusStr = getCell(row, enabledCol) || '有効';
               const isEnabled = !['無効', '停止', 'off', 'OFF', '0', 'false', '停止 (要電話番号認証)'].includes(statusStr);
 
               parsedAccounts.push({
@@ -190,12 +267,38 @@ export async function parseExcelFile(
                 // プロファイル名はアカウントIDで自動生成 (chrome_profiles/<アカウントID>)
                 profileDir: `chrome_profiles/${accId}`,
                 enabled: isEnabled,
-                notes: notesCol !== -1 && row[notesCol] ? String(row[notesCol]).trim() : '',
+                notes: getCell(row, notesCol),
               });
             }
             if (parsedAccounts.length > 0) {
               result.accounts = parsedAccounts;
             }
+          }
+        }
+
+        // Also check for standalone アカウント設計 sheet inside <account>.xlsx
+        const designSheetName = wb.SheetNames.find((name) => name.includes('設計'));
+        if (designSheetName) {
+          const ws = wb.Sheets[designSheetName];
+          const rawRows = XLSX.utils.sheet_to_json<any[]>(ws, { header: 1 });
+          const parsedDesign: AccountDesignProfile = {};
+          for (const row of rawRows) {
+            if (!row || row.length < 2) continue;
+            const k = String(row[0] || '').trim();
+            const v = String(row[1] || '').trim();
+            if (!k || !v) continue;
+            if (k.includes('ジャンル')) parsedDesign.genre = v;
+            else if (k.includes('ターゲット')) parsedDesign.target = v;
+            else if (k.includes('口調')) parsedDesign.tone = normalizeTone(v);
+            else if (k.includes('悩み')) parsedDesign.painPoint = v;
+            else if (k.includes('強み') || k.includes('ポイント')) parsedDesign.benefitPoints = v;
+            else if (k.includes('誘導文') || k.includes('CTA')) parsedDesign.cta = v;
+            else if (k.includes('URL')) parsedDesign.url = v;
+            else if (k.includes('トピック')) parsedDesign.topic = v;
+            else if (k.includes('スタイル')) parsedDesign.imageStyle = normalizeImageStyle(v);
+          }
+          if (Object.keys(parsedDesign).length > 0) {
+            result.settings = { ...(result.settings || {}), design: parsedDesign };
           }
         }
 

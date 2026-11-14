@@ -89,7 +89,7 @@ echo [1/3] Python confirmed:
 echo Location: %PY_EXE% %PY_ARGS%
 echo.
 
-echo [2/3] Installing required packages (openpyxl, playwright, pyinstaller)...
+echo [2/3] Installing required packages (openpyxl, playwright, pillow, pyinstaller)...
 "%PY_EXE%" %PY_ARGS% -m pip install --upgrade pip >nul 2>&1
 "%PY_EXE%" %PY_ARGS% -m pip install --user -r requirements.txt
 if !errorlevel! neq 0 (

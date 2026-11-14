@@ -1,3 +1,26 @@
+export interface AccountDesignProfile {
+  genre?: string;
+  target?: string;
+  tone?: 'polite' | 'friendly' | 'expert' | 'empathetic';
+  painPoint?: string;
+  benefitPoints?: string;
+  cta?: string;
+  url?: string;
+  topic?: string;
+  imageStyle?:
+    | 'auto'
+    | 'photo_overlay'
+    | 'magazine_clean'
+    | 'chat_bubble'
+    | 'neon_night'
+    | 'step_roadmap'
+    | 'qa_card'
+    | 'diagram_card'
+    | 'checklist'
+    | 'mix'
+    | 'all_mix';
+}
+
 export interface AccountInfo {
   id: string;
   authToken: string;
@@ -13,6 +36,7 @@ export interface AccountInfo {
   currentTopicIndex: number;
   enabled: boolean; // 有効 / 無効 (電話番号認証時等に自動で無効・停止)
   checkpointReason?: string; // 停止理由
+  design?: AccountDesignProfile; // アカウント別の自動生成用設計データ
 }
 
 export interface PostItem {

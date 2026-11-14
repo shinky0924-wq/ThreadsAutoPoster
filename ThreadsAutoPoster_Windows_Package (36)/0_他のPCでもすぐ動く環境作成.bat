@@ -65,11 +65,11 @@ echo [1/3] Python環境を確認しました:
 "%PY_EXE%" %PY_ARGS% --version
 echo.
 
-echo [2/3] 必要なライブラリ 【openpyxl, playwright】 をインストール中...
+echo [2/3] 必要なライブラリ 【openpyxl, playwright, pillow】 をインストール中...
 "%PY_EXE%" %PY_ARGS% -m pip install --upgrade pip >nul 2>&1
-"%PY_EXE%" %PY_ARGS% -m pip install --user openpyxl playwright
+"%PY_EXE%" %PY_ARGS% -m pip install --user openpyxl playwright pillow
 if %errorlevel% neq 0 (
-    "%PY_EXE%" %PY_ARGS% -m pip install openpyxl playwright
+    "%PY_EXE%" %PY_ARGS% -m pip install openpyxl playwright pillow
 )
 
 echo.

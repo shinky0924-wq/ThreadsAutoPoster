@@ -27,7 +27,9 @@ import {
 import { RAW_PROFILE_LAUNCHER_PY } from '../data/rawProfileLauncher';
 import { AccountInfo } from '../types';
 import { exportAccountsConfigWorkbook } from '../utils/excelUtils';
-import { createZipBlob } from '../utils/zipUtils';
+import { createZipBlob, ZipInputFile } from '../utils/zipUtils';
+import sampleLanternsUrl from '../assets/images/tobita_street_lanterns_1794644991845.jpg';
+import sampleMachiyaUrl from '../assets/images/osaka_machiya_dusk_1794644992304.jpg';
 
 interface DownloadCenterProps {
   accounts?: AccountInfo[];
@@ -107,9 +109,9 @@ export const DownloadCenter: React.FC<DownloadCenterProps> = ({ accounts = [] })
     }
   };
 
-  const downloadUpdateOnlyZipDirectly = () => {
+  const downloadUpdateOnlyZipDirectly = async () => {
     try {
-      const zipBlob = createZipBlob([
+      const files: ZipInputFile[] = [
         { name: 'threads_gui_app.py', content: RAW_THREADS_GUI_APP_PY },
         { name: 'threads_auto_poster_cli.py', content: RAW_THREADS_CLI_PY },
         { name: 'chrome_launcher.py', content: RAW_CHROME_LAUNCHER_PY },
@@ -117,11 +119,23 @@ export const DownloadCenter: React.FC<DownloadCenterProps> = ({ accounts = [] })
         { name: 'chrome_launcher.bat', content: RAW_CHROME_LAUNCHER_BAT },
         { name: 'build_chrome_launcher_exe.bat', content: RAW_BUILD_CHROME_LAUNCHER_BAT },
         { name: 'build_exe.bat', content: RAW_BUILD_EXE_BAT },
-      ]);
+      ];
+      try {
+        const [r1, r2] = await Promise.all([fetch(sampleMachiyaUrl), fetch(sampleLanternsUrl)]);
+        if (r1.ok) {
+          files.push({ name: 'images/backgrounds/osaka_machiya_dusk.jpg', content: new Uint8Array(await r1.arrayBuffer()) });
+        }
+        if (r2.ok) {
+          files.push({ name: 'images/backgrounds/tobita_street_lanterns.jpg', content: new Uint8Array(await r2.arrayBuffer()) });
+        }
+      } catch {
+        // Sample photo fetch optional
+      }
+      const zipBlob = createZipBlob(files);
       triggerBlobDownload(
         zipBlob,
         'ThreadsAutoPoster_update_only.zip',
-        'ThreadsAutoPoster_update_only.zip (更新用7ファイル・Excel保護版) をブラウザから直接生成・ダウンロードしました！'
+        'ThreadsAutoPoster_update_only.zip (更新用ファイル＋サンプル背景写真・Excel保護版) をダウンロードしました！'
       );
     } catch (err: any) {
       console.error(err);

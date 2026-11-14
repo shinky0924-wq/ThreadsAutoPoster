@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { AccountInfo, DailyGreetingSlot, PostItem } from '../types';
+import { AccountInfo, AccountDesignProfile, DailyGreetingSlot, PostItem } from '../types';
 import {
   ACCOUNT_DESIGN_PRESETS,
   AccountDesignInput,
@@ -7,6 +7,7 @@ import {
   BUILTIN_SAMPLE_BACKGROUNDS,
   BackgroundPhotoItem,
   ColorPaletteId,
+  ConcreteImageTemplateStyle,
   GeneratedPostBundle,
   ImageAspectRatio,
   ImageTemplateStyle,
@@ -28,6 +29,7 @@ import {
   RefreshCw,
   Layers,
   Eye,
+  Save,
 } from 'lucide-react';
 
 interface GeneratorStudioProps {
@@ -38,25 +40,57 @@ interface GeneratorStudioProps {
     replaceExisting: boolean,
     generatedImages: Record<string, string>
   ) => void;
+  onSaveDesignToAccount: (accountId: string, designProfile: AccountDesignProfile) => void;
   onSwitchToTab: (tab: 'posts' | 'preview') => void;
   onLog: (level: 'INFO' | 'SUCCESS' | 'WARN' | 'ERROR', message: string) => void;
+}
+
+function buildDesignFromAccount(acc: AccountInfo): Omit<AccountDesignInput, 'count' | 'enableSpintax' | 'generateImages'> {
+  const base = ACCOUNT_DESIGN_PRESETS[0].design;
+  const d = acc.design;
+  return {
+    ...base,
+    genre: d?.genre ?? base.genre,
+    target: d?.target ?? base.target,
+    tone: d?.tone ?? base.tone,
+    painPoint: d?.painPoint ?? base.painPoint,
+    benefitPoints: d?.benefitPoints ?? base.benefitPoints,
+    cta: d?.cta ?? base.cta,
+    url: d?.url ?? base.url,
+    topic: d?.topic ?? acc.topics?.[0] ?? base.topic,
+    imageStyle: d?.imageStyle ?? base.imageStyle,
+  };
 }
 
 export const GeneratorStudio: React.FC<GeneratorStudioProps> = ({
   currentAccount,
   dailySlots,
   onApplyToAccountPosts,
+  onSaveDesignToAccount,
   onSwitchToTab,
   onLog,
 }) => {
-  const defaultPreset = ACCOUNT_DESIGN_PRESETS[0];
-
-  const [design, setDesign] = useState<AccountDesignInput>({
-    ...defaultPreset.design,
+  const [design, setDesign] = useState<AccountDesignInput>(() => ({
+    ...buildDesignFromAccount(currentAccount),
     count: 10,
     enableSpintax: true,
     generateImages: true,
-  });
+  }));
+
+  const lastLoadedAccRef = useRef<string>('');
+
+  // Auto-load design fields whenever switching accounts or importing updated account design from Excel
+  useEffect(() => {
+    const sig = `${currentAccount.id}:${JSON.stringify(currentAccount.design || {})}`;
+    if (lastLoadedAccRef.current !== sig) {
+      lastLoadedAccRef.current = sig;
+      setDesign((prev) => ({
+        ...prev,
+        ...buildDesignFromAccount(currentAccount),
+      }));
+      setPreviewHeadlineOverride('');
+    }
+  }, [currentAccount.id, currentAccount.design, currentAccount.topics]);
 
   const [backgrounds, setBackgrounds] = useState<BackgroundPhotoItem[]>(BUILTIN_SAMPLE_BACKGROUNDS);
   const [selectedBgId, setSelectedBgId] = useState<string>(BUILTIN_SAMPLE_BACKGROUNDS[0].id);
@@ -81,7 +115,8 @@ export const GeneratorStudio: React.FC<GeneratorStudioProps> = ({
       const canvas = liveCanvasRef.current;
       if (!canvas) return;
 
-      const sampleSpecs = generatePostSpecs({ ...design, count: 1 }, currentAccount.id);
+      const hasPhotos = backgrounds.length > 0;
+      const sampleSpecs = generatePostSpecs({ ...design, count: 1 }, currentAccount.id, hasPhotos);
       const spec = sampleSpecs[0];
       if (!spec) return;
 
@@ -95,8 +130,7 @@ export const GeneratorStudio: React.FC<GeneratorStudioProps> = ({
       }
       if (cancelled) return;
 
-      const previewStyle: Exclude<ImageTemplateStyle, 'mix'> =
-        design.imageStyle === 'mix' ? 'photo_overlay' : design.imageStyle;
+      const previewStyle: ConcreteImageTemplateStyle = spec.imageStyleUsed;
 
       renderPostImageOnCanvas(canvas, {
         aspectRatio: design.aspectRatio,
@@ -106,6 +140,7 @@ export const GeneratorStudio: React.FC<GeneratorStudioProps> = ({
         topic: design.topic || 'GUIDE',
         headline: previewHeadlineOverride.trim() || spec.headline,
         subhead: spec.subhead,
+        painPoint: spec.painPoint,
         bullets: spec.bullets,
         accountId: currentAccount.id,
         showWatermark: design.showAccountWatermark,
@@ -189,7 +224,7 @@ export const GeneratorStudio: React.FC<GeneratorStudioProps> = ({
     const t0 = performance.now();
 
     try {
-      const specs = generatePostSpecs(design, currentAccount.id);
+      const specs = generatePostSpecs(design, currentAccount.id, backgrounds.length > 0);
       const offscreen = document.createElement('canvas');
 
       // Preload all backgrounds once for rapid rendering
@@ -222,6 +257,7 @@ export const GeneratorStudio: React.FC<GeneratorStudioProps> = ({
             topic: spec.topic,
             headline: i === 0 && previewHeadlineOverride.trim() ? previewHeadlineOverride.trim() : spec.headline,
             subhead: spec.subhead,
+            painPoint: spec.painPoint,
             bullets: spec.bullets,
             accountId: currentAccount.id,
             showWatermark: design.showAccountWatermark,
@@ -373,9 +409,32 @@ export const GeneratorStudio: React.FC<GeneratorStudioProps> = ({
         <div className="xl:col-span-5 bg-zinc-900 border border-zinc-800 rounded-xl p-5 space-y-5 text-xs">
           {/* Section 1: Account Copy Design */}
           <div className="space-y-3">
-            <h3 className="text-sm font-bold text-white pb-2 border-b border-zinc-800">
-              1. アカウント設計（文章構成テンプレート）
-            </h3>
+            <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-zinc-800">
+              <h3 className="text-sm font-bold text-white">
+                1. アカウント設計（@{currentAccount.id} から読込済）
+              </h3>
+              <button
+                type="button"
+                onClick={() =>
+                  onSaveDesignToAccount(currentAccount.id, {
+                    genre: design.genre,
+                    target: design.target,
+                    tone: design.tone,
+                    painPoint: design.painPoint,
+                    benefitPoints: design.benefitPoints,
+                    cta: design.cta,
+                    url: design.url,
+                    topic: design.topic,
+                    imageStyle: design.imageStyle,
+                  })
+                }
+                className="flex items-center gap-1 px-2.5 py-1 bg-sky-600/20 hover:bg-sky-600/30 text-sky-300 border border-sky-500/40 rounded-md text-[11px] font-semibold cursor-pointer transition-colors whitespace-nowrap shrink-0"
+                title="入力中のアカウント設計をこのアカウントに紐づけて保存（Excel出力にも反映）"
+              >
+                <Save className="w-3 h-3" />
+                <span>@{currentAccount.id} に保存</span>
+              </button>
+            </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
@@ -494,10 +553,17 @@ export const GeneratorStudio: React.FC<GeneratorStudioProps> = ({
                   }
                   className="w-full bg-zinc-950 border border-zinc-700 text-white px-3 py-2 rounded-lg focus:outline-none"
                 >
+                  <option value="auto">自動おまかせ（設計に合わせて最適化）</option>
+                  <option value="magazine_clean">雑誌エディトリアル風</option>
+                  <option value="chat_bubble">吹き出し会話SNS風</option>
+                  <option value="neon_night">ネオン夜風</option>
+                  <option value="step_roadmap">ステップ図解</option>
+                  <option value="qa_card">Q&A神回答カード</option>
                   <option value="photo_overlay">背景写真＋自動文字入れ</option>
                   <option value="diagram_card">SNS図解カード（01/02/03）</option>
                   <option value="checklist">保存用チェックリスト</option>
-                  <option value="mix">3パターン自動ミックス</option>
+                  <option value="all_mix">全テンプレートミックス</option>
+                  <option value="mix">3パターンミックス</option>
                 </select>
               </div>
               <div>
@@ -529,6 +595,8 @@ export const GeneratorStudio: React.FC<GeneratorStudioProps> = ({
                   <option value="emerald_slate">エメラルド × 濃紺</option>
                   <option value="crimson_gold">深紅アクセント × 黒</option>
                   <option value="ivory_ink">生成り白 × 墨文字</option>
+                  <option value="magazine_ivory_navy">雑誌アイボリー × 紺</option>
+                  <option value="neon_cyan_night">ネオンシアン × 漆黒</option>
                 </select>
               </div>
               <div>

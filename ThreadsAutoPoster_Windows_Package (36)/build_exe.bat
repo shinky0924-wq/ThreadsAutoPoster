@@ -106,8 +106,8 @@ if not defined PY_EXE if exist "C:\Program Files\Python310\python.exe" set "PY_E
 if not defined PY_EXE goto :no_py_installer
 
 echo Python detected: %PY_EXE% %PY_ARGS%
-echo Installing / updating required libraries (openpyxl, playwright)...
-"%PY_EXE%" %PY_ARGS% -m pip install openpyxl playwright >nul 2>&1
+echo Installing / updating required libraries (openpyxl, playwright, pillow)...
+"%PY_EXE%" %PY_ARGS% -m pip install openpyxl playwright pillow >nul 2>&1
 echo [OK] Libraries verified.
 goto :build_finish
 

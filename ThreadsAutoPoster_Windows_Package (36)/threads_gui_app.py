@@ -3820,11 +3820,1228 @@ def update_daily_post_status(filepath, sheet_name, row_indices):
         print(f"[WARN] update_daily_post_status error: {e}")
         return False
 
+# =====================================================================
+# アカウント設計 × スピンタックス文章 & Pillow PNG画像 自動生成エンジン
+# =====================================================================
+
+_DESIGN_PRESETS_PY = {
+    "飛田新地・風景×求人案内": {
+        "genre": "飛田新地・大阪エリアの安心ワーク紹介",
+        "target": "短期集中でしっかり稼ぎたい未経験・経験者の方",
+        "tone": "丁寧・誠実",
+        "pain": "雰囲気や給与システムが事前に分からず一歩踏み出せない",
+        "benefits": "見学のみOK・日払い対応\n1日2〜3時間の短時間シフト\nプライバシー徹底・個室待機完備\n専任スタッフの事前サポート",
+        "cta": "雰囲気や条件の詳細はプロフィールの案内ページからご確認ください",
+        "url": "https://osaka-shinodayamashinchivip.pages.dev/blog/osaka-shinodayama-high-guarantee-guide",
+        "topic": "飛田新地",
+        "image_style": "自動おまかせ（設計に合わせて最適化）",
+        "palette": "提灯アンバー×黒",
+    },
+    "信太山新地・安心解説": {
+        "genre": "信太山新地の働き方・システム解説",
+        "target": "身バレ防止・自由出勤を重視したい方",
+        "tone": "共感スタイル",
+        "pain": "身バレや強引な勧誘がないか不安で相談できない",
+        "benefits": "アリバイ・送迎・寮完備\nお友達同士の見学も大歓迎\nノルマ・罰金いっさい無し\n自分のペースで週1から勤務OK",
+        "cta": "不安な点の質問だけでも気軽にプロフのリンクからどうぞ",
+        "url": "https://osaka-shinodayamashinchivip.pages.dev/blog/shinodayamashinchi-privacy-guide",
+        "topic": "信太山新地",
+        "image_style": "自動おまかせ（設計に合わせて最適化）",
+        "palette": "エメラルド×濃紺",
+    },
+    "SNS運用・チェックリスト": {
+        "genre": "Threads運用・自動化ノウハウ",
+        "target": "投稿ネタ切れや画像作成の手間に悩む運用者",
+        "tone": "プロ解説",
+        "pain": "毎日投稿と画像作りに時間がかかりすぎて続かない",
+        "benefits": "フック×本文×CTAの型を固定\nスピンタックスで重複判定を回避\n背景写真＋自動文字入れで時短\n1日3分で100件分のストック完成",
+        "cta": "保存して次回の投稿作成のチェックリストに活用してください",
+        "url": "",
+        "topic": "SNS運用",
+        "image_style": "ステップ図解",
+        "palette": "生成り白×墨",
+    },
+    "美容・カフェ・雑誌マガジン風": {
+        "genre": "大人女子の週末カフェ・美容習慣",
+        "target": "無理なく垢抜けたい20〜30代女性",
+        "tone": "フレンドリー",
+        "pain": "忙しくて自分のケアやリフレッシュの時間が取れない",
+        "benefits": "朝10分で気分が整うルーティン\n肌と心に優しいシンプル習慣\n週末だけのご褒美カフェ時間\nプチプラでも続く厳選アイテム",
+        "cta": "あとで見返せるように保存＆フォローしてもらえると嬉しいです",
+        "url": "",
+        "topic": "美容習慣",
+        "image_style": "雑誌エディトリアル風",
+        "palette": "雑誌アイボリー×紺",
+    },
+}
+
+_PIL_PALETTES = {
+    "提灯アンバー×黒": {
+        "bg1": (11, 12, 16), "bg2": (22, 25, 34), "accent": (245, 158, 11),
+        "accent_soft": (62, 43, 14), "text": (248, 250, 252), "muted": (203, 213, 225),
+        "border": (110, 78, 25), "light": False,
+    },
+    "エメラルド×濃紺": {
+        "bg1": (9, 17, 20), "bg2": (16, 32, 38), "accent": (16, 185, 129),
+        "accent_soft": (14, 58, 46), "text": (248, 250, 252), "muted": (203, 213, 225),
+        "border": (22, 92, 68), "light": False,
+    },
+    "深紅×黒": {
+        "bg1": (18, 9, 12), "bg2": (31, 16, 21), "accent": (244, 63, 94),
+        "accent_soft": (72, 20, 32), "text": (255, 241, 242), "muted": (253, 164, 175),
+        "border": (120, 35, 52), "light": False,
+    },
+    "生成り白×墨": {
+        "bg1": (246, 244, 239), "bg2": (255, 255, 255), "accent": (15, 118, 110),
+        "accent_soft": (224, 242, 241), "text": (24, 24, 27), "muted": (82, 82, 91),
+        "border": (214, 211, 205), "light": True,
+    },
+    "雑誌アイボリー×紺": {
+        "bg1": (250, 247, 242), "bg2": (255, 254, 251), "accent": (30, 58, 138),
+        "accent_soft": (224, 231, 255), "text": (24, 24, 27), "muted": (82, 82, 91),
+        "border": (212, 207, 198), "light": True,
+    },
+    "ネオンシアン×漆黒": {
+        "bg1": (7, 9, 16), "bg2": (14, 20, 34), "accent": (34, 211, 238),
+        "accent_soft": (14, 54, 72), "text": (248, 250, 252), "muted": (186, 230, 253),
+        "border": (21, 94, 117), "light": False,
+    },
+}
+
+
+_LAST_PILLOW_ERROR = ""
+_PILLOW_INSTALL_LOCK = threading.Lock()
+
+
+def _inject_site_packages_paths():
+    """動的にインストールされたPillowが再起動なしでimportできるようsys.pathとキャッシュを更新する"""
+    import importlib
+    import site
+    candidates = []
+    try:
+        user_site = site.getusersitepackages()
+        if user_site:
+            candidates.append(user_site)
+    except Exception:
+        pass
+    try:
+        for sp in site.getsitepackages():
+            if sp:
+                candidates.append(sp)
+    except Exception:
+        pass
+    appdata = os.environ.get("APPDATA", "")
+    if appdata:
+        candidates.append(
+            os.path.join(
+                appdata,
+                "Python",
+                f"Python{sys.version_info.major}{sys.version_info.minor}",
+                "site-packages",
+            )
+        )
+    local_app = os.environ.get("LOCALAPPDATA", "")
+    if local_app:
+        candidates.append(
+            os.path.join(
+                local_app,
+                "Programs",
+                "Python",
+                f"Python{sys.version_info.major}{sys.version_info.minor}",
+                "Lib",
+                "site-packages",
+            )
+        )
+    for p in candidates:
+        if p and os.path.isdir(p) and p not in sys.path:
+            sys.path.append(p)
+    try:
+        importlib.invalidate_caches()
+    except Exception:
+        pass
+
+
+def _resolve_pip_python_exe():
+    """pip実行に適した同一バージョンのpython.exeパスを特定する（pythonw.exe / frozen対策）"""
+    if not getattr(sys, "frozen", False):
+        exe = sys.executable or ""
+        if exe and os.path.basename(exe).lower() == "pythonw.exe":
+            sibling = os.path.join(os.path.dirname(exe), "python.exe")
+            if os.path.exists(sibling):
+                return sibling
+        if exe and os.path.exists(exe):
+            return exe
+    ver_tag = f"{sys.version_info.major}{sys.version_info.minor}"
+    for cand in [
+        os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "Python", f"Python{ver_tag}", "python.exe"),
+        os.path.join(r"C:\Program Files", f"Python{ver_tag}", "python.exe"),
+        os.path.join(rf"C:\Python{ver_tag}", "python.exe"),
+    ]:
+        if cand and os.path.exists(cand):
+            return cand
+    import shutil
+    return shutil.which("python") or sys.executable
+
+
+def ensure_pillow_available(log_func=None, allow_install=True):
+    """Pillow(PIL)が未導入の場合は自動インストールを試行し、(Image, ImageDraw, ImageFont)を返す"""
+    global _LAST_PILLOW_ERROR
+    _inject_site_packages_paths()
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+        _LAST_PILLOW_ERROR = ""
+        return Image, ImageDraw, ImageFont
+    except ImportError as first_err:
+        if not allow_install:
+            return None, None, None
+        with _PILLOW_INSTALL_LOCK:
+            _inject_site_packages_paths()
+            try:
+                from PIL import Image, ImageDraw, ImageFont
+                _LAST_PILLOW_ERROR = ""
+                return Image, ImageDraw, ImageFont
+            except ImportError:
+                pass
+            py_exe = _resolve_pip_python_exe()
+            if log_func:
+                log_func(f"[INFO] Pillowライブラリを自動インストールしています (Python: {py_exe})...")
+
+            import subprocess
+            kw = {"capture_output": True, "text": True, "timeout": 120}
+            if os.name == "nt" and hasattr(subprocess, "CREATE_NO_WINDOW"):
+                kw["creationflags"] = subprocess.CREATE_NO_WINDOW
+
+            err_logs = [f"初回import失敗: {first_err}", f"実行Python: {py_exe}"]
+            try:
+                pip_chk = subprocess.run([py_exe, "-m", "pip", "--version"], **kw)
+                if pip_chk.returncode != 0:
+                    err_logs.append(f"pip確認失敗({pip_chk.returncode}): {(pip_chk.stderr or pip_chk.stdout or '').strip()[:200]}")
+                    subprocess.run([py_exe, "-m", "ensurepip", "--upgrade"], **kw)
+            except Exception as ep:
+                err_logs.append(f"pip確認例外: {ep}")
+
+            strategies = [
+                [py_exe, "-m", "pip", "install", "--no-input", "--disable-pip-version-check", "Pillow"],
+                [py_exe, "-m", "pip", "install", "--no-input", "--disable-pip-version-check", "--user", "Pillow"],
+                [py_exe, "-m", "pip", "install", "--no-input", "--disable-pip-version-check", "--trusted-host", "pypi.org", "--trusted-host", "files.pythonhosted.org", "Pillow"],
+                [py_exe, "-m", "pip", "install", "--no-input", "--disable-pip-version-check", "--user", "--trusted-host", "pypi.org", "--trusted-host", "files.pythonhosted.org", "Pillow"],
+            ]
+
+            for idx, cmd in enumerate(strategies, 1):
+                try:
+                    res = subprocess.run(cmd, **kw)
+                    _inject_site_packages_paths()
+                    try:
+                        from PIL import Image, ImageDraw, ImageFont
+                        _LAST_PILLOW_ERROR = ""
+                        if log_func:
+                            log_func("[SUCCESS] Pillowのインストールが完了しました！")
+                        return Image, ImageDraw, ImageFont
+                    except ImportError as imp_e:
+                        out_txt = ((res.stderr or "") + "\n" + (res.stdout or "")).strip()
+                        short_out = out_txt[-300:] if len(out_txt) > 300 else out_txt
+                        err_logs.append(f"試行{idx} (rc={res.returncode}): {short_out or imp_e}")
+                except Exception as ex:
+                    err_logs.append(f"試行{idx} 例外: {ex}")
+
+            _LAST_PILLOW_ERROR = "\n".join(err_logs)
+            if log_func:
+                log_func(f"[ERROR] Pillowインストール失敗:\n{_LAST_PILLOW_ERROR}")
+            return None, None, None
+
+
+def _find_jp_font_path(bold=False, family="gothic"):
+    win_fonts = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts")
+    if family == "mincho":
+        candidates = [
+            os.path.join(win_fonts, "yumindb.ttf" if bold else "yumin.ttf"),
+            os.path.join(win_fonts, "BIZ-UDMinchoM.ttc"),
+            os.path.join(win_fonts, "msmincho.ttc"),
+            "/usr/share/fonts/opentype/noto/NotoSerifCJK-Bold.ttc",
+        ]
+        for path in candidates:
+            if os.path.exists(path):
+                return path
+    if bold:
+        candidates = [
+            os.path.join(win_fonts, "meiryob.ttc"),
+            os.path.join(win_fonts, "YuGothB.ttc"),
+            os.path.join(win_fonts, "BIZ-UDGothicB.ttc"),
+            os.path.join(win_fonts, "msgothic.ttc"),
+            os.path.join(win_fonts, "meiryo.ttc"),
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+            "/usr/share/fonts/truetype/noto/NotoSansJP-Bold.otf",
+        ]
+    else:
+        candidates = [
+            os.path.join(win_fonts, "meiryo.ttc"),
+            os.path.join(win_fonts, "YuGothM.ttc"),
+            os.path.join(win_fonts, "YuGothR.ttc"),
+            os.path.join(win_fonts, "BIZ-UDGothicR.ttc"),
+            os.path.join(win_fonts, "msgothic.ttc"),
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/truetype/noto/NotoSansJP-Regular.otf",
+        ]
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+    return None
+
+
+def _load_jp_font(ImageFont, size, bold=False, family="gothic"):
+    path = _find_jp_font_path(bold=bold, family=family)
+    if path:
+        try:
+            return ImageFont.truetype(path, size=size)
+        except Exception:
+            pass
+    return ImageFont.load_default()
+
+
+def _wrap_jp_text_pil(draw, text, font, max_width, max_lines=3):
+    lines = []
+    for para in str(text or "").split("\n"):
+        cur = ""
+        for ch in para:
+            nxt = cur + ch
+            try:
+                w = draw.textlength(nxt, font=font)
+            except Exception:
+                bbox = draw.textbbox((0, 0), nxt, font=font)
+                w = bbox[2] - bbox[0]
+            if w > max_width and len(cur) > 0:
+                lines.append(cur)
+                cur = ch
+                if len(lines) >= max_lines:
+                    break
+            else:
+                cur = nxt
+        if cur and len(lines) < max_lines:
+            lines.append(cur)
+        if len(lines) >= max_lines:
+            break
+    if len(lines) == max_lines:
+        last = lines[-1]
+        try:
+            lw = draw.textlength(last, font=font)
+        except Exception:
+            bbox = draw.textbbox((0, 0), last, font=font)
+            lw = bbox[2] - bbox[0]
+        if lw > max_width - 20 and len(last) > 1:
+            lines[-1] = last[:-1] + "…"
+    return lines
+
+
+def ensure_account_workbook(xlsx_path, account_id):
+    """<account_id>.xlsx が存在しない場合に標準4シート構成で自動作成して開く"""
+    if os.path.exists(xlsx_path):
+        return openpyxl.load_workbook(xlsx_path)
+    wb = openpyxl.Workbook()
+    ws_set = wb.active
+    ws_set.title = "設定"
+    ws_set.append(["ツイート間隔"])
+    ws_set.append(["※指定の範囲内から毎回ランダム"])
+    ws_set.append([120, "分", "〜", 360, "分"])
+    ws_set.append(["ツイート実行時間"])
+    ws_set.append(["(時:分〜時:分)"])
+    ws_set.append(["0:00", "〜", "0:00"])
+    ws_set.append(["モード"])
+    ws_set.append(["(0:上から順, 1:ランダム)"])
+    ws_set.append([1])
+    ws_set.append(["Chromeプロファイル保存パス"])
+    ws_set.append(["(空欄の場合は chrome_profiles/<アカウントID> が自動使用されます)"])
+    ws_set.append([f"chrome_profiles/{account_id}"])
+    ws_set.append(["コミュニティまたはトピック", "信太山新地"])
+
+    ws_posts = wb.create_sheet(title="投稿リスト")
+    ws_posts.append(["ID", "ポスト文章", "コミュニティまたはトピック", "画像ファイルパス", "ステータス", "投稿完了日時", "エラー内容"])
+
+    ws_daily = wb.create_sheet(title="日常ポスト")
+    ws_daily.append(["枠名", "時間帯", "ポスト文章", "有効無効", "最終投稿日", "最終投稿日時"])
+    ws_daily.append(["朝枠", "7:00-9:00", "{おはようございます☀️|良い朝ですね🌿} 今日もマイペースで頑張りましょう！", "有効", "", ""])
+
+    wb.save(xlsx_path)
+    return wb
+
+
+def load_account_design_from_xlsx(xlsx_path, fallback_topic=""):
+    """<account_id>.xlsx の「アカウント設計」シートから設計項目を読み込む"""
+    default_d = dict(_DESIGN_PRESETS_PY["飛田新地・風景×求人案内"])
+    if fallback_topic:
+        default_d["topic"] = fallback_topic
+    if not xlsx_path or not os.path.exists(xlsx_path):
+        return default_d
+    try:
+        wb = openpyxl.load_workbook(xlsx_path, data_only=True)
+        design_ws = None
+        for sname in wb.sheetnames:
+            if "設計" in sname:
+                design_ws = wb[sname]
+                break
+        if design_ws:
+            for row in design_ws.iter_rows(values_only=True):
+                if not row or len(row) < 2 or row[0] is None:
+                    continue
+                k = str(row[0]).strip()
+                v = "" if row[1] is None else str(row[1]).strip()
+                if not k:
+                    continue
+                if "ジャンル" in k and v:
+                    default_d["genre"] = v
+                elif "ターゲット" in k and v:
+                    default_d["target"] = v
+                elif "口調" in k and v:
+                    default_d["tone"] = v
+                elif "悩み" in k and v:
+                    default_d["pain"] = v
+                elif ("強み" in k or "ポイント" in k) and v:
+                    default_d["benefits"] = v
+                elif ("誘導文" in k or "CTA" in k) and v:
+                    default_d["cta"] = v
+                elif "URL" in k:
+                    default_d["url"] = v
+                elif "トピック" in k and v:
+                    default_d["topic"] = v
+                elif "スタイル" in k and v:
+                    default_d["image_style"] = v
+                elif "配色" in k and v:
+                    default_d["palette"] = v
+        wb.close()
+    except Exception:
+        pass
+    return default_d
+
+
+def save_account_design_to_xlsx(xlsx_path, account_id, design_dict):
+    """<account_id>.xlsx の「アカウント設計」シートへ設計項目を保存する"""
+    wb = ensure_account_workbook(xlsx_path, account_id)
+    if "アカウント設計" in wb.sheetnames:
+        ws = wb["アカウント設計"]
+        if ws.max_row >= 1:
+            ws.delete_rows(1, ws.max_row)
+    else:
+        ws = wb.create_sheet(title="アカウント設計")
+    ws.append(["項目", "設定値"])
+    ws.append(["ジャンル", design_dict.get("genre", "")])
+    ws.append(["ターゲット", design_dict.get("target", "")])
+    ws.append(["口調", design_dict.get("tone", "丁寧・誠実")])
+    ws.append(["悩み", design_dict.get("pain", "")])
+    ws.append(["強みポイント", design_dict.get("benefits", "")])
+    ws.append(["誘導文CTA", design_dict.get("cta", "")])
+    ws.append(["誘導URL", design_dict.get("url", "")])
+    ws.append(["トピック", design_dict.get("topic", "")])
+    ws.append(["画像スタイル", design_dict.get("image_style", "自動おまかせ（設計に合わせて最適化）")])
+    ws.append(["配色テーマ", design_dict.get("palette", "提灯アンバー×黒")])
+    wb.save(xlsx_path)
+    wb.close()
+
+
+def _normalize_image_style_label_py(raw_style):
+    s = (raw_style or "").strip()
+    if not s:
+        return "自動おまかせ（設計に合わせて最適化）"
+    alias = {
+        "背景写真＋文字入れ": "背景写真＋自動文字入れ",
+        "photo_overlay": "背景写真＋自動文字入れ",
+        "magazine_clean": "雑誌エディトリアル風",
+        "chat_bubble": "吹き出し会話SNS風",
+        "neon_night": "ネオン夜風",
+        "step_roadmap": "ステップ図解",
+        "qa_card": "Q&A神回答カード",
+        "diagram_card": "SNS図解カード",
+        "チェックリスト": "保存用チェックリスト",
+        "checklist": "保存用チェックリスト",
+        "ミックス": "全テンプレートミックス",
+        "mix": "全テンプレートミックス",
+        "all_mix": "全テンプレートミックス",
+        "auto": "自動おまかせ（設計に合わせて最適化）",
+    }
+    if s in alias:
+        return alias[s]
+    return s
+
+
+def resolve_design_image_templates(design_dict, has_photos=False):
+    """アカウント設計（ジャンル・ターゲット・口調・写真有無）に応じて最適な画像テンプレート順を自動選定"""
+    style_pref = _normalize_image_style_label_py(design_dict.get("image_style"))
+    style_map = {
+        "背景写真＋自動文字入れ": "photo_overlay",
+        "雑誌エディトリアル風": "magazine_clean",
+        "吹き出し会話SNS風": "chat_bubble",
+        "ネオン夜風": "neon_night",
+        "ステップ図解": "step_roadmap",
+        "Q&A神回答カード": "qa_card",
+        "SNS図解カード": "diagram_card",
+        "保存用チェックリスト": "checklist",
+    }
+    if style_pref in style_map:
+        return [style_map[style_pref]]
+
+    all_styles = ["magazine_clean", "chat_bubble", "neon_night", "step_roadmap", "qa_card", "diagram_card", "checklist"]
+    if has_photos:
+        all_styles.insert(0, "photo_overlay")
+    if "全テンプレート" in style_pref:
+        return all_styles
+    if "3パターン" in style_pref or "ミックス" in style_pref:
+        return ["photo_overlay", "diagram_card", "checklist"] if has_photos else ["magazine_clean", "diagram_card", "checklist"]
+
+    # 自動おまかせ：ジャンル・トピック・口調を解析
+    joined = " ".join([
+        str(design_dict.get("genre") or ""),
+        str(design_dict.get("topic") or ""),
+        str(design_dict.get("target") or ""),
+        str(design_dict.get("pain") or ""),
+    ]).lower()
+    tone = (design_dict.get("tone") or "丁寧・誠実").strip()
+
+    if any(k in joined for k in ["新地", "ナイト", "高収入", "キャバ", "夜職", "ガールズ", "ラウンジ", "体験入店", "短期集中"]):
+        if tone == "フレンドリー":
+            seq = ["chat_bubble", "neon_night", "qa_card", "magazine_clean"]
+        elif tone == "共感スタイル":
+            seq = ["chat_bubble", "qa_card", "magazine_clean", "neon_night"]
+        else:
+            seq = ["neon_night", "magazine_clean", "qa_card", "chat_bubble"]
+    elif any(k in joined for k in ["副業", "キャリア", "転職", "sns", "threads", "ai", "ビジネス", "稼", "運用", "ノウハウ", "投資"]):
+        if tone == "プロ解説":
+            seq = ["step_roadmap", "diagram_card", "qa_card", "checklist"]
+        else:
+            seq = ["step_roadmap", "magazine_clean", "chat_bubble", "checklist"]
+    elif any(k in joined for k in ["美容", "カフェ", "暮", "ダイエット", "コスメ", "女性", "育児", "習慣"]):
+        seq = ["magazine_clean", "checklist", "chat_bubble", "qa_card"]
+    else:
+        tone_defaults = {
+            "プロ解説": ["step_roadmap", "diagram_card", "qa_card", "checklist"],
+            "フレンドリー": ["chat_bubble", "magazine_clean", "qa_card", "checklist"],
+            "共感スタイル": ["chat_bubble", "qa_card", "magazine_clean", "checklist"],
+            "丁寧・誠実": ["magazine_clean", "qa_card", "step_roadmap", "checklist"],
+        }
+        seq = list(tone_defaults.get(tone, ["magazine_clean", "qa_card", "step_roadmap", "checklist"]))
+
+    if has_photos and "photo_overlay" not in seq:
+        seq = ["photo_overlay", seq[0], seq[1], "photo_overlay"] + seq[2:]
+    return seq
+
+
+def generate_posts_from_design(design_dict, count=10, enable_spintax=True, has_photos=False):
+    """フック(1行目)×本文×CTA(結び)＋スピンタックスで投稿セットを自動生成"""
+    hooks_map = {
+        "丁寧・誠実": [
+            "【保存版】{topic}で失敗しないために最初に知っておくべきこと",
+            "「{pain}」と迷われている方へ、現場のリアルをお伝えします。",
+            "{target}から特にご相談が多い疑問を分かりやすく整理しました。",
+            "実はあまり知られていませんが、{genre}には安心できる共通点があります。",
+            "初めての方ほど大切にしてほしい、{topic}の3つのチェック基準。",
+            "雰囲気を見てから決めたい方へ。事前相談でよく聞かれるポイントまとめ。",
+            "無駄な不安を減らして納得して選ぶための{genre}ガイド。",
+            "短時間で効率よく結果を出したい方が、最初に見直すべきポイント。",
+        ],
+        "フレンドリー": [
+            "ぶっちゃけ「{pain}」って思ってる人、かなり多いですよね…！",
+            "{target}にこそ知ってほしい、{topic}のリアルな話✨",
+            "これ知らないまま動くのはもったいない！{genre}のポイントまとめ🙌",
+            "よく質問をもらう「実際どうなの？」に正直にお答えします💬",
+            "最初の一歩がいちばん緊張するけど、実はこんな雰囲気なんです🌿",
+            "気になるけど聞きづらいこと、ここでまとめてスッキリ解決しましょう☕️",
+            "自分のペースを大事にしたい人ほど、この選び方がしっくりきます✨",
+            "保存してあとで見返せるように、大事なポイントだけギュッとまとめました📌",
+        ],
+        "プロ解説": [
+            "【結論】{topic}で後悔しない人は、必ず「この基準」を先に確認しています。",
+            "「{pain}」を放置したまま選ぶと、時間と労力をロスする理由。",
+            "{target}向けの{genre}：成果と安心感を両立する設計ルール。",
+            "曖昧な情報に振り回されないための、チェック項目リスト公開。",
+            "効率よく条件を整える人が実践している3ステップ手順。",
+            "ミスマッチを防ぐために、事前に必ず確認すべきポイント一覧。",
+            "再現性高く進めるための、{topic}・実践テンプレート整理。",
+            "迷う時間をゼロにする、シンプルな判断軸をまとめました。",
+        ],
+        "共感スタイル": [
+            "「{pain}」…その気持ち、すごくよく分かります。",
+            "無理をしてまで頑張らなくて大丈夫。{target}に合った選び方があります。",
+            "不安があるまま動かなくてOK。まずは雰囲気を知るところから始めてみませんか？",
+            "誰にも相談できずに一人で悩んでいた方に、そっと届けたいお話。",
+            "{genre}は「知ってから決める」だけで、気持ちの負担がぐっと軽くなります。",
+            "大切なのは、あなた自身の安心とペースを守れる環境かどうか。",
+            "「思っていたより落ち着いた雰囲気だった」という声が多い理由とは。",
+            "焦らず自分のタイミングで納得できるよう、ポイントをまとめました。",
+        ],
+    }
+
+    connectors_spintax = [
+        "{まずは雰囲気を知るだけでもOKです|最初の一歩は情報収集からで十分です|事前確認だけで不安の大半は解消できます}。",
+        "{条件やペースを重視したい方ほど|無理なく続けたい方ほど|初めて検討される方ほど}、事前のすり合わせが鍵になります。",
+        "{見学や質問だけでも歓迎される環境|プライバシー配慮が整っている環境|サポート体制が明確な環境}を選ぶのがおすすめです。",
+        "{1人で抱え込まずに|焦って決めずに|比較しながら}、自分に合う選択肢を確かめてみてください。",
+    ]
+    connectors_plain = [
+        "まずは雰囲気を知るだけでも十分な前進になります。",
+        "条件やペースを重視したい方ほど、事前のすり合わせが大切です。",
+        "サポート体制やプライバシー配慮が明確な環境を選ぶと安心です。",
+        "焦って決めずに、自分に合う選択肢を一つずつ確かめてみてください。",
+    ]
+    closers_spintax = [
+        "{気になる点があればいつでも参考にしてみてください|まずはブックマークして見返してみてください|一歩目の判断材料になれば嬉しいです}",
+        "{無理のないペースで進めていきましょう|自分に合った環境選びを応援しています|納得できる選択ができるよう願っています}",
+    ]
+
+    topic = (design_dict.get("topic") or "おすすめ").strip()
+    genre = (design_dict.get("genre") or topic).strip()
+    target = (design_dict.get("target") or "これから始める方").strip()
+    pain = (design_dict.get("pain") or "何から確認すればいいか分からない").strip()
+    cta = (design_dict.get("cta") or "詳細はプロフィールの案内をご覧ください。").strip()
+    url = (design_dict.get("url") or "").strip()
+
+    raw_bullets = [s.strip() for s in str(design_dict.get("benefits") or "").splitlines() if s.strip()]
+    bullets = raw_bullets[:4] if raw_bullets else [
+        "事前の条件・システム確認で安心",
+        "自分のペースに合わせた柔軟な選択",
+        "プライバシーとサポート体制を重視",
+        "まずは見学・相談からスタート可能",
+    ]
+
+    tone = design_dict.get("tone") or "丁寧・誠実"
+    hooks = hooks_map.get(tone, hooks_map["丁寧・誠実"])
+    template_seq = resolve_design_image_templates(design_dict, has_photos=has_photos)
+
+    custom_headlines = [
+        f"{topic}・失敗しない選び方",
+        f"知らないと損する{topic}の基本",
+        f"初めてでも安心の{topic}ガイド",
+        f"{topic}のリアルな雰囲気とは",
+        "後悔しないための3つの基準",
+        "無理なく続くワークスタイル",
+        "保存版・事前チェック項目",
+        "短時間×安心環境のポイント",
+    ]
+
+    results = []
+    for i in range(max(1, min(200, int(count)))):
+        h_tpl = hooks[i % len(hooks)]
+        hook = h_tpl.replace("{topic}", topic).replace("{genre}", genre).replace("{target}", target).replace("{pain}", pain)
+        b1 = bullets[i % len(bullets)]
+        b2 = bullets[(i + 1) % len(bullets)]
+        conn = connectors_spintax[i % len(connectors_spintax)] if enable_spintax else connectors_plain[i % len(connectors_plain)]
+        closer = closers_spintax[i % len(closers_spintax)] if enable_spintax else "ぜひ参考にしてみてください。"
+        bullet_block = f"① {b1}\n② {b2}" if tone == "プロ解説" else f"・{b1}\n・{b2}"
+        cta_line = f"{{{cta}|{closer}。{cta}}}" if enable_spintax else cta
+        parts = [hook, "", bullet_block, conn, "", cta_line]
+        if url:
+            parts.append(url)
+        full_text = "\n".join(parts).strip()
+
+        if i % 2 == 0:
+            headline = custom_headlines[(i // 2) % len(custom_headlines)]
+        else:
+            stripped = re.sub(r"【[^】]+】", "", hook).replace("「", "").replace("」", "").strip()
+            headline = stripped[:25] + ("…" if len(stripped) > 25 else "")
+
+        sub_raw = f"{target}向け · {b1}"
+        subhead = sub_raw[:33] + ("…" if len(sub_raw) > 33 else "")
+        resolved_style = template_seq[i % len(template_seq)]
+
+        results.append({
+            "index": i + 1,
+            "text": full_text,
+            "topic": topic,
+            "headline": headline,
+            "subhead": subhead,
+            "bullets": bullets,
+            "pain": pain,
+            "cta": cta,
+            "style": resolved_style,
+            "filename": f"gen_{i + 1:03d}.png",
+        })
+    return results
+
+
+def render_post_image_pil(
+    Image, ImageDraw, ImageFont,
+    style="photo_overlay",
+    aspect_ratio="1:1",
+    palette_name="提灯アンバー×黒",
+    scrim_opacity=0.48,
+    topic="",
+    headline="",
+    subhead="",
+    bullets=None,
+    account_id="",
+    post_index=1,
+    bg_image_path=None,
+    show_watermark=True,
+    output_path=None,
+    pain="",
+):
+    """アカウント設計に合わせて多彩なデザインテンプレート（写真文字入れ/雑誌風/吹き出し/ネオン夜風/ステップ図解/Q&A/図解/チェックリスト）を描画"""
+    width = 1080
+    height = 1350 if aspect_ratio == "4:5" else 1080
+    theme = _PIL_PALETTES.get(palette_name, _PIL_PALETTES["提灯アンバー×黒"])
+    pad = 76
+    bullets = bullets or ["事前の条件確認で安心", "自分のペースで続けやすい", "プライバシー重視の環境"]
+    pain_text = (pain or "何から確認すればいいか分からず不安…").strip()
+
+    def _fit_cover(bg_path):
+        bg = Image.open(bg_path).convert("RGB")
+        iw, ih = bg.size
+        if iw <= 0 or ih <= 0:
+            return None
+        ir = iw / ih
+        cr = width / height
+        if ir > cr:
+            nh = height
+            nw = int(height * ir)
+            bg = bg.resize((nw, nh), Image.LANCZOS)
+            left = (nw - width) // 2
+            bg = bg.crop((left, 0, left + width, height))
+        else:
+            nw = width
+            nh = int(width / ir)
+            bg = bg.resize((nw, nh), Image.LANCZOS)
+            top = (nh - height) // 2
+            bg = bg.crop((0, top, width, top + height))
+        return bg
+
+    def _smooth_ambient_bg(c1, c2, ac, tint_strength=0.30):
+        from PIL import ImageFilter
+        sw, sh = 240, max(240, int(240 * height / width))
+        mesh = Image.new("RGB", (sw, sh), c1)
+        md = ImageDraw.Draw(mesh)
+        for gy in range(sh):
+            t = gy / max(1, sh - 1)
+            md.line([(0, gy), (sw, gy)], fill=(
+                int(c2[0] * (1 - t) + c1[0] * t),
+                int(c2[1] * (1 - t) + c1[1] * t),
+                int(c2[2] * (1 - t) + c1[2] * t),
+            ))
+        w1 = (
+            int(c2[0] * (1 - tint_strength) + ac[0] * tint_strength),
+            int(c2[1] * (1 - tint_strength) + ac[1] * tint_strength),
+            int(c2[2] * (1 - tint_strength) + ac[2] * tint_strength),
+        )
+        md.ellipse([int(sw * 0.38), -int(sh * 0.12), int(sw * 1.12), int(sh * 0.62)], fill=w1)
+        mesh = mesh.filter(ImageFilter.GaussianBlur(radius=48))
+        return mesh.resize((width, height), Image.BICUBIC)
+
+    def _rrect(draw_obj, box, radius=18, fill=None, outline=None, width_px=2):
+        try:
+            draw_obj.rounded_rectangle(box, radius=radius, fill=fill, outline=outline, width=width_px)
+        except Exception:
+            draw_obj.rectangle(box, fill=fill, outline=outline, width=width_px)
+
+    if style == "photo_overlay":
+        base = None
+        has_real_photo = False
+        if bg_image_path and os.path.exists(bg_image_path):
+            try:
+                base = _fit_cover(bg_image_path)
+                if base is not None:
+                    has_real_photo = True
+            except Exception:
+                base = None
+
+        if has_real_photo and base is not None:
+            base_rgba = base.convert("RGBA")
+            alpha_val = max(0.15, min(0.85, float(scrim_opacity)))
+            scrim = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+            s_draw = ImageDraw.Draw(scrim)
+            for gy in range(height):
+                t = gy / max(1, height)
+                if t < 0.42:
+                    a = alpha_val * (0.18 + 0.25 * (t / 0.42))
+                else:
+                    bottom_target = min(0.88, alpha_val + 0.34)
+                    start_a = alpha_val * 0.43
+                    a = start_a + (bottom_target - start_a) * (((t - 0.42) / 0.58) ** 1.15)
+                s_draw.line([(0, gy), (width, gy)], fill=(8, 10, 14, int(max(0, min(230, a * 255)))))
+            img = Image.alpha_composite(base_rgba, scrim)
+        else:
+            img = _smooth_ambient_bg(theme["bg1"], theme["bg2"], theme["accent"], tint_strength=0.35).convert("RGBA")
+
+        draw = ImageDraw.Draw(img)
+        frame_col = (255, 255, 255, 48) if not theme["light"] else theme["border"] + (200,)
+        txt_main_col = (255, 255, 255, 255) if (has_real_photo or not theme["light"]) else theme["text"] + (255,)
+        txt_sub_col = (241, 245, 249, 232) if (has_real_photo or not theme["light"]) else theme["muted"] + (255,)
+        txt_topic_col = (248, 250, 252, 255) if (has_real_photo or not theme["light"]) else theme["text"] + (255,)
+
+        draw.rectangle([38, 38, width - 38, height - 38], outline=frame_col, width=2)
+        draw.rectangle([pad, pad + 6, pad + 42, pad + 12], fill=theme["accent"] + (255,))
+        f_topic = _load_jp_font(ImageFont, 28, bold=True)
+        draw.text((pad + 58, pad - 6), topic or "GUIDE", font=f_topic, fill=txt_topic_col)
+
+        f_head = _load_jp_font(ImageFont, 66, bold=True)
+        f_sub = _load_jp_font(ImageFont, 32, bold=False)
+        f_foot = _load_jp_font(ImageFont, 26, bold=True)
+
+        max_w = width - pad * 2
+        h_lines = _wrap_jp_text_pil(draw, headline, f_head, max_w, max_lines=3)
+        s_lines = _wrap_jp_text_pil(draw, subhead, f_sub, max_w, max_lines=2) if subhead else []
+
+        line_h = 88
+        sub_line_h = 44
+        sub_block_h = (14 + len(s_lines) * sub_line_h + 18) if s_lines else 0
+        foot_h = 66 if show_watermark else 16
+        total_h = 40 + len(h_lines) * line_h + sub_block_h + foot_h
+        cy = height - pad - total_h
+
+        draw.rectangle([pad, cy, pad + 72, cy + 8], fill=theme["accent"] + (255,))
+        cy += 40
+
+        for line in h_lines:
+            if has_real_photo or not theme["light"]:
+                draw.text((pad + 2, cy + 4), line, font=f_head, fill=(0, 0, 0, 190))
+            draw.text((pad, cy), line, font=f_head, fill=txt_main_col)
+            cy += line_h
+
+        if s_lines:
+            cy += 14
+            for sl in s_lines:
+                draw.text((pad, cy), sl, font=f_sub, fill=txt_sub_col)
+                cy += sub_line_h
+
+        if show_watermark:
+            div_y = height - pad - 44
+            div_col = (255, 255, 255, 64) if (has_real_photo or not theme["light"]) else theme["border"] + (220,)
+            wm_col = (226, 232, 240, 225) if (has_real_photo or not theme["light"]) else theme["muted"] + (255,)
+            draw.line([(pad, div_y), (width - pad, div_y)], fill=div_col, width=2)
+            draw.text((pad, height - pad - 28), f"@{account_id or 'threads'}", font=f_foot, fill=wm_col)
+            no_txt = f"NO.{post_index:02d}"
+            try:
+                nw = draw.textlength(no_txt, font=f_foot)
+            except Exception:
+                nw = 90
+            draw.text((width - pad - nw, height - pad - 28), no_txt, font=f_foot, fill=theme["accent"] + (255,))
+        out_img = img.convert("RGB")
+
+    elif style == "magazine_clean":
+        # 雑誌・エディトリアル風：明朝体見出し＋余白＋洗練インデックス
+        paper_bg = (250, 247, 242) if theme["light"] else (18, 19, 24)
+        card_bg = (255, 255, 255) if theme["light"] else (26, 28, 36)
+        ink_col = (24, 24, 27) if theme["light"] else (248, 250, 252)
+        sub_col = (82, 82, 91) if theme["light"] else (180, 188, 200)
+        line_col = (220, 214, 204) if theme["light"] else (48, 52, 64)
+        ac = theme["accent"]
+
+        out_img = Image.new("RGB", (width, height), paper_bg)
+        if bg_image_path and os.path.exists(bg_image_path):
+            try:
+                bg_cov = _fit_cover(bg_image_path)
+                if bg_cov:
+                    out_img = Image.blend(out_img, bg_cov, 0.08 if theme["light"] else 0.14)
+            except Exception:
+                pass
+        draw = ImageDraw.Draw(out_img)
+        draw.rectangle([42, 42, width - 42, height - 42], outline=line_col, width=2)
+
+        f_vol = _load_jp_font(ImageFont, 24, bold=True)
+        f_head = _load_jp_font(ImageFont, 58, bold=True, family="mincho")
+        f_sub = _load_jp_font(ImageFont, 28, bold=False)
+        f_idx = _load_jp_font(ImageFont, 32, bold=True, family="mincho")
+        f_item = _load_jp_font(ImageFont, 30, bold=True)
+        f_foot = _load_jp_font(ImageFont, 24, bold=True)
+
+        y = pad + 6
+        draw.text((pad, y), f"ISSUE NO.{post_index:02d}", font=f_vol, fill=ac)
+        topic_str = (topic or "FEATURE").upper()
+        try:
+            tw = draw.textlength(topic_str, font=f_vol)
+        except Exception:
+            tw = 140
+        draw.text((width - pad - tw, y), topic_str, font=f_vol, fill=sub_col)
+        y += 42
+        draw.rectangle([pad, y, pad + 88, y + 6], fill=ac)
+        draw.line([(pad + 104, y + 3), (width - pad, y + 3)], fill=line_col, width=2)
+        y += 42
+
+        max_w = width - pad * 2
+        h_lines = _wrap_jp_text_pil(draw, headline, f_head, max_w, max_lines=3)
+        for hl in h_lines:
+            draw.text((pad, y), hl, font=f_head, fill=ink_col)
+            y += 78
+
+        if subhead:
+            y += 6
+            s_lines = _wrap_jp_text_pil(draw, subhead, f_sub, max_w, max_lines=2)
+            for sl in s_lines:
+                draw.text((pad, y), sl, font=f_sub, fill=sub_col)
+                y += 40
+
+        y += 28
+        _rrect(draw, [pad, y, width - pad, height - pad - 68], radius=16, fill=card_bg, outline=line_col, width_px=2)
+
+        inner_y = y + 34
+        items = bullets[:3]
+        slot_h = max(92, (height - pad - 68 - y - 56) // max(1, len(items)))
+        for idx_i, it_txt in enumerate(items):
+            num_s = f"{idx_i + 1:02d}."
+            draw.text((pad + 34, inner_y + 4), num_s, font=f_idx, fill=ac)
+            wrapped = _wrap_jp_text_pil(draw, it_txt, f_item, max_w - 140, max_lines=2)
+            for li, wl in enumerate(wrapped):
+                draw.text((pad + 112, inner_y + li * 40), wl, font=f_item, fill=ink_col)
+            if idx_i < len(items) - 1:
+                sep_y = inner_y + slot_h - 14
+                draw.line([(pad + 34, sep_y), (width - pad - 34, sep_y)], fill=line_col, width=1)
+            inner_y += slot_h
+
+        if show_watermark:
+            draw.text((pad, height - pad - 24), f"@{account_id or 'threads'}", font=f_foot, fill=sub_col)
+            r_lbl = "EDITORIAL PICK"
+            try:
+                rw = draw.textlength(r_lbl, font=f_foot)
+            except Exception:
+                rw = 170
+            draw.text((width - pad - rw, height - pad - 24), r_lbl, font=f_foot, fill=ac)
+
+    elif style == "chat_bubble":
+        # 吹き出し・会話SNS風：左(読者の悩みQ) → 右(アカウントの回答A)
+        out_img = _smooth_ambient_bg(theme["bg1"], theme["bg2"], theme["accent"], tint_strength=0.18)
+        draw = ImageDraw.Draw(out_img)
+        ac = theme["accent"]
+        q_bg = (232, 236, 242) if theme["light"] else (32, 36, 48)
+        q_border = (203, 213, 225) if theme["light"] else (58, 65, 84)
+        a_bg = (255, 255, 255) if theme["light"] else (24, 30, 42)
+        ink_col = theme["text"]
+        sub_col = theme["muted"]
+
+        f_top = _load_jp_font(ImageFont, 26, bold=True)
+        f_q = _load_jp_font(ImageFont, 32, bold=True)
+        f_head = _load_jp_font(ImageFont, 40, bold=True)
+        f_item = _load_jp_font(ImageFont, 30, bold=True)
+        f_badge = _load_jp_font(ImageFont, 24, bold=True)
+        f_foot = _load_jp_font(ImageFont, 25, bold=True)
+
+        y = pad
+        draw.text((pad, y), f"💬 {topic or '相談'} · よくあるお悩み＆回答", font=f_top, fill=ac)
+        y += 52
+        draw.line([(pad, y), (width - pad, y)], fill=theme["border"], width=2)
+        y += 32
+
+        # 左側：読者の悩み吹き出し
+        av_s = 72
+        _rrect(draw, [pad, y, pad + av_s, y + av_s], radius=36, fill=q_bg, outline=q_border, width_px=2)
+        draw.text((pad + 24, y + 20), "Q", font=f_top, fill=sub_col)
+
+        qb_x1 = pad + av_s + 20
+        qb_x2 = width - pad - 70
+        q_lines = _wrap_jp_text_pil(draw, f"「{pain_text}」", f_q, qb_x2 - qb_x1 - 56, max_lines=3)
+        qb_h = max(110, 44 + len(q_lines) * 44)
+        _rrect(draw, [qb_x1, y, qb_x2, y + qb_h], radius=24, fill=q_bg, outline=q_border, width_px=2)
+        draw.polygon([(qb_x1 + 2, y + 28), (qb_x1 - 14, y + 36), (qb_x1 + 2, y + 48)], fill=q_bg)
+        for idx_q, ql in enumerate(q_lines):
+            draw.text((qb_x1 + 28, y + 24 + idx_q * 44), ql, font=f_q, fill=ink_col)
+        y += qb_h + 38
+
+        # 右側：回答見出し吹き出し
+        head_fg = (12, 12, 14) if sum(ac) > 460 else (255, 255, 255)
+        ab_x1 = pad + 56
+        ab_x2 = width - pad - av_s - 20
+        _rrect(draw, [width - pad - av_s, y, width - pad, y + av_s], radius=36, fill=ac, outline=ac, width_px=2)
+        draw.text((width - pad - av_s + 24, y + 20), "A", font=f_top, fill=head_fg)
+
+        a_lines = _wrap_jp_text_pil(draw, headline, f_head, ab_x2 - ab_x1 - 56, max_lines=2)
+        ab_h = max(106, 44 + len(a_lines) * 54)
+        _rrect(draw, [ab_x1, y, ab_x2, y + ab_h], radius=24, fill=ac, outline=ac, width_px=2)
+        draw.polygon([(ab_x2 - 2, y + 28), (ab_x2 + 14, y + 36), (ab_x2 - 2, y + 48)], fill=ac)
+        for idx_a, al in enumerate(a_lines):
+            draw.text((ab_x1 + 28, y + 24 + idx_a * 54), al, font=f_head, fill=head_fg)
+        y += ab_h + 26
+
+        # 下側：具体ポイント返信バブル
+        avail_bot = height - pad - 60 - y
+        items = bullets[:3]
+        _rrect(draw, [ab_x1, y, ab_x2, y + avail_bot], radius=24, fill=a_bg, outline=ac, width_px=2)
+        row_step = max(66, (avail_bot - 40) // max(1, len(items)))
+        iy = y + 26
+        for bi, bt in enumerate(items):
+            _rrect(draw, [ab_x1 + 26, iy + 6, ab_x1 + 60, iy + 40], radius=10, fill=theme["accent_soft"], outline=ac, width_px=2)
+            draw.text((ab_x1 + 36, iy + 9), f"{bi + 1}", font=f_badge, fill=ac)
+            b_lines = _wrap_jp_text_pil(draw, bt, f_item, ab_x2 - ab_x1 - 108, max_lines=2)
+            for li, bl in enumerate(b_lines):
+                draw.text((ab_x1 + 78, iy + 4 + li * 38), bl, font=f_item, fill=ink_col)
+            iy += row_step
+
+        if show_watermark:
+            draw.text((pad, height - pad - 24), f"@{account_id or 'threads'}", font=f_foot, fill=sub_col)
+            r_txt = f"Q&A #{post_index:02d}"
+            try:
+                rw = draw.textlength(r_txt, font=f_foot)
+            except Exception:
+                rw = 110
+            draw.text((width - pad - rw, height - pad - 24), r_txt, font=f_foot, fill=ac)
+
+    elif style == "neon_night":
+        # ネオン夜風：漆黒＋GaussianBlur発光ネオン枠＋グラスカード
+        from PIL import ImageFilter
+        ac = theme["accent"] if not theme["light"] else (56, 189, 248)
+        base = _smooth_ambient_bg((7, 8, 14), (15, 18, 30), ac, tint_strength=0.22)
+        if bg_image_path and os.path.exists(bg_image_path):
+            try:
+                bg_cov = _fit_cover(bg_image_path)
+                if bg_cov:
+                    base = Image.blend(base, bg_cov, 0.18)
+            except Exception:
+                pass
+        img = base.convert("RGBA")
+        neon_layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        nd = ImageDraw.Draw(neon_layer)
+        _rrect(nd, [44, 44, width - 44, height - 44], radius=26, fill=None, outline=ac + (210,), width_px=12)
+        nd.line([(pad, 250), (pad + 180, 250)], fill=ac + (230,), width=10)
+        neon_blur = neon_layer.filter(ImageFilter.GaussianBlur(radius=16))
+        img = Image.alpha_composite(img, neon_blur)
+        draw = ImageDraw.Draw(img)
+        _rrect(draw, [44, 44, width - 44, height - 44], radius=26, fill=None, outline=ac + (255,), width_px=3)
+
+        f_tag = _load_jp_font(ImageFont, 24, bold=True)
+        f_head = _load_jp_font(ImageFont, 58, bold=True)
+        f_item = _load_jp_font(ImageFont, 32, bold=True)
+        f_num = _load_jp_font(ImageFont, 32, bold=True)
+        f_foot = _load_jp_font(ImageFont, 25, bold=True)
+
+        y = pad + 8
+        tag_txt = f"◆ {(topic or 'NIGHT').upper()}  //  PICK UP {post_index:02d}"
+        try:
+            tag_tw = draw.textlength(tag_txt, font=f_tag)
+        except Exception:
+            tag_tw = len(tag_txt) * 18
+        tag_box_w = min(width - pad * 2, max(320, int(tag_tw) + 42))
+        _rrect(draw, [pad, y, pad + tag_box_w, y + 48], radius=10, fill=(20, 24, 38, 220), outline=ac + (180,), width_px=2)
+        draw.text((pad + 18, y + 10), tag_txt, font=f_tag, fill=ac + (255,))
+        y += 82
+
+        max_w = width - pad * 2
+        h_lines = _wrap_jp_text_pil(draw, headline, f_head, max_w, max_lines=2)
+        for hl in h_lines:
+            draw.text((pad + 3, y + 4), hl, font=f_head, fill=(0, 0, 0, 200))
+            draw.text((pad, y), hl, font=f_head, fill=(255, 255, 255, 255))
+            y += 78
+        y += 14
+        draw.rectangle([pad, y, pad + 160, y + 6], fill=ac + (255,))
+        draw.line([(pad + 176, y + 3), (width - pad, y + 3)], fill=(255, 255, 255, 50), width=2)
+        y += 42
+
+        items = bullets[:3]
+        avail_h = height - pad - 68 - y
+        gap = 24
+        card_h = min(176, max(108, (avail_h - gap * (len(items) - 1)) // max(1, len(items))))
+        for idx_i, it_txt in enumerate(items):
+            cy = y + idx_i * (card_h + gap)
+            _rrect(draw, [pad, cy, width - pad, cy + card_h], radius=16, fill=(16, 20, 32, 228), outline=ac + (145,), width_px=2)
+            draw.rectangle([pad + 22, cy + 24, pad + 30, cy + card_h - 24], fill=ac + (255,))
+            draw.text((pad + 52, cy + (card_h - 38) // 2), f"{idx_i + 1:02d}", font=f_num, fill=ac + (255,))
+            ilines = _wrap_jp_text_pil(draw, it_txt, f_item, max_w - 150, max_lines=2)
+            if len(ilines) == 1:
+                draw.text((pad + 122, cy + (card_h - 36) // 2), ilines[0], font=f_item, fill=(248, 250, 252, 255))
+            else:
+                draw.text((pad + 122, cy + (card_h // 2) - 42), ilines[0], font=f_item, fill=(248, 250, 252, 255))
+                draw.text((pad + 122, cy + (card_h // 2) + 4), ilines[1], font=f_item, fill=(248, 250, 252, 255))
+
+        if show_watermark:
+            draw.text((pad, height - pad - 24), f"@{account_id or 'threads'}", font=f_foot, fill=(203, 213, 225, 225))
+            r_txt = f"NIGHT EDITION #{post_index:02d}"
+            try:
+                rw = draw.textlength(r_txt, font=f_foot)
+            except Exception:
+                rw = 210
+            draw.text((width - pad - rw, height - pad - 24), r_txt, font=f_foot, fill=ac + (255,))
+        out_img = img.convert("RGB")
+
+    elif style == "step_roadmap":
+        # ステップ図解・ロードマップ風：縦ライン＋STEP 01→02→03接続ノード
+        out_img = _smooth_ambient_bg(theme["bg1"], theme["bg2"], theme["accent"], tint_strength=0.14)
+        draw = ImageDraw.Draw(out_img)
+        ac = theme["accent"]
+
+        f_kick = _load_jp_font(ImageFont, 26, bold=True)
+        f_head = _load_jp_font(ImageFont, 50, bold=True)
+        f_step_lbl = _load_jp_font(ImageFont, 22, bold=True)
+        f_item = _load_jp_font(ImageFont, 31, bold=True)
+        f_foot = _load_jp_font(ImageFont, 25, bold=True)
+
+        y = pad
+        draw.text((pad, y), f"🧭 {topic or 'GUIDE'} · 実践ステップ図解", font=f_kick, fill=ac)
+        y += 46
+        max_w = width - pad * 2
+        h_lines = _wrap_jp_text_pil(draw, headline, f_head, max_w, max_lines=2)
+        for hl in h_lines:
+            draw.text((pad, y), hl, font=f_head, fill=theme["text"])
+            y += 66
+        y += 14
+        draw.line([(pad, y), (width - pad, y)], fill=theme["border"], width=2)
+        y += 38
+
+        items = bullets[:3]
+        avail_h = height - pad - 68 - y
+        gap = 26
+        card_h = min(192, max(112, (avail_h - gap * (len(items) - 1)) // max(1, len(items))))
+        node_x = pad + 34
+
+        if len(items) > 1:
+            top_cy = y + card_h // 2
+            bot_cy = y + (len(items) - 1) * (card_h + gap) + card_h // 2
+            draw.line([(node_x, top_cy), (node_x, bot_cy)], fill=ac, width=5)
+
+        for idx_i, it_txt in enumerate(items):
+            cy = y + idx_i * (card_h + gap)
+            mid_y = cy + card_h // 2
+            _rrect(draw, [node_x - 28, mid_y - 28, node_x + 28, mid_y + 28], radius=28, fill=ac, outline=theme["bg1"], width_px=4)
+            num_s = f"{idx_i + 1}"
+            num_fg = (12, 12, 14) if sum(ac) > 460 else (255, 255, 255)
+            draw.text((node_x - 9, mid_y - 16), num_s, font=f_kick, fill=num_fg)
+
+            cx1 = pad + 88
+            _rrect(draw, [cx1, cy, width - pad, cy + card_h], radius=16, fill=theme["bg2"], outline=theme["border"], width_px=2)
+            draw.text((cx1 + 26, cy + 18), f"STEP 0{idx_i + 1}", font=f_step_lbl, fill=ac)
+            ilines = _wrap_jp_text_pil(draw, it_txt, f_item, width - pad - cx1 - 52, max_lines=2)
+            for li, il in enumerate(ilines):
+                draw.text((cx1 + 26, cy + 54 + li * 42), il, font=f_item, fill=theme["text"])
+
+        if show_watermark:
+            draw.text((pad, height - pad - 24), f"@{account_id or 'threads'}", font=f_foot, fill=theme["muted"])
+            r_txt = "3-STEP ROADMAP"
+            try:
+                rw = draw.textlength(r_txt, font=f_foot)
+            except Exception:
+                rw = 190
+            draw.text((width - pad - rw, height - pad - 24), r_txt, font=f_foot, fill=ac)
+
+    elif style == "qa_card":
+        # Q&A神回答カード：上段に質問(悩み)、下段に結論＋3つの回答ポイント
+        out_img = _smooth_ambient_bg(theme["bg1"], theme["bg2"], theme["accent"], tint_strength=0.14)
+        draw = ImageDraw.Draw(out_img)
+        ac = theme["accent"]
+
+        f_kick = _load_jp_font(ImageFont, 26, bold=True)
+        f_big_q = _load_jp_font(ImageFont, 54, bold=True)
+        f_q = _load_jp_font(ImageFont, 34, bold=True)
+        f_a_head = _load_jp_font(ImageFont, 44, bold=True)
+        f_item = _load_jp_font(ImageFont, 30, bold=True)
+        f_foot = _load_jp_font(ImageFont, 25, bold=True)
+
+        y = pad
+        draw.text((pad, y), f"❓ {topic or 'GUIDE'} · Q&A よくいただく質問", font=f_kick, fill=ac)
+        y += 48
+
+        max_w = width - pad * 2
+        q_lines = _wrap_jp_text_pil(draw, pain_text, f_q, max_w - 130, max_lines=3)
+        q_box_h = max(136, 48 + len(q_lines) * 46)
+        _rrect(draw, [pad, y, width - pad, y + q_box_h], radius=18, fill=theme["bg2"], outline=ac, width_px=3)
+        draw.text((pad + 30, y + (q_box_h - 62) // 2), "Q.", font=f_big_q, fill=ac)
+        qy = y + (q_box_h - len(q_lines) * 44) // 2
+        for ql in q_lines:
+            draw.text((pad + 108, qy), ql, font=f_q, fill=theme["text"])
+            qy += 44
+        y += q_box_h + 30
+
+        draw.text((pad, y), "A. 結論・押さえるべきポイント", font=f_kick, fill=ac)
+        y += 42
+        a_lines = _wrap_jp_text_pil(draw, headline, f_a_head, max_w, max_lines=2)
+        for al in a_lines:
+            draw.text((pad, y), al, font=f_a_head, fill=theme["text"])
+            y += 58
+        y += 22
+
+        items = bullets[:3]
+        avail_h = height - pad - 68 - y
+        gap = 18
+        card_h = min(132, max(82, (avail_h - gap * (len(items) - 1)) // max(1, len(items))))
+        for idx_i, it_txt in enumerate(items):
+            cy = y + idx_i * (card_h + gap)
+            _rrect(draw, [pad, cy, width - pad, cy + card_h], radius=14, fill=theme["bg2"], outline=theme["border"], width_px=2)
+            _rrect(draw, [pad + 24, cy + (card_h - 36) // 2, pad + 60, cy + (card_h + 36) // 2], radius=8, fill=theme["accent_soft"], outline=ac, width_px=2)
+            draw.text((pad + 32, cy + (card_h - 28) // 2), "✓", font=f_kick, fill=ac)
+            ilines = _wrap_jp_text_pil(draw, it_txt, f_item, max_w - 116, max_lines=2)
+            if len(ilines) == 1:
+                draw.text((pad + 82, cy + (card_h - 34) // 2), ilines[0], font=f_item, fill=theme["text"])
+            else:
+                draw.text((pad + 82, cy + (card_h // 2) - 38), ilines[0], font=f_item, fill=theme["text"])
+                draw.text((pad + 82, cy + (card_h // 2) + 2), ilines[1], font=f_item, fill=theme["text"])
+
+        if show_watermark:
+            draw.text((pad, height - pad - 24), f"@{account_id or 'threads'}", font=f_foot, fill=theme["muted"])
+            r_txt = f"Q&A ANSWER #{post_index:02d}"
+            try:
+                rw = draw.textlength(r_txt, font=f_foot)
+            except Exception:
+                rw = 190
+            draw.text((width - pad - rw, height - pad - 24), r_txt, font=f_foot, fill=ac)
+
+    else:
+        # 図解カード (diagram_card) / チェックリスト (checklist)
+        out_img = _smooth_ambient_bg(theme["bg1"], theme["bg2"], theme["accent"], tint_strength=0.10)
+        if bg_image_path and os.path.exists(bg_image_path):
+            try:
+                bg_cov = _fit_cover(bg_image_path)
+                if bg_cov:
+                    alpha_tint = 0.08 if theme["light"] else 0.14
+                    out_img = Image.blend(out_img, bg_cov, alpha_tint)
+            except Exception:
+                pass
+        draw = ImageDraw.Draw(out_img)
+
+        f_kick = _load_jp_font(ImageFont, 28, bold=True)
+        f_head = _load_jp_font(ImageFont, 52, bold=True)
+        f_item = _load_jp_font(ImageFont, 32, bold=True)
+        f_num = _load_jp_font(ImageFont, 36, bold=True)
+        f_foot = _load_jp_font(ImageFont, 26, bold=True)
+
+        max_w = width - pad * 2
+        y = pad
+        mode_lbl = f"{topic or 'GUIDE'} · 保存用チェックリスト" if style == "checklist" else f"{topic or 'GUIDE'} · ポイント図解"
+        draw.text((pad, y), mode_lbl, font=f_kick, fill=theme["accent"])
+        y += 50
+
+        t_lines = _wrap_jp_text_pil(draw, headline, f_head, max_w, max_lines=2)
+        for tl in t_lines:
+            draw.text((pad, y), tl, font=f_head, fill=theme["text"])
+            y += 70
+
+        y += 14
+        draw.line([(pad, y), (width - pad, y)], fill=theme["border"], width=2)
+        y += 38
+
+        list_items = bullets[:4]
+        avail_h = height - y - pad - 76
+        gap = 22
+        card_h = min(165, max(95, (avail_h - gap * (len(list_items) - 1)) // max(1, len(list_items))))
+
+        for idx_i, item_txt in enumerate(list_items):
+            cy = y + idx_i * (card_h + gap)
+            _rrect(draw, [pad, cy, width - pad, cy + card_h], radius=16, fill=theme["bg2"], outline=theme["border"], width_px=2)
+
+            if style == "checklist":
+                bx = pad + 28
+                by = cy + (card_h - 46) // 2
+                _rrect(draw, [bx, by, bx + 46, by + 46], radius=10, fill=theme["accent_soft"], outline=theme["accent"], width_px=3)
+                draw.line([(bx + 11, by + 23), (bx + 20, by + 33), (bx + 35, by + 14)], fill=theme["accent"], width=4)
+            else:
+                draw.text((pad + 28, cy + (card_h - 40) // 2), f"{idx_i + 1:02d}", font=f_num, fill=theme["accent"])
+
+            tx = pad + 104
+            i_lines = _wrap_jp_text_pil(draw, item_txt, f_item, max_w - 134, max_lines=2)
+            if len(i_lines) == 1:
+                draw.text((tx, cy + (card_h - 36) // 2), i_lines[0], font=f_item, fill=theme["text"])
+            else:
+                draw.text((tx, cy + (card_h // 2) - 40), i_lines[0], font=f_item, fill=theme["text"])
+                draw.text((tx, cy + (card_h // 2) + 4), i_lines[1], font=f_item, fill=theme["text"])
+
+        if show_watermark:
+            draw.text((pad, height - pad - 28), f"@{account_id or 'threads'}", font=f_foot, fill=theme["muted"])
+            r_txt = f"{topic or 'GUIDE'} GUIDE"
+            try:
+                rw = draw.textlength(r_txt, font=f_foot)
+            except Exception:
+                rw = 160
+            draw.text((width - pad - rw, height - pad - 28), r_txt, font=f_foot, fill=theme["accent"])
+
+    if output_path:
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        out_img.save(output_path, format="PNG")
+    return out_img
+
+
 class ThreadsPosterGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Threads AutoPoster (スレッズ自動投稿)")
-        self.root.geometry("860x800")
+        self.root.geometry("980x820")
         self.root.configure(bg="#121212")
         self.is_running = False
         self.stop_requested = False
@@ -3890,11 +5107,14 @@ class ThreadsPosterGUI:
         toolbar2 = tk.Frame(self.root, bg="#121212", pady=2, padx=16)
         toolbar2.pack(fill="x")
 
-        btn_open_posts = tk.Button(toolbar2, text="📊 投稿Excelを開く", font=("Segoe UI", 9), bg="#262626", fg="#ffffff", padx=8, pady=4, relief="flat", cursor="hand2", command=self.open_posts_excel)
-        btn_open_posts.pack(side="left", padx=3)
+        btn_design_gen = tk.Button(toolbar2, text="✨ 設計・投稿＆画像自動生成", font=("Segoe UI", 9, "bold"), bg="#059669", fg="#ffffff", padx=10, pady=4, relief="flat", cursor="hand2", command=self.open_account_design_generator)
+        btn_design_gen.pack(side="left", padx=3)
 
         btn_bulk_add = tk.Button(toolbar2, text="📋 100件一括追加・削除", font=("Segoe UI", 9, "bold"), bg="#4f46e5", fg="#ffffff", padx=8, pady=4, relief="flat", cursor="hand2", command=self.open_bulk_post_manager)
         btn_bulk_add.pack(side="left", padx=3)
+
+        btn_open_posts = tk.Button(toolbar2, text="📊 投稿Excelを開く", font=("Segoe UI", 9), bg="#262626", fg="#ffffff", padx=8, pady=4, relief="flat", cursor="hand2", command=self.open_posts_excel)
+        btn_open_posts.pack(side="left", padx=3)
 
         btn_open_daily = tk.Button(toolbar2, text="🌅 日常ポスト設定", font=("Segoe UI", 9, "bold"), bg="#15803d", fg="#ffffff", padx=8, pady=4, relief="flat", cursor="hand2", command=self.open_daily_posts_excel)
         btn_open_daily.pack(side="left", padx=3)
@@ -3902,25 +5122,28 @@ class ThreadsPosterGUI:
         btn_open_excel = tk.Button(toolbar2, text="⚙️ アカウントExcel", font=("Segoe UI", 9), bg="#262626", fg="#ffffff", padx=8, pady=4, relief="flat", cursor="hand2", command=self.open_account_excel)
         btn_open_excel.pack(side="left", padx=3)
 
-        btn_open_ss = tk.Button(toolbar2, text="📷 エラー画像", font=("Segoe UI", 9, "bold"), bg="#450a0a", fg="#fca5a5", padx=8, pady=4, relief="flat", cursor="hand2", command=self.open_error_screenshots_dir)
+        toolbar3 = tk.Frame(self.root, bg="#121212", pady=2, padx=16)
+        toolbar3.pack(fill="x")
+
+        btn_open_ss = tk.Button(toolbar3, text="📷 エラー画像", font=("Segoe UI", 9, "bold"), bg="#450a0a", fg="#fca5a5", padx=8, pady=4, relief="flat", cursor="hand2", command=self.open_error_screenshots_dir)
         btn_open_ss.pack(side="left", padx=3)
 
-        btn_open_log = tk.Button(toolbar2, text="📝 エラーログ(txt)", font=("Segoe UI", 9, "bold"), bg="#991b1b", fg="#ffffff", padx=8, pady=4, relief="flat", cursor="hand2", command=self.open_error_log)
+        btn_open_log = tk.Button(toolbar3, text="📝 エラーログ(txt)", font=("Segoe UI", 9, "bold"), bg="#991b1b", fg="#ffffff", padx=8, pady=4, relief="flat", cursor="hand2", command=self.open_error_log)
         btn_open_log.pack(side="left", padx=3)
 
-        btn_open_log_dir = tk.Button(toolbar2, text="📂 logフォルダ", font=("Segoe UI", 9, "bold"), bg="#1e3a8a", fg="#bfdbfe", padx=8, pady=4, relief="flat", cursor="hand2", command=self.open_log_dir)
+        btn_open_log_dir = tk.Button(toolbar3, text="📂 logフォルダ", font=("Segoe UI", 9, "bold"), bg="#1e3a8a", fg="#bfdbfe", padx=8, pady=4, relief="flat", cursor="hand2", command=self.open_log_dir)
         btn_open_log_dir.pack(side="left", padx=3)
 
-        btn_open_images_dir = tk.Button(toolbar2, text="🖼️ imagesフォルダ", font=("Segoe UI", 9, "bold"), bg="#0f766e", fg="#ccfbf1", padx=8, pady=4, relief="flat", cursor="hand2", command=self.open_images_dir)
+        btn_open_images_dir = tk.Button(toolbar3, text="🖼️ imagesフォルダ", font=("Segoe UI", 9, "bold"), bg="#0f766e", fg="#ccfbf1", padx=8, pady=4, relief="flat", cursor="hand2", command=self.open_images_dir)
         btn_open_images_dir.pack(side="left", padx=3)
 
-        btn_open_all_log = tk.Button(toolbar2, text="📋 全実行ログ(txt)", font=("Segoe UI", 9), bg="#262626", fg="#ffffff", padx=8, pady=4, relief="flat", cursor="hand2", command=self.open_execution_log)
+        btn_open_all_log = tk.Button(toolbar3, text="📋 全実行ログ(txt)", font=("Segoe UI", 9), bg="#262626", fg="#ffffff", padx=8, pady=4, relief="flat", cursor="hand2", command=self.open_execution_log)
         btn_open_all_log.pack(side="left", padx=3)
 
-        btn_clean_manual = tk.Button(toolbar2, text="🧹 キャッシュ全初期化", font=("Segoe UI", 9, "bold"), bg="#4c0519", fg="#fda4af", padx=8, pady=4, relief="flat", cursor="hand2", command=self.manual_clean_profiles)
+        btn_clean_manual = tk.Button(toolbar3, text="🧹 キャッシュ全初期化", font=("Segoe UI", 9, "bold"), bg="#4c0519", fg="#fda4af", padx=8, pady=4, relief="flat", cursor="hand2", command=self.manual_clean_profiles)
         btn_clean_manual.pack(side="left", padx=3)
 
-        btn_open_dir = tk.Button(toolbar2, text="📁 フォルダ", font=("Segoe UI", 9), bg="#262626", fg="#ffffff", padx=8, pady=4, relief="flat", cursor="hand2", command=self.open_base_dir)
+        btn_open_dir = tk.Button(toolbar3, text="📁 フォルダ", font=("Segoe UI", 9), bg="#262626", fg="#ffffff", padx=8, pady=4, relief="flat", cursor="hand2", command=self.open_base_dir)
         btn_open_dir.pack(side="left", padx=3)
 
 
@@ -4594,6 +5817,526 @@ class ThreadsPosterGUI:
         btn_save = tk.Button(btm_bar, text="💾 選択アカウントのExcelに一括保存して即座に反映", bg="#10b981", fg="#ffffff", font=("Segoe UI", 10, "bold"), padx=16, pady=6, relief="flat", cursor="hand2", command=save_and_apply)
         btn_save.pack(side="right")
         tk.Button(btm_bar, text="閉じる", bg="#27272a", fg="#ffffff", font=("Segoe UI", 9), padx=12, pady=6, relief="flat", cursor="hand2", command=dialog.destroy).pack(side="right", padx=8)
+
+    def open_account_design_generator(self):
+        """アカウント設計（<アカウント名>.xlsx「アカウント設計」シート）から投稿文＆画像を完全無料で一括自動生成"""
+        all_accounts = read_excel_records(self.account_config_path)
+        valid_accounts = [
+            str(acc.get("アカウントID") or acc.get("アカウント名") or "").strip().lstrip("@")
+            for acc in all_accounts
+            if str(acc.get("アカウントID") or acc.get("アカウント名") or "").strip() != ""
+        ]
+        if not valid_accounts:
+            messagebox.showwarning("警告", "アカウント情報.xlsx に有効なアカウントが見つかりません。")
+            return
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title("✨ アカウント設計 × 投稿文＆Pillow画像 一括自動生成（完全無料・API不要）")
+        dialog.geometry("1040x780")
+        dialog.configure(bg="#18181b")
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        hdr = tk.Frame(dialog, bg="#09090b", padx=16, pady=10)
+        hdr.pack(fill="x")
+        tk.Label(
+            hdr,
+            text="✨ アカウント設計 → 投稿文章＋PNG画像 一括自動生成",
+            font=("Segoe UI", 12, "bold"),
+            fg="#ffffff",
+            bg="#09090b",
+        ).pack(side="left")
+        tk.Label(
+            hdr,
+            text="APIキー不要 · Windows標準日本語フォント＋Pillow直接書き出し",
+            font=("Segoe UI", 9),
+            fg="#34d399",
+            bg="#09090b",
+        ).pack(side="right")
+
+        top_bar = tk.Frame(dialog, bg="#18181b", padx=16, pady=8)
+        top_bar.pack(fill="x")
+
+        tk.Label(top_bar, text="対象アカウント:", font=("Segoe UI", 9, "bold"), fg="#d4d4d8", bg="#18181b").pack(side="left")
+        var_acc = tk.StringVar(value=valid_accounts[0])
+        cmb_acc = ttk.Combobox(top_bar, textvariable=var_acc, values=valid_accounts, state="readonly", width=18)
+        cmb_acc.pack(side="left", padx=(6, 12))
+
+        tk.Label(top_bar, text="プリセット:", font=("Segoe UI", 9), fg="#a1a1aa", bg="#18181b").pack(side="left")
+        var_preset = tk.StringVar(value="飛田新地・風景×求人案内")
+        cmb_preset = ttk.Combobox(top_bar, textvariable=var_preset, values=list(_DESIGN_PRESETS_PY.keys()), state="readonly", width=24)
+        cmb_preset.pack(side="left", padx=(6, 6))
+
+        body = tk.Frame(dialog, bg="#18181b", padx=16, pady=4)
+        body.pack(fill="both", expand=True)
+        body.columnconfigure(0, weight=6)
+        body.columnconfigure(1, weight=5)
+        body.rowconfigure(0, weight=1)
+
+        # Left Form (Scrollable)
+        left_wrap = tk.Frame(body, bg="#18181b")
+        left_wrap.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+        canvas_scroll = tk.Canvas(left_wrap, bg="#18181b", highlightthickness=0)
+        v_scroll = ttk.Scrollbar(left_wrap, orient="vertical", command=canvas_scroll.yview)
+        form_frame = tk.Frame(canvas_scroll, bg="#18181b")
+        form_frame.bind("<Configure>", lambda _e: canvas_scroll.configure(scrollregion=canvas_scroll.bbox("all")))
+        canvas_scroll.create_window((0, 0), window=form_frame, anchor="nw")
+        canvas_scroll.configure(yscrollcommand=v_scroll.set)
+        canvas_scroll.pack(side="left", fill="both", expand=True)
+        v_scroll.pack(side="right", fill="y")
+
+        def _mk_entry(parent, label_txt, width=44):
+            f = tk.Frame(parent, bg="#18181b", pady=3)
+            f.pack(fill="x", padx=4)
+            tk.Label(f, text=label_txt, font=("Segoe UI", 9, "bold"), fg="#a1a1aa", bg="#18181b", anchor="w").pack(fill="x")
+            ent = tk.Entry(f, bg="#09090b", fg="#ffffff", insertbackground="#ffffff", font=("Segoe UI", 9), width=width, relief="solid", bd=1)
+            ent.pack(fill="x", pady=(2, 0), ipady=3)
+            return ent
+
+        ent_genre = _mk_entry(form_frame, "ジャンル・発信テーマ:")
+        ent_topic = _mk_entry(form_frame, "トピック（Excel設定用）:")
+        ent_target = _mk_entry(form_frame, "ターゲット層:")
+
+        f_tone = tk.Frame(form_frame, bg="#18181b", pady=3)
+        f_tone.pack(fill="x", padx=4)
+        tk.Label(f_tone, text="アカウント口調:", font=("Segoe UI", 9, "bold"), fg="#a1a1aa", bg="#18181b", anchor="w").pack(fill="x")
+        var_tone = tk.StringVar(value="丁寧・誠実")
+        cmb_tone = ttk.Combobox(f_tone, textvariable=var_tone, values=["丁寧・誠実", "フレンドリー", "プロ解説", "共感スタイル"], state="readonly")
+        cmb_tone.pack(fill="x", pady=(2, 0))
+
+        ent_pain = _mk_entry(form_frame, "読者の悩み・不安:")
+
+        f_ben = tk.Frame(form_frame, bg="#18181b", pady=3)
+        f_ben.pack(fill="x", padx=4)
+        tk.Label(f_ben, text="強み・ポイント（1行1項目 · 図解/チェックリスト項目に反映）:", font=("Segoe UI", 9, "bold"), fg="#a1a1aa", bg="#18181b", anchor="w").pack(fill="x")
+        txt_benefits = tk.Text(f_ben, height=4, bg="#09090b", fg="#ffffff", insertbackground="#ffffff", font=("Segoe UI", 9), relief="solid", bd=1)
+        txt_benefits.pack(fill="x", pady=(2, 0))
+
+        ent_cta = _mk_entry(form_frame, "誘導文（CTA・結び）:")
+        ent_url = _mk_entry(form_frame, "誘導URL（任意）:")
+        ent_headline_ov = _mk_entry(form_frame, "テスト用キャッチコピー上書き（空欄なら自動生成）:")
+
+        # Image Generation Options
+        img_opt_box = tk.Frame(form_frame, bg="#09090b", padx=10, pady=8, highlightbackground="#27272a", highlightthickness=1)
+        img_opt_box.pack(fill="x", padx=4, pady=(8, 4))
+        tk.Label(img_opt_box, text="画像自動生成オプション (Pillow)", font=("Segoe UI", 9, "bold"), fg="#34d399", bg="#09090b", anchor="w").pack(fill="x")
+
+        row_style = tk.Frame(img_opt_box, bg="#09090b", pady=4)
+        row_style.pack(fill="x")
+        var_gen_imgs = tk.BooleanVar(value=True)
+        tk.Checkbutton(row_style, text="PNG画像も同時生成", variable=var_gen_imgs, bg="#09090b", fg="#ffffff", selectcolor="#18181b", font=("Segoe UI", 9)).pack(side="left")
+
+        var_img_style = tk.StringVar(value="自動おまかせ（設計に合わせて最適化）")
+        cmb_img_style = ttk.Combobox(
+            row_style,
+            textvariable=var_img_style,
+            values=[
+                "自動おまかせ（設計に合わせて最適化）",
+                "雑誌エディトリアル風",
+                "吹き出し会話SNS風",
+                "ネオン夜風",
+                "ステップ図解",
+                "Q&A神回答カード",
+                "背景写真＋自動文字入れ",
+                "SNS図解カード",
+                "保存用チェックリスト",
+                "全テンプレートミックス",
+            ],
+            state="readonly",
+            width=30,
+        )
+        cmb_img_style.pack(side="right")
+
+        row_size = tk.Frame(img_opt_box, bg="#09090b", pady=3)
+        row_size.pack(fill="x")
+        tk.Label(row_size, text="サイズ / 配色:", fg="#a1a1aa", bg="#09090b", font=("Segoe UI", 9)).pack(side="left")
+        var_aspect = tk.StringVar(value="1:1")
+        cmb_aspect = ttk.Combobox(row_size, textvariable=var_aspect, values=["1:1", "4:5"], state="readonly", width=5)
+        cmb_aspect.pack(side="left", padx=4)
+        var_palette = tk.StringVar(value="提灯アンバー×黒")
+        cmb_palette = ttk.Combobox(row_size, textvariable=var_palette, values=list(_PIL_PALETTES.keys()), state="readonly", width=16)
+        cmb_palette.pack(side="left", padx=4)
+        var_scrim_label = tk.StringVar(value="標準48%")
+        cmb_scrim = ttk.Combobox(row_size, textvariable=var_scrim_label, values=["薄め30%", "標準48%", "濃いめ65%"], state="readonly", width=9)
+        cmb_scrim.pack(side="right")
+
+        row_bg = tk.Frame(img_opt_box, bg="#09090b", pady=4)
+        row_bg.pack(fill="x")
+        var_bg_dir = tk.StringVar(value=get_account_images_dir(valid_accounts[0], create=True))
+        tk.Label(row_bg, text="背景フォルダ:", fg="#a1a1aa", bg="#09090b", font=("Segoe UI", 9)).pack(side="left")
+        ent_bg_dir = tk.Entry(row_bg, textvariable=var_bg_dir, bg="#18181b", fg="#e4e4e7", font=("Consolas", 8), relief="flat")
+        ent_bg_dir.pack(side="left", fill="x", expand=True, padx=6)
+
+        def browse_bg_dir():
+            chosen = filedialog.askdirectory(initialdir=var_bg_dir.get() or IMAGES_DIR, title="背景写真フォルダを選択")
+            if chosen:
+                var_bg_dir.set(chosen)
+                refresh_bg_info()
+                update_live_preview()
+
+        def open_bg_dir_explorer():
+            target_dir = var_bg_dir.get().strip() or get_account_images_dir(var_acc.get().strip(), create=True)
+            os.makedirs(target_dir, exist_ok=True)
+            try:
+                os.startfile(target_dir)
+            except Exception:
+                pass
+
+        tk.Button(row_bg, text="開く", bg="#0f766e", fg="#ffffff", font=("Segoe UI", 8), padx=7, pady=2, relief="flat", cursor="hand2", command=open_bg_dir_explorer).pack(side="right", padx=(4, 0))
+        tk.Button(row_bg, text="選択", bg="#27272a", fg="#ffffff", font=("Segoe UI", 8), padx=8, pady=2, relief="flat", cursor="hand2", command=browse_bg_dir).pack(side="right")
+        lbl_bg_status = tk.Label(img_opt_box, text="検出背景画像: 確認中...", font=("Segoe UI", 8), fg="#38bdf8", bg="#09090b", anchor="w")
+        lbl_bg_status.pack(fill="x")
+
+        row_batch = tk.Frame(form_frame, bg="#18181b", pady=6)
+        row_batch.pack(fill="x", padx=4)
+        tk.Label(row_batch, text="生成件数:", fg="#d4d4d8", bg="#18181b", font=("Segoe UI", 9, "bold")).pack(side="left")
+        var_count = tk.StringVar(value="10")
+        ttk.Combobox(row_batch, textvariable=var_count, values=["5", "10", "30", "50", "100"], state="readonly", width=6).pack(side="left", padx=6)
+        var_spintax = tk.BooleanVar(value=True)
+        chk_spintax = tk.Checkbutton(row_batch, text="スピンタックス {A|B|C}", variable=var_spintax, bg="#18181b", fg="#d4d4d8", selectcolor="#09090b", font=("Segoe UI", 9))
+        chk_spintax.pack(side="left", padx=6)
+        var_replace = tk.BooleanVar(value=True)
+        tk.Checkbutton(row_batch, text="既存リスト入替", variable=var_replace, bg="#18181b", fg="#fb7185", selectcolor="#09090b", font=("Segoe UI", 9)).pack(side="left")
+
+        # Right Preview Panel
+        right_panel = tk.Frame(body, bg="#09090b", padx=12, pady=10, highlightbackground="#27272a", highlightthickness=1)
+        right_panel.grid(row=0, column=1, sticky="nsew")
+        tk.Label(right_panel, text="リアルタイム画像＆文章プレビュー (1件目)", font=("Segoe UI", 10, "bold"), fg="#ffffff", bg="#09090b").pack(anchor="w")
+
+        lbl_img_preview = tk.Label(right_panel, text="プレビュー準備中...", bg="#18181b", fg="#71717a", width=44, height=18)
+        lbl_img_preview.pack(pady=8, fill="both", expand=True)
+
+        lbl_text_title = tk.Label(right_panel, text="生成される投稿文サンプル:", font=("Segoe UI", 9, "bold"), fg="#a1a1aa", bg="#09090b", anchor="w")
+        lbl_text_title.pack(fill="x")
+        txt_preview_post = scrolledtext.ScrolledText(right_panel, height=7, wrap="word", bg="#18181b", fg="#f4f4f5", font=("Segoe UI", 9), relief="flat")
+        txt_preview_post.pack(fill="x", pady=(4, 0))
+
+        preview_photo_ref = {"img": None}
+
+        def _collect_design():
+            return {
+                "genre": ent_genre.get().strip(),
+                "topic": ent_topic.get().strip() or "おすすめ",
+                "target": ent_target.get().strip(),
+                "tone": var_tone.get(),
+                "pain": ent_pain.get().strip(),
+                "benefits": txt_benefits.get("1.0", "end").strip(),
+                "cta": ent_cta.get().strip(),
+                "url": ent_url.get().strip(),
+                "image_style": var_img_style.get(),
+                "palette": var_palette.get(),
+            }
+
+        def _fill_design(d):
+            for ent, key in [
+                (ent_genre, "genre"), (ent_topic, "topic"), (ent_target, "target"),
+                (ent_pain, "pain"), (ent_cta, "cta"), (ent_url, "url")
+            ]:
+                ent.delete(0, "end")
+                ent.insert(0, d.get(key, ""))
+            var_tone.set(d.get("tone", "丁寧・誠実"))
+            txt_benefits.delete("1.0", "end")
+            txt_benefits.insert("1.0", d.get("benefits", ""))
+            var_img_style.set(_normalize_image_style_label_py(d.get("image_style", "自動おまかせ（設計に合わせて最適化）")))
+            pal_val = d.get("palette", "提灯アンバー×黒")
+            var_palette.set(pal_val if pal_val in _PIL_PALETTES else "提灯アンバー×黒")
+
+        def _scan_photos_in_dir(dpath):
+            exts = (".jpg", ".jpeg", ".png", ".webp", ".bmp")
+            res_list = []
+            if dpath and os.path.isdir(dpath):
+                try:
+                    for fn in sorted(os.listdir(dpath)):
+                        low = fn.lower()
+                        full_p = os.path.join(dpath, fn)
+                        if os.path.isfile(full_p) and low.endswith(exts) and not low.startswith("gen_"):
+                            # 初期プレースホルダー（10x10px・数十バイトのダミーimage.png）は背景に使わない
+                            if os.path.getsize(full_p) >= 4096:
+                                res_list.append(full_p)
+                except Exception:
+                    pass
+            return res_list
+
+        def _find_bg_photos(folder_path):
+            found = _scan_photos_in_dir(folder_path)
+            # 指定フォルダ内の背景サブフォルダも探索
+            if not found and folder_path and os.path.isdir(folder_path):
+                for sub_name in ("backgrounds", "bg", "背景", "photos"):
+                    found = _scan_photos_in_dir(os.path.join(folder_path, sub_name))
+                    if found:
+                        break
+            # アカウント個別フォルダが空の場合、共通フォルダ（images/backgrounds, images/共通背景, images直下）をフォールバック探索
+            if not found:
+                for fallback_dir in (
+                    os.path.join(IMAGES_DIR, "backgrounds"),
+                    os.path.join(IMAGES_DIR, "共通背景"),
+                    os.path.join(IMAGES_DIR, "bg"),
+                    IMAGES_DIR,
+                ):
+                    if os.path.abspath(fallback_dir) != os.path.abspath(folder_path or ""):
+                        found = _scan_photos_in_dir(fallback_dir)
+                        if found:
+                            break
+            return found
+
+        def _get_scrim_val():
+            lbl = var_scrim_label.get()
+            if "30" in lbl:
+                return 0.30
+            if "65" in lbl:
+                return 0.65
+            return 0.48
+
+        def refresh_bg_info():
+            bgs = _find_bg_photos(var_bg_dir.get().strip())
+            if bgs:
+                src_dir = os.path.basename(os.path.dirname(bgs[0]))
+                lbl_bg_status.config(text=f"✅ 背景写真 {len(bgs)}枚 検出 ({src_dir}/{os.path.basename(bgs[0])}) ※gen_*除外", fg="#34d399")
+            else:
+                lbl_bg_status.config(text="⚠️ 背景写真0枚：「開く」から写真を入れるか「選択」で写真フォルダを指定してください", fg="#fbbf24")
+            return bgs
+
+        def update_live_preview(*_args):
+            bgs = refresh_bg_info()
+            d = _collect_design()
+            specs = generate_posts_from_design(d, count=1, enable_spintax=var_spintax.get(), has_photos=bool(bgs))
+            if not specs:
+                return
+            sp = specs[0]
+            hl = ent_headline_ov.get().strip() or sp["headline"]
+            txt_preview_post.delete("1.0", "end")
+            txt_preview_post.insert("1.0", sp["text"])
+
+            Image, ImageDraw, ImageFont = ensure_pillow_available(log_func=self.log, allow_install=False)
+            if not Image:
+                lbl_img_preview.config(image="", text="Pillow導入確認中...（一括生成または「Pillow導入」で自動準備します）")
+                return
+            bg_p = bgs[0] if bgs else None
+            pil_img = render_post_image_pil(
+                Image, ImageDraw, ImageFont,
+                style=sp["style"],
+                aspect_ratio=var_aspect.get(),
+                palette_name=var_palette.get(),
+                scrim_opacity=_get_scrim_val(),
+                topic=sp["topic"],
+                headline=hl,
+                subhead=sp["subhead"],
+                bullets=sp["bullets"],
+                account_id=var_acc.get().strip(),
+                post_index=1,
+                bg_image_path=bg_p,
+                show_watermark=True,
+                output_path=None,
+                pain=sp.get("pain", ""),
+            )
+            max_side = 330
+            pw, ph = pil_img.size
+            scale = min(max_side / pw, max_side / ph)
+            pil_thumb = pil_img.resize((max(1, int(pw * scale)), max(1, int(ph * scale))), Image.LANCZOS)
+            import io, base64
+            buf = io.BytesIO()
+            pil_thumb.save(buf, format="PNG")
+            b64_data = base64.b64encode(buf.getvalue()).decode("ascii")
+            tk_img = tk.PhotoImage(data=b64_data)
+            preview_photo_ref["img"] = tk_img
+            lbl_img_preview.config(image=tk_img, text="", width=0, height=0)
+
+        for _cmb in (cmb_tone, cmb_img_style, cmb_aspect, cmb_palette, cmb_scrim):
+            _cmb.bind("<<ComboboxSelected>>", update_live_preview)
+        chk_spintax.config(command=update_live_preview)
+
+        def on_account_selected(*_args):
+            acc_id = var_acc.get().strip()
+            acc_xlsx = os.path.join(BASE_DIR, f"{acc_id}.xlsx")
+            fb_topic = read_account_settings_from_post_file(acc_xlsx).get("topic", "") if os.path.exists(acc_xlsx) else ""
+            loaded = load_account_design_from_xlsx(acc_xlsx, fallback_topic=fb_topic)
+            _fill_design(loaded)
+            var_bg_dir.set(get_account_images_dir(acc_id, create=True))
+            refresh_bg_info()
+            update_live_preview()
+
+        def apply_preset_clicked():
+            p_name = var_preset.get()
+            if p_name in _DESIGN_PRESETS_PY:
+                _fill_design(_DESIGN_PRESETS_PY[p_name])
+                update_live_preview()
+
+        tk.Button(top_bar, text="読込", bg="#27272a", fg="#ffffff", font=("Segoe UI", 8, "bold"), padx=10, pady=3, relief="flat", cursor="hand2", command=apply_preset_clicked).pack(side="left")
+        cmb_acc.bind("<<ComboboxSelected>>", on_account_selected)
+        cmb_preset.bind("<<ComboboxSelected>>", lambda _e: apply_preset_clicked())
+
+        def _offer_manual_pillow_cmd(err_detail):
+            py_cmd = _resolve_pip_python_exe()
+            msg = (
+                "画像書き出し用の Pillow ライブラリの自動導入に失敗しました。\n\n"
+                f"【詳細ログ】\n{err_detail[:650]}\n\n"
+                "コマンドプロンプトを開いて `pip install pillow` を手動実行しますか？\n"
+                "（※「いいえ」を選んで『PNG画像も同時生成』のチェックを外せば、文章のみ即座に生成できます）"
+            )
+            if messagebox.askyesno("Pillow導入エラー", msg):
+                try:
+                    import subprocess
+                    subprocess.Popen(
+                        ["cmd", "/k", f'"{py_cmd}" -m pip install pillow --trusted-host pypi.org --trusted-host files.pythonhosted.org & echo. & echo 完了したらこの画面を閉じて再試行してください & pause']
+                    )
+                except Exception as ex_cmd:
+                    messagebox.showerror("起動失敗", f"コマンドプロンプトを起動できませんでした:\n{ex_cmd}\n\n手動で以下を実行してください:\n\"{py_cmd}\" -m pip install pillow")
+
+        def save_design_only():
+            acc_id = var_acc.get().strip()
+            acc_xlsx = os.path.join(BASE_DIR, f"{acc_id}.xlsx")
+            try:
+                save_account_design_to_xlsx(acc_xlsx, acc_id, _collect_design())
+                self.log(f"[SUCCESS] 💾 @{acc_id} のアカウント設計を {os.path.basename(acc_xlsx)}（アカウント設計シート）に保存しました！")
+                messagebox.showinfo("設計保存完了", f"@{acc_id} のアカウント設計を\n{os.path.basename(acc_xlsx)} に保存しました！\n\n次回からはアカウントを選ぶだけで自動読み込みされます。")
+            except Exception as ex:
+                messagebox.showerror("保存エラー", f"設計保存に失敗しました:\n{ex}")
+
+        def run_batch_generate():
+            acc_id = var_acc.get().strip()
+            d = _collect_design()
+            cnt = int(var_count.get() or "10")
+            do_imgs = var_gen_imgs.get()
+            do_spintax = var_spintax.get()
+            do_replace = var_replace.get()
+            aspect = var_aspect.get()
+            palette_n = var_palette.get()
+            hl_override = ent_headline_ov.get().strip()
+            bg_list = _find_bg_photos(var_bg_dir.get().strip())
+            scrim_val = _get_scrim_val()
+            acc_xlsx = os.path.join(BASE_DIR, f"{acc_id}.xlsx")
+            acc_img_dir = get_account_images_dir(acc_id, create=True)
+
+            if do_imgs and not bg_list and var_img_style.get() == "背景写真＋自動文字入れ":
+                proceed = messagebox.askyesno(
+                    "背景写真が見つかりません",
+                    f"フォルダ内に背景写真（4KB以上のJPG/PNG等）が0枚でした：\n{var_bg_dir.get().strip()}\n\n"
+                    "※「自動おまかせ（設計に合わせて最適化）」や「雑誌風」「吹き出し風」「ネオン夜風」を選べば写真なしでも綺麗に作れます。\n\n"
+                    "写真なしのまま生成を続行しますか？"
+                )
+                if not proceed:
+                    return
+
+            btn_run.config(state="disabled", text="生成中...")
+
+            def _worker():
+                t0 = time.time()
+                try:
+                    Image, ImageDraw, ImageFont = (None, None, None)
+                    if do_imgs:
+                        Image, ImageDraw, ImageFont = ensure_pillow_available(log_func=self.log, allow_install=True)
+                        if not Image:
+                            err_snap = _LAST_PILLOW_ERROR or "原因不明"
+                            self.root.after(0, lambda es=err_snap: (
+                                btn_run.config(state="normal", text="🚀 ワンクリックで一括生成 → Excel＆images保存"),
+                                _offer_manual_pillow_cmd(es)
+                            ))
+                            return
+
+                    save_account_design_to_xlsx(acc_xlsx, acc_id, d)
+                    specs = generate_posts_from_design(d, count=cnt, enable_spintax=do_spintax, has_photos=bool(bg_list))
+
+                    wb = ensure_account_workbook(acc_xlsx, acc_id)
+                    post_sheet = None
+                    for sname in wb.sheetnames:
+                        if any(k in sname for k in ["投稿", "ポスト", "post"]):
+                            post_sheet = wb[sname]
+                            break
+                    if not post_sheet:
+                        post_sheet = wb.create_sheet(title="投稿リスト")
+                        post_sheet.append(["ID", "ポスト文章", "コミュニティまたはトピック", "画像ファイルパス", "ステータス", "投稿完了日時", "エラー内容"])
+
+                    if do_replace:
+                        if post_sheet.max_row > 1:
+                            post_sheet.delete_rows(2, post_sheet.max_row - 1)
+                        start_id = 1
+                    else:
+                        start_id = post_sheet.max_row
+
+                    for idx_p, sp in enumerate(specs):
+                        row_id = start_id + idx_p
+                        img_name = ""
+                        if do_imgs and Image:
+                            img_name = sp["filename"]
+                            out_png = os.path.join(acc_img_dir, img_name)
+                            bg_p = bg_list[idx_p % len(bg_list)] if bg_list else None
+                            hl = hl_override if (idx_p == 0 and hl_override) else sp["headline"]
+                            render_post_image_pil(
+                                Image, ImageDraw, ImageFont,
+                                style=sp["style"],
+                                aspect_ratio=aspect,
+                                palette_name=palette_n,
+                                scrim_opacity=scrim_val,
+                                topic=sp["topic"],
+                                headline=hl,
+                                subhead=sp["subhead"],
+                                bullets=sp["bullets"],
+                                account_id=acc_id,
+                                post_index=row_id,
+                                bg_image_path=bg_p,
+                                show_watermark=True,
+                                output_path=out_png,
+                                pain=sp.get("pain", ""),
+                            )
+
+                        post_sheet.append([
+                            row_id,
+                            sp["text"],
+                            sp["topic"],
+                            img_name,
+                            "未投稿",
+                            "",
+                            "",
+                        ])
+
+                    wb.save(acc_xlsx)
+                    wb.close()
+                    elapsed = time.time() - t0
+
+                    def _on_done():
+                        self.load_excel_data()
+                        self.log(f"[SUCCESS] 🚀 @{acc_id}: 設計から投稿 {cnt} 件{'＋PNG画像 ' + str(cnt) + '枚' if do_imgs else ''} を {elapsed:.2f}秒 で生成＆Excel直接保存しました！")
+                        msg = f"@{acc_id} の一括生成が完了しました！（{elapsed:.2f}秒）\n\n・Excel保存: {os.path.basename(acc_xlsx)}（{cnt}件）"
+                        if do_imgs:
+                            msg += f"\n・画像保存: images/{acc_id}/gen_001.png 〜 gen_{cnt:03d}.png"
+                        msg += "\n\n「imagesフォルダを開く」で仕上がりを確認しますか？"
+                        if do_imgs and messagebox.askyesno("生成完了", msg):
+                            try:
+                                os.startfile(acc_img_dir)
+                            except Exception:
+                                pass
+                        elif not do_imgs:
+                            messagebox.showinfo("生成完了", msg.split("\n\n「images")[0])
+                        btn_run.config(state="normal", text="🚀 ワンクリックで一括生成 → Excel＆images保存")
+
+                    self.root.after(0, _on_done)
+                except Exception as ex:
+                    self.root.after(0, lambda e=ex: (
+                        btn_run.config(state="normal", text="🚀 ワンクリックで一括生成 → Excel＆images保存"),
+                        messagebox.showerror("生成エラー", f"一括生成中にエラーが発生しました:\n{e}")
+                    ))
+
+            threading.Thread(target=_worker, daemon=True).start()
+
+        # Bottom Action Bar
+        btm = tk.Frame(dialog, bg="#09090b", padx=16, pady=10)
+        btm.pack(fill="x")
+        tk.Button(btm, text="💾 設計をExcelに保存", bg="#0284c7", fg="#ffffff", font=("Segoe UI", 9, "bold"), padx=12, pady=6, relief="flat", cursor="hand2", command=save_design_only).pack(side="left")
+        tk.Button(btm, text="🔍 プレビュー更新", bg="#27272a", fg="#ffffff", font=("Segoe UI", 9), padx=12, pady=6, relief="flat", cursor="hand2", command=update_live_preview).pack(side="left", padx=8)
+        tk.Button(btm, text="閉じる", bg="#27272a", fg="#a1a1aa", font=("Segoe UI", 9), padx=12, pady=6, relief="flat", cursor="hand2", command=dialog.destroy).pack(side="right", padx=(8, 0))
+        btn_run = tk.Button(btm, text="🚀 ワンクリックで一括生成 → Excel＆images保存", bg="#10b981", fg="#ffffff", font=("Segoe UI", 10, "bold"), padx=16, pady=6, relief="flat", cursor="hand2", command=run_batch_generate)
+        btn_run.pack(side="right")
+
+        # Initial load + non-blocking background Pillow pre-warm if missing
+        on_account_selected()
+        if ensure_pillow_available(log_func=None, allow_install=False)[0] is None:
+            def _bg_install_pil():
+                img_mod, _, _ = ensure_pillow_available(log_func=self.log, allow_install=True)
+                if img_mod:
+                    self.root.after(0, lambda: update_live_preview() if dialog.winfo_exists() else None)
+                else:
+                    self.root.after(0, lambda: lbl_img_preview.config(text="Pillow未導入（一括生成を押すと詳細診断・導入手順を表示）") if dialog.winfo_exists() else None)
+            threading.Thread(target=_bg_install_pil, daemon=True).start()
 
 
     def open_posts_excel(self):

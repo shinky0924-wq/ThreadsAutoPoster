@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { AccountInfo, PostItem, DailyGreetingSlot, SystemSettings, LogMessage } from './types';
+import { AccountInfo, AccountDesignProfile, PostItem, DailyGreetingSlot, SystemSettings, LogMessage } from './types';
 import { initialAccounts, initialPosts, initialDailySlots, initialSettings } from './data/initialData';
 import { Header } from './components/Header';
 import { AccountSelector } from './components/AccountSelector';
@@ -37,7 +37,17 @@ export default function App() {
   // Master state
   const [accounts, setAccounts] = useState<AccountInfo[]>(() => {
     const saved = localStorage.getItem('threads_accounts');
-    return saved ? JSON.parse(saved) : initialAccounts;
+    if (!saved) return initialAccounts;
+    try {
+      const parsed: AccountInfo[] = JSON.parse(saved);
+      return parsed.map((acc) => {
+        if (acc.design) return acc;
+        const presetMatch = initialAccounts.find((init) => init.id === acc.id);
+        return presetMatch?.design ? { ...acc, design: presetMatch.design } : acc;
+      });
+    } catch {
+      return initialAccounts;
+    }
   });
 
   const [selectedAccountId, setSelectedAccountId] = useState<string>(() => {
@@ -459,23 +469,41 @@ export default function App() {
       const parsed = await parseExcelFile(file);
 
       if (parsed.accounts && parsed.accounts.length > 0) {
-        const merged: AccountInfo[] = parsed.accounts.map((a, idx) => ({
-          id: a.id || `acc_${idx + 1}`,
-          authToken: a.authToken || '',
-          userId: a.userId || extractUserIdFromToken(a.authToken || ''),
-          notes: a.notes || '',
-          minIntervalMinutes: a.minIntervalMinutes || 120,
-          maxIntervalMinutes: a.maxIntervalMinutes || 360,
-          activeHours: a.activeHours || '0:00-0:00',
-          mode: a.mode ?? 1,
-          profileDir: a.profileDir || `chrome_profiles/${a.id}`,
-          topics: a.topics || ['信太山新地', '大阪求人'],
-          currentTopicIndex: 0,
-          enabled: a.enabled !== false,
-        }));
-        setAccounts(merged);
-        setSelectedAccountId(merged[0].id);
-        addLog('SUCCESS', `✅ アカウント情報.xlsx から ${merged.length} 件のアカウントを読み込みました！`);
+        setAccounts((prev) => {
+          const merged: AccountInfo[] = parsed.accounts!.map((a, idx) => {
+            const existing = prev.find((p) => p.id === a.id);
+            return {
+              id: a.id || `acc_${idx + 1}`,
+              password: a.password || '',
+              authToken: a.authToken || '',
+              userId: a.userId || extractUserIdFromToken(a.authToken || ''),
+              notes: a.notes || '',
+              minIntervalMinutes: existing?.minIntervalMinutes || a.minIntervalMinutes || 120,
+              maxIntervalMinutes: existing?.maxIntervalMinutes || a.maxIntervalMinutes || 360,
+              activeHours: existing?.activeHours || a.activeHours || '0:00-0:00',
+              mode: existing?.mode ?? a.mode ?? 1,
+              profileDir: a.profileDir || `chrome_profiles/${a.id}`,
+              topics: existing?.topics || a.topics || ['信太山新地', '大阪求人'],
+              currentTopicIndex: 0,
+              enabled: a.enabled !== false,
+              ...(existing?.design ? { design: existing.design } : {}),
+            };
+          });
+          setSelectedAccountId(merged[0].id);
+          return merged;
+        });
+        addLog('SUCCESS', `✅ アカウント情報.xlsx から ${parsed.accounts.length} 件のアカウントを読み込みました！`);
+      }
+
+      if (parsed.settings?.design) {
+        setAccounts((prev) =>
+          prev.map((acc) =>
+            acc.id === currentAccount.id
+              ? { ...acc, design: { ...(acc.design || {}), ...parsed.settings!.design } }
+              : acc
+          )
+        );
+        addLog('SUCCESS', `✅ [@${currentAccount.id}] の「アカウント設計」シート設定を読み込みました！`);
       }
 
       if (parsed.posts && parsed.posts.length > 0) {
@@ -834,6 +862,22 @@ export default function App() {
                   },
                 }));
                 handleBulkAddPosts(newItems, replaceExisting);
+              }}
+              onSaveDesignToAccount={(accountId: string, designProfile: AccountDesignProfile) => {
+                setAccounts((prev) =>
+                  prev.map((acc) =>
+                    acc.id === accountId
+                      ? {
+                          ...acc,
+                          design: designProfile,
+                          ...(designProfile.topic && !acc.topics.includes(designProfile.topic)
+                            ? { topics: [designProfile.topic, ...acc.topics] }
+                            : {}),
+                        }
+                      : acc
+                  )
+                );
+                addLog('SUCCESS', `💾 [@${accountId}] のアカウント設計を保存しました。（個別Excel ${accountId}.xlsx に出力対応）`);
               }}
               onSwitchToTab={(tab) => setActiveTab(tab)}
               onLog={(level, message) => addLog(level, message)}

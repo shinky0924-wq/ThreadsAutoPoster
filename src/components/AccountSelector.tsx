@@ -457,14 +457,18 @@ export const AccountSelector: React.FC<AccountSelectorProps> = ({
           <div className="bg-zinc-950/60 p-2.5 rounded-lg border border-zinc-800/80">
             <div className="text-zinc-500 flex items-center gap-1 mb-1">
               <Hash className="w-3.5 h-3.5 text-teal-400" />
-              <span>トピック A/Bテスト</span>
+              <span>トピック / アカウント設計</span>
             </div>
             <div className="font-medium text-teal-300 truncate">
               {currentAccount.topics && currentAccount.topics.length > 0
                 ? currentAccount.topics.join(', ')
                 : '未指定'}
             </div>
-            <div className="text-[11px] text-zinc-500 mt-0.5">投稿ごとに均等ローテーション</div>
+            <div className="text-[11px] text-zinc-400 mt-0.5 truncate">
+              {currentAccount.design?.genre
+                ? `設計: ${currentAccount.design.genre}`
+                : '設計未登録（「設定を編集」または生成スタジオで設定可）'}
+            </div>
           </div>
         </div>
       ) : (
@@ -518,6 +522,125 @@ export const AccountSelector: React.FC<AccountSelectorProps> = ({
               </select>
             </div>
           </div>
+
+          {/* Account Design Fields */}
+          <div className="pt-2 border-t border-zinc-800 space-y-2.5">
+            <div className="text-zinc-300 font-semibold">アカウント設計設定（生成スタジオ＆Excel同期用）</div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div>
+                <label className="text-zinc-400 block mb-1">ジャンル</label>
+                <input
+                  type="text"
+                  value={tempAccount.design?.genre || ''}
+                  onChange={(e) =>
+                    setTempAccount({
+                      ...tempAccount,
+                      design: { ...(tempAccount.design || {}), genre: e.target.value },
+                    })
+                  }
+                  placeholder="例: 飛田新地・大阪エリア案内"
+                  className="w-full bg-zinc-900 border border-zinc-700 text-white text-xs px-2.5 py-1.5 rounded focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+              <div>
+                <label className="text-zinc-400 block mb-1">ターゲット</label>
+                <input
+                  type="text"
+                  value={tempAccount.design?.target || ''}
+                  onChange={(e) =>
+                    setTempAccount({
+                      ...tempAccount,
+                      design: { ...(tempAccount.design || {}), target: e.target.value },
+                    })
+                  }
+                  placeholder="例: 短期高収入を目指す未経験の方"
+                  className="w-full bg-zinc-900 border border-zinc-700 text-white text-xs px-2.5 py-1.5 rounded focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+              <div>
+                <label className="text-zinc-400 block mb-1">口調</label>
+                <select
+                  value={tempAccount.design?.tone || 'polite'}
+                  onChange={(e) =>
+                    setTempAccount({
+                      ...tempAccount,
+                      design: {
+                        ...(tempAccount.design || {}),
+                        tone: e.target.value as 'polite' | 'friendly' | 'expert' | 'empathetic',
+                      },
+                    })
+                  }
+                  className="w-full bg-zinc-900 border border-zinc-700 text-white text-xs px-2.5 py-1.5 rounded focus:outline-none"
+                >
+                  <option value="polite">丁寧・誠実</option>
+                  <option value="friendly">フレンドリー</option>
+                  <option value="expert">プロ解説</option>
+                  <option value="empathetic">共感スタイル</option>
+                </select>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="text-zinc-400 block mb-1">読者の悩み</label>
+                <input
+                  type="text"
+                  value={tempAccount.design?.painPoint || ''}
+                  onChange={(e) =>
+                    setTempAccount({
+                      ...tempAccount,
+                      design: { ...(tempAccount.design || {}), painPoint: e.target.value },
+                    })
+                  }
+                  className="w-full bg-zinc-900 border border-zinc-700 text-white text-xs px-2.5 py-1.5 rounded focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+              <div>
+                <label className="text-zinc-400 block mb-1">誘導文（CTA）</label>
+                <input
+                  type="text"
+                  value={tempAccount.design?.cta || ''}
+                  onChange={(e) =>
+                    setTempAccount({
+                      ...tempAccount,
+                      design: { ...(tempAccount.design || {}), cta: e.target.value },
+                    })
+                  }
+                  className="w-full bg-zinc-900 border border-zinc-700 text-white text-xs px-2.5 py-1.5 rounded focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="text-zinc-400 block mb-1">強みポイント（改行区切り）</label>
+                <textarea
+                  rows={2}
+                  value={tempAccount.design?.benefitPoints || ''}
+                  onChange={(e) =>
+                    setTempAccount({
+                      ...tempAccount,
+                      design: { ...(tempAccount.design || {}), benefitPoints: e.target.value },
+                    })
+                  }
+                  className="w-full bg-zinc-900 border border-zinc-700 text-white text-xs p-2 rounded focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+              <div>
+                <label className="text-zinc-400 block mb-1">誘導URL</label>
+                <input
+                  type="text"
+                  value={tempAccount.design?.url || ''}
+                  onChange={(e) =>
+                    setTempAccount({
+                      ...tempAccount,
+                      design: { ...(tempAccount.design || {}), url: e.target.value },
+                    })
+                  }
+                  className="w-full bg-zinc-900 border border-zinc-700 text-white text-xs px-2.5 py-1.5 rounded font-mono focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+            </div>
+          </div>
+
           <div className="flex justify-end gap-2 pt-1 border-t border-zinc-800">
             <button
               type="button"

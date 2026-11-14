@@ -14,6 +14,17 @@ export const initialAccounts: AccountInfo[] = [
     topics: ['信太山新地', '大阪求人', '高収入バイト'],
     currentTopicIndex: 0,
     enabled: true,
+    design: {
+      genre: '飛田新地・大阪エリアの安心ワーク紹介',
+      target: '短期集中でしっかり稼ぎたい未経験・経験者の方',
+      tone: 'polite',
+      painPoint: '雰囲気や給与システムが事前に分からず一歩踏み出せない',
+      benefitPoints: '見学のみOK・日払い対応\n1日2〜3時間の短時間シフト\nプライバシー徹底・個室待機完備\n専任スタッフの事前サポート',
+      cta: '雰囲気や条件の詳細はプロフィールの案内ページからご確認ください',
+      url: 'https://osaka-shinodayamashinchivip.pages.dev/blog/osaka-shinodayama-high-guarantee-guide',
+      topic: '飛田新地',
+      imageStyle: 'photo_overlay',
+    },
   },
   {
     id: 'jhtwj2',
@@ -28,6 +39,17 @@ export const initialAccounts: AccountInfo[] = [
     topics: ['信太山新地', '高収入女性求人'],
     currentTopicIndex: 0,
     enabled: true,
+    design: {
+      genre: '信太山新地の働き方・システム解説',
+      target: '身バレ防止・自由出勤を重視したい方',
+      tone: 'empathetic',
+      painPoint: '身バレや強引な勧誘がないか不安で相談できない',
+      benefitPoints: 'アリバイ・送迎・寮完備\nお友達同士の見学も大歓迎\nノルマ・罰金いっさい無し\n自分のペースで週1から勤務OK',
+      cta: '不安な点の質問だけでも気軽にプロフのリンクからどうぞ',
+      url: 'https://osaka-shinodayamashinchivip.pages.dev/blog/shinodayamashinchi-privacy-guide',
+      topic: '信太山新地',
+      imageStyle: 'checklist',
+    },
   },
   {
     id: 'wqlopakpskapkoq',
@@ -42,6 +64,17 @@ export const initialAccounts: AccountInfo[] = [
     topics: ['大阪求人', 'ナイトワーク安心ナビ'],
     currentTopicIndex: 0,
     enabled: true,
+    design: {
+      genre: 'ナイトワーク安心ナビ・Q&A図解',
+      target: 'Wワークや週末だけで効率よく稼ぎたい方',
+      tone: 'expert',
+      painPoint: '面接から体験までの流れや持ち物がよく分からない',
+      benefitPoints: '日給・バック率の仕組みを図解\n体験入店当日の持ち物リスト\n短時間・終電上がり相談OK\n事前相談でミスマッチを防止',
+      cta: '保存して面接・見学前のチェックリストにご活用ください',
+      url: 'https://osaka-shinodayamashinchivip.pages.dev/blog/shinodayamashinchi-interview-guide',
+      topic: '大阪求人',
+      imageStyle: 'diagram_card',
+    },
   },
 ];
 

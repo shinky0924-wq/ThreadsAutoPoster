@@ -143,7 +143,7 @@ namespace ThreadsAutoPoster
                 bool hasPkg = false;
                 try
                 {
-                    ProcessStartInfo testPkg = new ProcessStartInfo(foundPy, "-c \"import openpyxl\"")
+                    ProcessStartInfo testPkg = new ProcessStartInfo(foundPy, "-c \"import openpyxl, PIL\"")
                     {
                         CreateNoWindow = true,
                         UseShellExecute = false
@@ -158,7 +158,7 @@ namespace ThreadsAutoPoster
 
                 if (!hasPkg)
                 {
-                    ProcessStartInfo pipInfo = new ProcessStartInfo(foundPy, "-m pip install openpyxl playwright")
+                    ProcessStartInfo pipInfo = new ProcessStartInfo(foundPy, "-m pip install openpyxl playwright pillow")
                     {
                         WorkingDirectory = baseDir,
                         UseShellExecute = true
