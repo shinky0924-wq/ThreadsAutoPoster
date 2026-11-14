@@ -2,6 +2,12 @@
 **/chrome_profiles/
 **/Sync Data/
 **/OptimizationGuideModelsManifest/
+**/log/
+**/error_screenshots/
+**/startup_log.txt
+**/crash_log.txt
+**/error_log.txt
+**/execution_log.txt
 
 # Web App build & dependencies
 node_modules/

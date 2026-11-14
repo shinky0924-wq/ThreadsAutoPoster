@@ -17,12 +17,10 @@ if not exist "dist\ThreadsAutoPoster" mkdir "dist\ThreadsAutoPoster"
 copy /y *.xlsx "dist\ThreadsAutoPoster\" >nul 2>&1
 copy /y *.png "dist\ThreadsAutoPoster\" >nul 2>&1
 copy /y *.vbs "dist\ThreadsAutoPoster\" >nul 2>&1
-copy /y "ThreadsAutoPoster_起動.bat" "dist\ThreadsAutoPoster\" >nul 2>&1
 copy /y "threads_gui_app.py" "dist\ThreadsAutoPoster\" >nul 2>&1
 copy /y "threads_auto_poster_cli.py" "dist\ThreadsAutoPoster\" >nul 2>&1
 copy /y "chrome_launcher.py" "dist\ThreadsAutoPoster\" >nul 2>&1
 copy /y "chrome_launcher.bat" "dist\ThreadsAutoPoster\" >nul 2>&1
-copy /y "chrome_launcher_起動.bat" "dist\ThreadsAutoPoster\" >nul 2>&1
 copy /y "ChromeLauncher.cs" "dist\ThreadsAutoPoster\" >nul 2>&1
 copy /y "requirements.txt" "dist\ThreadsAutoPoster\" >nul 2>&1
 copy /y "0_他のPCでもすぐ動く環境作成.bat" "dist\ThreadsAutoPoster\" >nul 2>&1
@@ -37,7 +35,6 @@ if exist "images" xcopy /e /i /y "images" "dist\ThreadsAutoPoster\images" >nul 2
 copy /y *.xlsx "dist\" >nul 2>&1
 copy /y *.png "dist\" >nul 2>&1
 copy /y *.vbs "dist\" >nul 2>&1
-copy /y "ThreadsAutoPoster_起動.bat" "dist\" >nul 2>&1
 copy /y "threads_gui_app.py" "dist\" >nul 2>&1
 copy /y "start_gui.bat" "dist\" >nul 2>&1
 copy /y "他のPCでの利用手順_マニュアル.txt" "dist\" >nul 2>&1
@@ -123,12 +120,10 @@ echo [4/4] Finalizing file deployment in dist folder...
 copy /y *.xlsx "dist\ThreadsAutoPoster\" >nul 2>&1
 copy /y *.png "dist\ThreadsAutoPoster\" >nul 2>&1
 copy /y *.vbs "dist\ThreadsAutoPoster\" >nul 2>&1
-copy /y "ThreadsAutoPoster_起動.bat" "dist\ThreadsAutoPoster\" >nul 2>&1
 copy /y "threads_gui_app.py" "dist\ThreadsAutoPoster\" >nul 2>&1
 copy /y "threads_auto_poster_cli.py" "dist\ThreadsAutoPoster\" >nul 2>&1
 copy /y "chrome_launcher.py" "dist\ThreadsAutoPoster\" >nul 2>&1
 copy /y "chrome_launcher.bat" "dist\ThreadsAutoPoster\" >nul 2>&1
-copy /y "chrome_launcher_起動.bat" "dist\ThreadsAutoPoster\" >nul 2>&1
 copy /y "ChromeLauncher.cs" "dist\ThreadsAutoPoster\" >nul 2>&1
 copy /y "0_他のPCでもすぐ動く環境作成.bat" "dist\ThreadsAutoPoster\" >nul 2>&1
 copy /y "start_gui.bat" "dist\ThreadsAutoPoster\" >nul 2>&1
@@ -138,12 +133,10 @@ copy /y "セキュリティ警告解除.bat" "dist\ThreadsAutoPoster\" >nul 2>&1
 copy /y *.xlsx "dist\" >nul 2>&1
 copy /y *.png "dist\" >nul 2>&1
 copy /y *.vbs "dist\" >nul 2>&1
-copy /y "ThreadsAutoPoster_起動.bat" "dist\" >nul 2>&1
 copy /y "threads_gui_app.py" "dist\" >nul 2>&1
 copy /y "threads_auto_poster_cli.py" "dist\" >nul 2>&1
 copy /y "chrome_launcher.py" "dist\" >nul 2>&1
 copy /y "chrome_launcher.bat" "dist\" >nul 2>&1
-copy /y "chrome_launcher_起動.bat" "dist\" >nul 2>&1
 copy /y "ChromeLauncher.cs" "dist\" >nul 2>&1
 copy /y "start_gui.bat" "dist\" >nul 2>&1
 copy /y "他のPCでの利用手順_マニュアル.txt" "dist\" >nul 2>&1

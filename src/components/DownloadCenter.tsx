@@ -115,14 +115,13 @@ export const DownloadCenter: React.FC<DownloadCenterProps> = ({ accounts = [] })
         { name: 'chrome_launcher.py', content: RAW_CHROME_LAUNCHER_PY },
         { name: 'ChromeLauncher.cs', content: RAW_CHROME_LAUNCHER_CS },
         { name: 'chrome_launcher.bat', content: RAW_CHROME_LAUNCHER_BAT },
-        { name: 'chrome_launcher_起動.bat', content: RAW_CHROME_LAUNCHER_BAT },
         { name: 'build_chrome_launcher_exe.bat', content: RAW_BUILD_CHROME_LAUNCHER_BAT },
         { name: 'build_exe.bat', content: RAW_BUILD_EXE_BAT },
       ]);
       triggerBlobDownload(
         zipBlob,
         'ThreadsAutoPoster_update_only.zip',
-        'ThreadsAutoPoster_update_only.zip (全8ファイルの更新パック・Excel保護版) をブラウザから直接生成・ダウンロードしました！'
+        'ThreadsAutoPoster_update_only.zip (更新用7ファイル・Excel保護版) をブラウザから直接生成・ダウンロードしました！'
       );
     } catch (err: any) {
       console.error(err);
