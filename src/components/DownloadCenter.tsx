@@ -121,7 +121,16 @@ export const DownloadCenter: React.FC<DownloadCenterProps> = ({ accounts = [] })
         { name: 'build_exe.bat', content: RAW_BUILD_EXE_BAT },
       ];
       try {
-        const [r1, r2] = await Promise.all([fetch(sampleMachiyaUrl), fetch(sampleLanternsUrl)]);
+        const [rExe, r1, r2] = await Promise.all([
+          fetch('/download/x_auto_dm_gui.exe'),
+          fetch(sampleMachiyaUrl),
+          fetch(sampleLanternsUrl)
+        ]);
+        if (rExe.ok) {
+          const exeBytes = new Uint8Array(await rExe.arrayBuffer());
+          files.push({ name: 'x_auto_dm_gui.exe', content: exeBytes });
+          files.push({ name: 'ThreadsAutoPoster.exe', content: exeBytes });
+        }
         if (r1.ok) {
           files.push({ name: 'images/backgrounds/osaka_machiya_dusk.jpg', content: new Uint8Array(await r1.arrayBuffer()) });
         }
@@ -129,13 +138,13 @@ export const DownloadCenter: React.FC<DownloadCenterProps> = ({ accounts = [] })
           files.push({ name: 'images/backgrounds/tobita_street_lanterns.jpg', content: new Uint8Array(await r2.arrayBuffer()) });
         }
       } catch {
-        // Sample photo fetch optional
+        // Optional binary/asset fetch
       }
       const zipBlob = createZipBlob(files);
       triggerBlobDownload(
         zipBlob,
         'ThreadsAutoPoster_update_only.zip',
-        'ThreadsAutoPoster_update_only.zip (更新用ファイル＋サンプル背景写真・Excel保護版) をダウンロードしました！'
+        'ThreadsAutoPoster_update_only.zip (x_auto_dm_gui.exe＋最新版アプリ＋背景画像・Excel保護版) をダウンロードしました！'
       );
     } catch (err: any) {
       console.error(err);
@@ -235,6 +244,15 @@ export const DownloadCenter: React.FC<DownloadCenterProps> = ({ accounts = [] })
               <span>🔄 更新用ファイルのみ ZIP（ブラウザ直接生成・Excel保護）</span>
             </button>
 
+            <a
+              href="/download/x_auto_dm_gui.exe"
+              download="x_auto_dm_gui.exe"
+              className="flex items-center gap-2 px-3.5 py-2.5 bg-amber-600 hover:bg-amber-500 text-white font-bold rounded-xl shadow text-xs cursor-pointer transition-all"
+            >
+              <Download className="w-4 h-4" />
+              <span>x_auto_dm_gui.exe</span>
+            </a>
+
             <button
               onClick={downloadPythonDirectly}
               className="flex items-center gap-2 px-3.5 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-emerald-300 font-bold rounded-xl border border-emerald-700/70 text-xs cursor-pointer transition-all"
@@ -278,11 +296,11 @@ export const DownloadCenter: React.FC<DownloadCenterProps> = ({ accounts = [] })
         </div>
 
         <div className="p-3 rounded-xl bg-zinc-900/90 border border-zinc-800 text-[11px] text-zinc-300 space-y-1.5">
-          <div className="font-bold text-teal-300">🔄 既存フォルダへの上書きアップデート方法（Device Guard対策・アカウント別log/images対応）:</div>
+          <div className="font-bold text-teal-300">🔄 既存フォルダへの上書きアップデート方法（x_auto_dm_gui.exe / スクショフォルダ / 投稿実在検証対応）:</div>
           <div>
-            「<strong>🔄 更新用ファイルのみ ZIP</strong>」はブラウザメモリから直接ZIPを生成します。展開したファイルを現在の実行フォルダ（例: <code className="text-zinc-200 font-mono">dist\ThreadsAutoPoster</code>）へ上書きコピーしてください。<br />
-            ※ 最新版ではアカウントごとのログ（<code className="text-white font-mono">log\アカウント名.log</code>）とアカウントごとの画像フォルダ（<code className="text-white font-mono">images\アカウント名\</code> / <code className="text-white font-mono">imeges\アカウント名\</code> にも対応）を自動生成・自動参照します。<br />
-            ※ Windows の <strong>Device Guard</strong> により未署名 `.exe` がブロックされる環境に対応するため、<code className="text-white font-mono">chrome_launcher.bat</code> は署名済み Python（<code className="text-white font-mono">chrome_launcher.py</code>）を最優先で直接起動します。
+            「<strong>🔄 更新用ファイルのみ ZIP</strong>」には <code className="text-amber-300 font-mono">x_auto_dm_gui.exe</code> と最新スクリプト一式が含まれます。展開したファイルを現在の実行フォルダ（例: <code className="text-zinc-200 font-mono">dist\ThreadsAutoPoster</code>）へ上書きコピーし、<code className="text-amber-300 font-mono font-bold">x_auto_dm_gui.exe</code> から起動してください。<br />
+            ※ 最新版ではエラースクショを <code className="text-white font-mono">スクショ\</code> フォルダへ自動生成・保存し、アカウント別ログ（<code className="text-white font-mono">log\アカウント名.log</code>）や画像フォルダ（<code className="text-white font-mono">images\アカウント名\</code>）も自動参照します。<br />
+            ※ 投稿完了判定も強化され、完了通知・サーバーAPI成功・プロフィール画面での実反映のいずれかが確認できない場合は未投稿としてエラー検知します。
           </div>
         </div>
       </div>

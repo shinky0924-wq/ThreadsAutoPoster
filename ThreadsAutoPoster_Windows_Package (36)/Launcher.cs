@@ -130,7 +130,7 @@ namespace ThreadsAutoPoster
                     {
                         notFoundMsg = "threads_gui_app.py が見つかりません。\n\n"
                             + "【原因】\n"
-                            + "ThreadsAutoPoster.exe だけを単体でデスクトップ等に移動した可能性があります。\n\n"
+                            + "x_auto_dm_gui.exe / ThreadsAutoPoster.exe だけを単体でデスクトップ等に移動した可能性があります。\n\n"
                             + "【解決手順】\n"
                             + "解凍されたフォルダ一式（Excelやスクリプトが全て入っているフォルダ）の中で実行するか、\n"
                             + "フォルダ内の「ThreadsAutoPoster.vbs」または「start_gui.bat」から起動してください。";

@@ -88,7 +88,7 @@ echo   【準備完了】このPCの環境構築がすべて完了しました�
 echo ========================================================
 echo.
 echo これでこのPCでもすぐに自動投稿を実行できます:
-echo   ・「ThreadsAutoPoster.exe」をダブルクリックして起動
+echo   ・「x_auto_dm_gui.exe」（または「ThreadsAutoPoster.exe」）をダブルクリックして起動
 echo   ・または「start_gui.bat」から即座に起動可能
 echo.
 echo ========================================================

@@ -107,7 +107,7 @@ echo ========================================================
 echo.
 echo You can now:
 echo   - Run "start_gui.bat" to launch the GUI app directly
-echo   - Run "build_exe.bat" to create ThreadsAutoPoster.exe
+echo   - Run "build_exe.bat" to create x_auto_dm_gui.exe / ThreadsAutoPoster.exe
 echo ========================================================
 echo.
 pause

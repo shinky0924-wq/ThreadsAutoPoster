@@ -43,7 +43,7 @@ copy /y "セキュリティ警告解除.bat" "dist\" >nul 2>&1
 echo [OK] Required files and settings copied to dist folder.
 echo.
 
-echo [2/4] Compiling Windows Native Launcher [ThreadsAutoPoster.exe]...
+echo [2/4] Compiling Windows Native Launchers [x_auto_dm_gui.exe / ThreadsAutoPoster.exe]...
 set "CSC_EXE="
 if exist "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe" set "CSC_EXE=C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
 if not defined CSC_EXE if exist "C:\Windows\Microsoft.NET\Framework\v4.0.30319\csc.exe" set "CSC_EXE=C:\Windows\Microsoft.NET\Framework\v4.0.30319\csc.exe"
@@ -54,7 +54,10 @@ if not exist "Launcher.cs" goto :skip_csc
 "%CSC_EXE%" /nologo /target:winexe /r:System.Windows.Forms.dll /r:System.Drawing.dll /r:System.dll /out:"dist\ThreadsAutoPoster\ThreadsAutoPoster.exe" "Launcher.cs" > build_csc.log 2>&1
 if exist "dist\ThreadsAutoPoster\ThreadsAutoPoster.exe" (
     copy /y "dist\ThreadsAutoPoster\ThreadsAutoPoster.exe" "dist\ThreadsAutoPoster.exe" >nul 2>&1
-    echo [OK] Native Windows Launcher [ThreadsAutoPoster.exe] generated successfully!
+    copy /y "dist\ThreadsAutoPoster\ThreadsAutoPoster.exe" "dist\ThreadsAutoPoster\x_auto_dm_gui.exe" >nul 2>&1
+    copy /y "dist\ThreadsAutoPoster\ThreadsAutoPoster.exe" "dist\x_auto_dm_gui.exe" >nul 2>&1
+    copy /y "dist\ThreadsAutoPoster\ThreadsAutoPoster.exe" "x_auto_dm_gui.exe" >nul 2>&1
+    echo [OK] Native Windows Launchers [x_auto_dm_gui.exe / ThreadsAutoPoster.exe] generated successfully!
 ) else (
     echo [INFO] csc compilation note:
     type build_csc.log 2>nul
@@ -143,6 +146,11 @@ copy /y "他のPCでの利用手順_マニュアル.txt" "dist\" >nul 2>&1
 copy /y "セキュリティ警告解除.bat" "dist\" >nul 2>&1
 if exist "dist\ThreadsAutoPoster\ThreadsAutoPoster.exe" (
     copy /y "dist\ThreadsAutoPoster\ThreadsAutoPoster.exe" "dist\" >nul 2>&1
+    copy /y "dist\ThreadsAutoPoster\ThreadsAutoPoster.exe" "dist\ThreadsAutoPoster\x_auto_dm_gui.exe" >nul 2>&1
+    copy /y "dist\ThreadsAutoPoster\ThreadsAutoPoster.exe" "dist\x_auto_dm_gui.exe" >nul 2>&1
+) else if exist "x_auto_dm_gui.exe" (
+    copy /y "x_auto_dm_gui.exe" "dist\ThreadsAutoPoster\" >nul 2>&1
+    copy /y "x_auto_dm_gui.exe" "dist\" >nul 2>&1
 )
 
 echo.
@@ -154,6 +162,7 @@ echo   Location:
 echo      dist\ThreadsAutoPoster\
 echo.
 echo   Included Files:
+echo      - x_auto_dm_gui.exe (Main Launcher)
 echo      - ThreadsAutoPoster.exe (Main Launcher)
 echo      - アカウント情報.xlsx
 echo      - threads_main_account.xlsx

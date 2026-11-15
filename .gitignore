@@ -4,6 +4,7 @@
 **/OptimizationGuideModelsManifest/
 **/log/
 **/error_screenshots/
+**/スクショ/
 **/startup_log.txt
 **/crash_log.txt
 **/error_log.txt
@@ -22,3 +23,4 @@ bun.lock
 __pycache__/
 *.pyc
 .aistudio/
+public/assets/aistudio/

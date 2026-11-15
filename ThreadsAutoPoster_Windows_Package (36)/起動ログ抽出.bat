@@ -28,6 +28,11 @@ if exist "%~dp0threads_gui_app.py" (
 ) else (
     echo [NG] threads_gui_app.py: NOT Found (Please Extract All from ZIP!) >> "%LOG_FILE%"
 )
+if exist "%~dp0x_auto_dm_gui.exe" (
+    echo [OK] x_auto_dm_gui.exe: Found >> "%LOG_FILE%"
+) else (
+    echo [WARN] x_auto_dm_gui.exe: NOT Found >> "%LOG_FILE%"
+)
 if exist "%~dp0ThreadsAutoPoster.exe" (
     echo [OK] ThreadsAutoPoster.exe: Found >> "%LOG_FILE%"
 ) else (

@@ -15,7 +15,8 @@ echo ========================================================
 echo.
 echo [1/3] ファイルの存在チェック...
 if exist "threads_gui_app.py" (echo   [OK] threads_gui_app.py : 存在します) else (echo   [NG] threads_gui_app.py : 見つかりません)
-if exist "ThreadsAutoPoster.exe" (echo   [OK] ThreadsAutoPoster.exe : 存在します) else (echo   [NG] ThreadsAutoPoster.exe : 見つかりません)
+if exist "x_auto_dm_gui.exe" (echo   [OK] x_auto_dm_gui.exe : 存在します) else (echo   [WARN] x_auto_dm_gui.exe : 見つかりません)
+if exist "ThreadsAutoPoster.exe" (echo   [OK] ThreadsAutoPoster.exe : 存在します) else (echo   [WARN] ThreadsAutoPoster.exe : 見つかりません)
 if exist "アカウント情報.xlsx" (echo   [OK] アカウント情報.xlsx : 存在します) else (echo   [WARN] アカウント情報.xlsx : 見つかりません)
 echo.
 
@@ -30,11 +31,11 @@ for %%P in (python.exe py.exe "%LOCALAPPDATA%\Programs\Python\Python312\python.e
 
 if defined DO_PY (
     echo   Pythonを検出: !DO_PY!
-    !DO_PY! -m pip install --user openpyxl playwright
+    !DO_PY! -m pip install --user openpyxl playwright pillow
     !DO_PY! -m playwright install chromium
     echo.
     echo [OK] ライブラリの修復が完了しました！
-    echo ThreadsAutoPoster.exe をダブルクリックして起動してください。
+    echo x_auto_dm_gui.exe（または ThreadsAutoPoster.exe）をダブルクリックして起動してください。
 ) else (
     echo   [NG] Pythonが見つかりませんでした。
     echo   「0_他のPCでもすぐ動く環境作成.bat」を実行してください。

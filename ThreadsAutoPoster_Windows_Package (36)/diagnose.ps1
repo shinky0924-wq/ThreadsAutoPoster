@@ -23,7 +23,7 @@ Write-Host "--------------------------------------------------------" -Foregroun
 Write-Host "[1/5] 必須ファイルの存在チェック" -ForegroundColor White
 Write-Host "--------------------------------------------------------" -ForegroundColor DarkGray
 
-$files = @("threads_gui_app.py", "ThreadsAutoPoster.exe", "アカウント情報.xlsx")
+$files = @("threads_gui_app.py", "x_auto_dm_gui.exe", "ThreadsAutoPoster.exe", "アカウント情報.xlsx")
 foreach ($f in $files) {
     if (Test-Path (Join-Path $baseDir $f)) {
         Write-Host "  [OK] $f : 存在します" -ForegroundColor Green
@@ -158,13 +158,13 @@ switch ($choice) {
             Start-Sleep -Seconds 3
             $validPy = "python.exe"
         }
-        Write-Host "ライブラリ (openpyxl, playwright) をインストール中 (--user)..." -ForegroundColor Yellow
+        Write-Host "ライブラリ (openpyxl, playwright, pillow) をインストール中 (--user)..." -ForegroundColor Yellow
         & $validPy -m pip install --upgrade pip 2>$null
-        & $validPy -m pip install --user openpyxl playwright
+        & $validPy -m pip install --user openpyxl playwright pillow
         Write-Host "Playwright Chromium ブラウザをインストール中..." -ForegroundColor Yellow
         & $validPy -m playwright install chromium
         Write-Host ""
-        Write-Host "[OK] 全自動修復が完了しました！ThreadsAutoPoster.exe をダブルクリックして起動できます。" -ForegroundColor Green
+        Write-Host "[OK] 全自動修復が完了しました！x_auto_dm_gui.exe をダブルクリックして起動できます。" -ForegroundColor Green
     }
     "2" {
         if ($validPy) {

@@ -593,7 +593,7 @@ export default function App() {
     );
     addLog('ERROR', `🚨 [CRITICAL] [@${accId}] 携帯電話番号認証（SMS確認）画面を検知しました！（シミュレーションテスト）`);
     addLog('WARN', `🛡️ [@${accId}] アカウント情報.xlsx の【有効/無効】を「無効」に自動更新し、直ちに自動投稿を停止しました。`);
-    addLog('INFO', `📸 認証要求画面のスクリーンショットを error_screenshots/phone_checkpoint_${accId}.png に保存しました。`);
+    addLog('INFO', `📸 認証要求画面のスクリーンショットを スクショ/phone_checkpoint_${accId}.png に保存しました。`);
     addLog('SUCCESS', `✅ 他の有効なアカウントの自動投稿はそのまま安全に継続されます。`);
   };
 

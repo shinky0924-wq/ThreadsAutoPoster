@@ -74,6 +74,7 @@ def log_execution(msg):
 
 LOG_DIR = os.path.join(BASE_DIR, "log")
 IMAGES_DIR = os.path.join(BASE_DIR, "images")
+SCREENSHOTS_DIR = os.path.join(BASE_DIR, "スクショ")
 _THREAD_LOG_LOCAL = threading.local()
 _KNOWN_ACCOUNT_NAMES = set()
 _LOG_LEVEL_TAGS = {
@@ -139,6 +140,7 @@ def log_to_account_file(account_name, full_line):
 try:
     os.makedirs(LOG_DIR, exist_ok=True)
     os.makedirs(IMAGES_DIR, exist_ok=True)
+    os.makedirs(SCREENSHOTS_DIR, exist_ok=True)
 except Exception:
     pass
 
@@ -329,36 +331,48 @@ def read_excel_records(filepath):
                 r_dict[h] = val_clean
 
                 norm_h = re.sub(r'[\s　_\-:=]+', '', str(h).strip().lower())
-                if any(k in norm_h for k in ["ポスト文章", "投稿本文", "ツイート文章", "posttext", "本文", "内容"]) or norm_h in ["text", "post"]:
-                    r_dict["ポスト文章"] = val_clean
-                    r_dict["投稿本文"] = val_clean
-                    r_dict["ツイート文章"] = val_clean
-                    r_dict["本文"] = val_clean
+                if any(k in norm_h for k in ["エラー", "error", "ログ", "log"]):
+                    if val_clean or not r_dict.get("エラー内容"):
+                        r_dict["エラー内容"] = val_clean
+                elif any(k in norm_h for k in ["ポスト文章", "投稿本文", "ツイート文章", "posttext", "投稿文章", "ポスト本文", "ポスト内容", "投稿内容", "本文"]) or norm_h in ["text", "post", "content", "内容"]:
+                    if val_clean or not r_dict.get("ポスト文章"):
+                        r_dict["ポスト文章"] = val_clean
+                        r_dict["投稿本文"] = val_clean
+                        r_dict["ツイート文章"] = val_clean
+                        r_dict["本文"] = val_clean
                 elif any(k in norm_h for k in ["アカウント", "account", "ユーザー", "username", "userid"]) or norm_h in ["id", "uid"]:
-                    r_dict["アカウントID"] = val_clean
-                    r_dict["アカウント名"] = val_clean
-                    r_dict["アカウント"] = val_clean
-                    r_dict["id"] = val_clean
+                    if val_clean or not r_dict.get("アカウントID"):
+                        r_dict["アカウントID"] = val_clean
+                        r_dict["アカウント名"] = val_clean
+                        r_dict["アカウント"] = val_clean
+                        r_dict["id"] = val_clean
                 elif any(k in norm_h for k in ["パスワード", "password", "暗証番号"]) or norm_h in ["pw", "pass"]:
-                    r_dict["パスワード"] = val_clean
-                    r_dict["password"] = val_clean
-                    r_dict["PW"] = val_clean
-                    r_dict["Pass"] = val_clean
+                    if val_clean or not r_dict.get("パスワード"):
+                        r_dict["パスワード"] = val_clean
+                        r_dict["password"] = val_clean
+                        r_dict["PW"] = val_clean
+                        r_dict["Pass"] = val_clean
                 elif any(k in norm_h for k in ["sessionid", "authtoken", "トークン", "token", "セッション"]):
-                    r_dict["sessionid"] = val_clean
-                    r_dict["auth_token"] = val_clean
+                    if val_clean or not r_dict.get("sessionid"):
+                        r_dict["sessionid"] = val_clean
+                        r_dict["auth_token"] = val_clean
                 elif any(k in norm_h for k in ["ステータス", "status", "状態"]):
-                    r_dict["ステータス"] = val_clean
+                    if val_clean or not r_dict.get("ステータス"):
+                        r_dict["ステータス"] = val_clean
                 elif any(k in norm_h for k in ["有効", "無効"]):
-                    r_dict["有効/無効"] = val_clean
+                    if val_clean or not r_dict.get("有効/無効"):
+                        r_dict["有効/無効"] = val_clean
                 elif any(k in norm_h for k in ["画像", "image", "media"]):
-                    r_dict["画像ファイルパス"] = val_clean
-                    r_dict["画像"] = val_clean
-                elif any(k in norm_h for k in ["コミュニティ", "トピック", "タグ", "topic"]):
-                    r_dict["コミュニティまたはトピック"] = val_clean
-                    r_dict["トピック"] = val_clean
+                    if val_clean or not r_dict.get("画像ファイルパス"):
+                        r_dict["画像ファイルパス"] = val_clean
+                        r_dict["画像"] = val_clean
+                elif any(k in norm_h for k in ["コミュニティ", "トピック", "タグ", "topic"]) and not any(ex in norm_h for ex in ["適用", "使用", "選択", "実績"]):
+                    if val_clean or not r_dict.get("コミュニティまたはトピック"):
+                        r_dict["コミュニティまたはトピック"] = val_clean
+                        r_dict["トピック"] = val_clean
                 elif any(k in norm_h for k in ["備考", "メモ", "note", "notes"]):
-                    r_dict["備考"] = val_clean
+                    if val_clean or not r_dict.get("備考"):
+                        r_dict["備考"] = val_clean
 
             if is_account_file:
                 if not r_dict.get("アカウントID") and len(row) > 0 and row[0] is not None and str(row[0]).strip():
@@ -791,13 +805,31 @@ def open_threads_composer_dialog(page, account_name, log_func=print):
         except Exception:
             pass
 
-    # パターン5: キーボードショートカット 'c'
-    try:
-        page.locator('body').focus()
-        page.keyboard.press("c")
-        time.sleep(0.5)
-    except Exception:
-        pass
+    def _is_dialog_or_editable_focused():
+        try:
+            for d_sel in ['div[role="dialog"]', 'div[aria-modal="true"]']:
+                if page.locator(d_sel).first.is_visible():
+                    return True
+        except Exception:
+            pass
+        try:
+            return bool(page.evaluate("""() => {
+                const a = document.activeElement;
+                if (!a) return false;
+                const tag = (a.tagName || '').toUpperCase();
+                return tag === 'INPUT' || tag === 'TEXTAREA' || !!a.isContentEditable || a.getAttribute('role') === 'textbox';
+            }"""))
+        except Exception:
+            return False
+
+    # パターン5: 前段でクリックできていない＆モーダル・入力欄にフォーカスが無い場合のみショートカット 'c'
+    if not clicked_method and not _is_dialog_or_editable_focused():
+        try:
+            page.evaluate("() => { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); }")
+            page.keyboard.press("c")
+            time.sleep(0.5)
+        except Exception:
+            pass
 
     # モーダル (dialog) と入力欄 (textbox) の出現を待機
     for wait_i in range(20):
@@ -824,13 +856,15 @@ def open_threads_composer_dialog(page, account_name, log_func=print):
         except Exception:
             pass
 
-        # 途中で開かなかった場合は左下座標を再クリック＆ショートカット再送
-        if wait_i in [4, 10]:
+        # 途中で開かなかった場合のみ、入力欄にフォーカスが無いことを確認して左下再クリック＆ショートカット再送
+        if wait_i in [6, 12] and not _is_dialog_or_editable_focused():
             try:
                 win_dim = page.evaluate("() => ({ width: window.innerWidth, height: window.innerHeight })")
                 page.mouse.click(35, max(500, win_dim.get("height", 900) - 45))
-                time.sleep(0.3)
-                page.keyboard.press("c")
+                time.sleep(0.6)
+                if not _is_dialog_or_editable_focused():
+                    page.evaluate("() => { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); }")
+                    page.keyboard.press("c")
             except Exception:
                 pass
 
@@ -2369,17 +2403,16 @@ def ensure_valid_image(img_path, log_func=None):
             log_func(f"[WARN] 画像検証中: {e}")
         return os.path.abspath(img_path)
 
-def set_topic_in_threads_composer(page, dialog, topic_name, log_func=None):
+def set_topic_in_threads_composer(page, dialog, topic_name, body_textbox=None, log_func=None):
     """
     Threads新規投稿モーダル内で「コミュニティまたはトピック」を設定する関数
     ※ユーザーの指示通り、アカウント名（ユーザー名）の右側にある「コミュニティまたはトピック」設定ボタンをクリックし、
-      登録ワード（例: 信太山新地）を検索・入力して確定します。
+      登録ワード（例: 飛田新地）を検索・入力して候補ポップオーバーから座標クリックで確定します。
     ※本文への #ハッシュタグ追記は一切行いません（完全ネイティブUI設定）。
     """
     if not topic_name or not str(topic_name).strip() or str(topic_name).strip().lower() in ["none", "nan"]:
         return False
     clean_topic = str(topic_name).strip().lstrip('#').strip()
-    # 数字のみの場合は無効なIDと判定してスキップ
     if not clean_topic or re.match(r'^\+?\d+(\.0+)?$', clean_topic):
         return False
 
@@ -2387,49 +2420,172 @@ def set_topic_in_threads_composer(page, dialog, topic_name, log_func=None):
         log_func(f"[*] アカウント名右側の「コミュニティまたはトピック」に「{clean_topic}」を設定します...")
 
     topic_set = False
+    try:
+        search_root = dialog if (dialog and dialog.is_visible()) else page
+    except Exception:
+        search_root = page
 
-    # 1. 投稿ダイアログの上部（アカウント名表示エリア周辺・本文テキストボックスより上）にある
-    #    「トピック」「コミュニティ」「+」「#」などの設定ボタンを探索
+    # 1. 本文入力欄の上端座標を取得（ヘッダー領域と区別するため）
+    tb_top_y = None
+    try:
+        tb_ref = body_textbox if body_textbox else search_root.locator('div[role="textbox"], div[contenteditable="true"]').last
+        if tb_ref and tb_ref.is_visible():
+            tb_box = tb_ref.bounding_box()
+            if tb_box:
+                tb_top_y = tb_box['y']
+    except Exception:
+        tb_top_y = None
+
+    def _dismiss_topic_popover_safely():
+        """モーダルを閉じずに、開いているトピック候補ポップオーバーだけを安全に閉じる"""
+        try:
+            for hdr_sel in ['span:text-is("新しいスレッド")', 'div:text-is("新しいスレッド")', 'span:text-is("New thread")']:
+                hdr = search_root.locator(hdr_sel).first
+                if hdr.is_visible():
+                    hbox = hdr.bounding_box()
+                    if hbox:
+                        page.mouse.click(hbox['x'] + hbox['width'] / 2, hbox['y'] + hbox['height'] / 2)
+                        time.sleep(0.35)
+                        return
+        except Exception:
+            pass
+        try:
+            d_box = search_root.bounding_box() if (search_root and search_root != page) else None
+            if d_box:
+                page.mouse.click(d_box['x'] + d_box['width'] * 0.5, d_box['y'] + 24)
+                time.sleep(0.35)
+        except Exception:
+            pass
+
+    def _find_topic_option_point():
+        """最前面ポップオーバー内にある候補行（「飛田新地」等）をDOM幾何＋最前面判定で正確に特定"""
+        try:
+            return page.evaluate("""(topic) => {
+                const norm = (s) => (s || '').replace(/\\s+/g, ' ').trim();
+                const isEditable = (el) => {
+                    if (!el) return false;
+                    const tag = (el.tagName || '').toUpperCase();
+                    if (tag === 'INPUT' || tag === 'TEXTAREA') return true;
+                    if (el.isContentEditable) return true;
+                    if (el.querySelector && el.querySelector('input, textarea, [contenteditable="true"]')) return true;
+                    return false;
+                };
+                const nodes = Array.from(document.querySelectorAll(
+                    'div[role="listbox"] [role="option"], div[role="listbox"] [role="button"], ' +
+                    '[role="option"], [role="menuitem"], div[role="button"], button, a, div[tabindex="0"], li, span'
+                ));
+                const candidates = [];
+                for (const el of nodes) {
+                    if (isEditable(el)) continue;
+                    const rect = el.getBoundingClientRect();
+                    if (rect.width < 16 || rect.width > 480 || rect.height < 14 || rect.height > 100) continue;
+                    if (rect.top < 20 || rect.bottom > window.innerHeight - 10) continue;
+                    const rawText = (el.innerText || '');
+                    const txt = norm(rawText);
+                    if (!txt || txt.length > 120 || !txt.includes(topic)) continue;
+                    if (
+                        txt.includes('コミュニティまたはトピック') ||
+                        txt.includes('新しいスレッド') ||
+                        txt.includes('キャンセル') ||
+                        txt.includes('投稿オプション')
+                    ) continue;
+
+                    const cx = rect.left + rect.width / 2;
+                    const cy = rect.top + rect.height / 2;
+                    const topEl = document.elementFromPoint(cx, cy);
+                    if (!topEl || (!el.contains(topEl) && !topEl.contains(el))) continue;
+
+                    const lines = rawText.split(/\\r?\\n/).map(x => x.trim()).filter(Boolean);
+                    const firstLine = lines[0] || '';
+                    let score = 0;
+                    if (firstLine === topic || firstLine === `「${topic}」` || firstLine === `#${topic}`) score += 120;
+                    else if (txt.includes('追加') || txt.includes('Add') || txt.includes('作成') || txt.includes('Create')) score += 85;
+                    else score += 35;
+
+                    const role = el.getAttribute('role') || '';
+                    const tag = (el.tagName || '').toUpperCase();
+                    if (['option', 'menuitem', 'button'].includes(role) || ['BUTTON', 'A', 'LI'].includes(tag) || el.getAttribute('tabindex') === '0') {
+                        score += 45;
+                    }
+                    const style = window.getComputedStyle(el);
+                    if (style && style.cursor === 'pointer') score += 25;
+                    if (rect.height >= 28 && rect.height <= 78) score += 15;
+                    if (!el.closest('[role="dialog"]')) score += 10;
+
+                    candidates.push({ score, area: rect.width * rect.height, cx, cy, txt: txt.slice(0, 60) });
+                }
+                if (!candidates.length) return null;
+                candidates.sort((a, b) => (b.score - a.score) || (a.area - b.area));
+                return candidates[0];
+            }""", clean_topic)
+        except Exception:
+            return None
+
+    def _verify_topic_applied():
+        """ポップオーバー外（モーダル上部のアカウント名横）にトピックが確定表示されたか確認"""
+        try:
+            return bool(page.evaluate("""({topic, maxY}) => {
+                const dlg = document.querySelector('div[role="dialog"], div[aria-modal="true"]') || document.body;
+                const nodes = Array.from(dlg.querySelectorAll('div[role="button"], button, span, a'));
+                for (const el of nodes) {
+                    const tag = (el.tagName || '').toUpperCase();
+                    if (tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable) continue;
+                    if (el.querySelector && el.querySelector('input, textarea, [contenteditable="true"]')) continue;
+                    const rect = el.getBoundingClientRect();
+                    if (rect.width < 10 || rect.height < 10 || rect.height > 55) continue;
+                    if (maxY && rect.top >= maxY + 10) continue;
+                    const txt = (el.innerText || '').trim();
+                    if (txt && txt.length <= 60 && txt.includes(topic) && !txt.includes('最近の投稿')) {
+                        return true;
+                    }
+                }
+                return false;
+            }""", {"topic": clean_topic, "maxY": tb_top_y}))
+        except Exception:
+            return False
+
+    # 2. ヘッダーにある「コミュニティまたはトピック」設定欄を探索してクリック
     target_btn = None
-
-    # (A) テキストやaria-labelによる厳密検索
     priority_selectors = [
-        'div[role="dialog"] div[role="button"]:has-text("トピック")',
-        'div[role="dialog"] button:has-text("トピック")',
-        'div[role="dialog"] span[role="button"]:has-text("トピック")',
-        'div[role="dialog"] div[role="button"]:has-text("コミュニティ")',
-        'div[role="dialog"] button:has-text("コミュニティ")',
-        'div[role="dialog"] span[role="button"]:has-text("コミュニティ")',
-        'div[role="dialog"] [aria-label*="トピック"]',
-        'div[role="dialog"] [aria-label*="コミュニティ"]',
-        'div[role="dialog"] [aria-label*="Topic"]',
-        'div[role="dialog"] [aria-label*="Community"]',
-        'div[role="dialog"] svg[aria-label*="トピック"]',
-        'div[role="dialog"] svg[aria-label*="コミュニティ"]',
-        'div[role="dialog"] svg[aria-label*="Topic"]',
-        'div[role="dialog"] [aria-label*="タグ"]',
-        'div[role="dialog"] div[role="button"]:has-text("Add topic")',
-        'div[role="dialog"] button:has-text("Add topic")',
-        'div[role="dialog"] div[role="button"]:has-text("Add a topic")',
+        'span:text-is("コミュニティまたはトピック")',
+        'div[role="button"]:has-text("コミュニティまたはトピック")',
+        'div[role="button"]:has-text("トピック")',
+        'button:has-text("トピック")',
+        'span[role="button"]:has-text("トピック")',
+        'div[role="button"]:has-text("コミュニティ")',
+        'button:has-text("コミュニティ")',
+        'span[role="button"]:has-text("コミュニティ")',
+        '[aria-label*="トピック"]',
+        '[aria-label*="コミュニティ"]',
+        '[aria-label*="Topic"]',
+        '[aria-label*="Community"]',
+        'svg[aria-label*="トピック"]',
+        'svg[aria-label*="コミュニティ"]',
+        'svg[aria-label*="Topic"]',
+        '[aria-label*="タグ"]',
+        'div[role="button"]:has-text("Add a topic")',
+        'div[role="button"]:has-text("Add topic")',
+        'button:has-text("Add topic")',
     ]
     for sel in priority_selectors:
         try:
-            el = page.locator(sel).first
-            if el.is_visible(timeout=300):
-                parent_btn = page.locator(f'div[role="dialog"] div[role="button"]:has({sel}), div[role="dialog"] button:has({sel})').first
-                target_btn = parent_btn if parent_btn.is_visible() else el
+            for el in search_root.locator(sel).all():
+                if not el.is_visible():
+                    continue
+                box = el.bounding_box()
+                if tb_top_y is not None and box and box['y'] > tb_top_y + 15:
+                    continue
+                target_btn = el
+                break
+            if target_btn:
                 break
         except Exception:
             pass
 
-    # (B) 本文入力欄の上部にあるボタン群から探索（アカウント名の右隣にある＋やトピックボタン）
     if not target_btn:
         try:
-            tb = dialog.locator('div[role="textbox"], div[contenteditable="true"]').first
-            tb_box = tb.bounding_box() if tb.is_visible() else None
-            max_y = (tb_box['y'] + 15) if tb_box else 9999
-            
-            for el in dialog.locator('div[role="button"], button, span[role="button"]').all():
+            max_y = (tb_top_y + 15) if tb_top_y is not None else 9999
+            for el in search_root.locator('div[role="button"], button, span[role="button"]').all():
                 try:
                     if el.is_visible():
                         box = el.bounding_box()
@@ -2437,10 +2593,12 @@ def set_topic_in_threads_composer(page, dialog, topic_name, log_func=None):
                             txt = el.inner_text().strip()
                             aria = el.get_attribute("aria-label") or ""
                             combined = f"{txt} {aria}"
+                            if any(k in combined for k in ["キャンセル", "閉じる", "Close", "Cancel", "下書き"]):
+                                continue
                             if any(k in combined for k in ["トピック", "コミュニティ", "Topic", "Community", "タグ", "tag"]):
                                 target_btn = el
                                 break
-                            elif ("+" in txt or "＋" in txt or "#" in txt) and box['width'] < 160:
+                            elif ("+" in txt or "＋" in txt or "#" in txt) and box['width'] < 180 and box['height'] <= 52:
                                 target_btn = el
                                 break
                 except Exception:
@@ -2448,17 +2606,16 @@ def set_topic_in_threads_composer(page, dialog, topic_name, log_func=None):
         except Exception:
             pass
 
-    # ボタンをクリック
     if target_btn:
         try:
             target_btn.click()
-            time.sleep(0.7)
+            time.sleep(0.45)
         except Exception as ce:
             if log_func:
                 log_func(f"[DEBUG] トピックボタンクリック試行: {ce}")
 
-    # 2. 開いたトピック/コミュニティ検索入力欄を探して入力
-    for inp_sel in [
+    # 3. 開いたトピック入力欄を柔軟に検出（<input>だけでなく contenteditable / role="textbox" / activeElement も対象）
+    inp_selectors = [
         'input[placeholder*="トピック"]',
         'input[placeholder*="Topic"]',
         'input[placeholder*="コミュニティ"]',
@@ -2469,65 +2626,286 @@ def set_topic_in_threads_composer(page, dialog, topic_name, log_func=None):
         'input[aria-label*="トピック"]',
         'input[aria-label*="Topic"]',
         'input[aria-label*="コミュニティ"]',
-        'input[type="text"]',
-        'div[role="dialog"] input',
         'div[role="combobox"] input',
-    ]:
-        try:
-            inp = page.locator(inp_sel).first
-            if inp.is_visible(timeout=600):
-                inp.click()
-                time.sleep(0.2)
-                try:
-                    inp.fill("")
-                except Exception:
-                    pass
-                inp.press_sequentially(clean_topic, delay=30)
-                time.sleep(0.6)
+        'div[role="dialog"] input[type="text"]',
+        'div[role="dialog"] input[type="search"]',
+        'div[role="dialog"] input',
+        'input[type="text"]',
+    ]
 
-                # Threadsのサジェストリスト（候補リスト）をクリック、またはEnterで決定
-                selected = False
-                for opt_sel in [
-                    'div[role="listbox"] div[role="option"]',
-                    'div[role="listbox"] div[role="button"]',
-                    'div[role="option"]',
-                    'div[role="menuitem"]',
-                    'li[role="option"]',
-                    f'div:has-text("「{clean_topic}」")',
-                    f'span:has-text("「{clean_topic}」")',
-                ]:
+    def _find_header_topic_editable():
+        # (A) <input> 検索
+        for inp_sel in inp_selectors:
+            try:
+                for cand_inp in page.locator(inp_sel).all():
+                    if cand_inp.is_visible():
+                        itype = (cand_inp.get_attribute("type") or "text").lower()
+                        if itype not in ["file", "checkbox", "radio", "hidden", "submit", "button"]:
+                            return ("input", cand_inp)
+            except Exception:
+                pass
+        # (B) ヘッダー側の contenteditable / role="textbox" / combobox（本文欄より上のみ対象）
+        header_ce_selectors = [
+            'div[role="dialog"] [contenteditable="true"]',
+            'div[role="dialog"] [role="textbox"]',
+            'div[role="dialog"] [role="combobox"]',
+            '[contenteditable="true"]',
+            '[role="textbox"]',
+        ]
+        for ce_sel in header_ce_selectors:
+            try:
+                for cand_ce in search_root.locator(ce_sel).all():
+                    if not cand_ce.is_visible():
+                        continue
+                    box = cand_ce.bounding_box()
+                    if not box or box['height'] > 75 or box['width'] < 16:
+                        continue
+                    # 本文欄（またはそれより下）を絶対に誤認識しない
+                    if tb_top_y is not None and box['y'] >= tb_top_y - 4:
+                        continue
+                    aria = (cand_ce.get_attribute("aria-label") or "") + " " + (cand_ce.get_attribute("placeholder") or "")
+                    txt_now = ""
                     try:
-                        candidates = page.locator(opt_sel).all()
-                        for c_opt in candidates:
-                            if c_opt.is_visible():
-                                opt_text = c_opt.inner_text().strip()
-                                if clean_topic in opt_text or "追加" in opt_text or "Add" in opt_text or len(candidates) == 1:
-                                    c_opt.click()
-                                    selected = True
-                                    time.sleep(0.4)
-                                    break
-                        if selected:
-                            break
+                        txt_now = cand_ce.inner_text().strip()
                     except Exception:
                         pass
+                    if "最近どう" in aria or "Start a thread" in aria or txt_now == "最近どう？":
+                        continue
+                    return ("ce", cand_ce)
+            except Exception:
+                pass
+        # (C) 現在フォーカス中の activeElement が本文欄より上の編集可能要素ならそのまま使う
+        try:
+            active_info = page.evaluate("""(tbTopY) => {
+                const el = document.activeElement;
+                if (!el) return null;
+                const tag = (el.tagName || '').toUpperCase();
+                const role = (el.getAttribute('role') || '').toLowerCase();
+                const isEdit = (tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable || role === 'textbox' || role === 'combobox');
+                if (!isEdit) return null;
+                const rect = el.getBoundingClientRect();
+                if (rect.width < 10 || rect.height < 8 || rect.height > 85) return null;
+                if (tbTopY !== null && tbTopY !== undefined && rect.top >= tbTopY - 4) return null;
+                return { tag, isCE: !!el.isContentEditable, top: rect.top };
+            }""", tb_top_y)
+            if active_info:
+                mode = "active_input" if active_info.get("tag") in ["INPUT", "TEXTAREA"] else "active_ce"
+                return (mode, None)
+        except Exception:
+            pass
+        return (None, None)
 
-                if not selected:
-                    inp.press("Enter")
-                    time.sleep(0.5)
+    edit_kind, topic_input = (None, None)
+    for _ in range(3):
+        edit_kind, topic_input = _find_header_topic_editable()
+        if edit_kind:
+            break
+        time.sleep(0.25)
 
-                topic_set = True
-                if log_func:
-                    log_func(f"[SUCCESS] コミュニティ/トピック「{clean_topic}」をアカウント名の右側の設定欄に正常に適用しました。")
-                break
+    # クリックしても入力状態になっていなければ座標クリックでもう一度アクティブ化
+    if not edit_kind and target_btn:
+        try:
+            tbox = target_btn.bounding_box()
+            if tbox:
+                page.mouse.click(tbox['x'] + min(tbox['width'] * 0.5, 90), tbox['y'] + tbox['height'] * 0.5)
+                time.sleep(0.35)
+                edit_kind, topic_input = _find_header_topic_editable()
         except Exception:
             pass
 
-    # 3. 設定結果の通知（※本文末尾へのハッシュタグ追加はユーザー要望により完全廃止）
-    if not topic_set:
-        if log_func:
-            log_func(f"[WARN] コミュニティ/トピック「{clean_topic}」の設定UIが見つかりませんでした。本文を改変せずそのまま投稿します。")
+    if edit_kind:
+        try:
+            if topic_input is not None:
+                try:
+                    topic_input.click()
+                    time.sleep(0.12)
+                except Exception:
+                    pass
+
+            if edit_kind == "input" and topic_input is not None:
+                try:
+                    topic_input.fill("")
+                except Exception:
+                    pass
+                topic_input.fill(clean_topic)
+                try:
+                    topic_input.dispatch_event("input")
+                    topic_input.dispatch_event("change")
+                except Exception:
+                    pass
+                # 反映されていなければ insert_text で補完
+                try:
+                    if clean_topic not in (topic_input.input_value() or ""):
+                        topic_input.click()
+                        page.keyboard.press("Control+A")
+                        page.keyboard.press("Backspace")
+                        page.keyboard.insert_text(clean_topic)
+                except Exception:
+                    pass
+            else:
+                # contenteditable / activeElement へ日本語を文字化けなく直接入力
+                try:
+                    page.keyboard.press("Control+A")
+                    page.keyboard.press("Backspace")
+                except Exception:
+                    pass
+                time.sleep(0.08)
+                page.keyboard.insert_text(clean_topic)
+
+            time.sleep(0.35)
+
+            # 候補ポップオーバーに「飛田新地」等が出ていれば軽く1回だけクリック、出ていなくても入力を消さずそのまま下へ進む
+            best_opt = _find_topic_option_point()
+            if best_opt:
+                try:
+                    page.mouse.click(best_opt["cx"], best_opt["cy"])
+                    time.sleep(0.35)
+                except Exception:
+                    pass
+            elif edit_kind == "input" and topic_input is not None:
+                # <input>欄の場合はEnterで入力を確定（本文欄へ移る準備）
+                try:
+                    if topic_input.is_visible():
+                        topic_input.press("Enter")
+                        time.sleep(0.25)
+                except Exception:
+                    pass
+
+            topic_set = True
+            if log_func:
+                log_func(f"[SUCCESS] コミュニティ/トピック「{clean_topic}」を入力しました。続いて下の本文入力欄へ進みます。")
+        except Exception as te:
+            if log_func:
+                log_func(f"[DEBUG] トピック入力例外: {te}")
+    else:
+        # 入力欄が開かず「最近」候補リストだけ出ている場合は候補クリックを試行
+        immediate_opt = _find_topic_option_point()
+        if immediate_opt:
+            try:
+                page.mouse.click(immediate_opt["cx"], immediate_opt["cy"])
+                time.sleep(0.45)
+                if _verify_topic_applied():
+                    topic_set = True
+                    if log_func:
+                        log_func(f"[SUCCESS] コミュニティ/トピック「{clean_topic}」を候補から適用しました。")
+            except Exception:
+                pass
+        if not topic_set:
+            if log_func:
+                log_func(f"[WARN] コミュニティ/トピック入力欄が開かなかったため「{clean_topic}」は未設定のまま下の本文入力へ進みます。")
 
     return topic_set
+
+
+def _extract_verification_snippets(text_content):
+    """プロフィール反映確認用に投稿本文から検索スニペット（URL以外の先頭行・短文対応）を抽出"""
+    snippets = []
+    if not text_content:
+        return snippets
+    for raw_line in str(text_content).splitlines():
+        line = re.sub(r'\s+', ' ', raw_line).strip()
+        if not line:
+            continue
+        if re.match(r'^https?://\S+$', line, re.IGNORECASE):
+            continue
+        compact = re.sub(r'\s+', '', line)
+        if len(compact) >= 6:
+            snippets.append(compact[:18])
+            if len(compact) >= 24:
+                snippets.append(compact[6:24])
+        if len(snippets) >= 3:
+            break
+    if not snippets:
+        whole = re.sub(r'\s+', '', str(text_content)).strip()
+        if len(whole) >= 1:
+            snippets.append(whole[:22])
+    return snippets
+
+
+def _detect_profile_handle_on_page(page, fallback_account_name=""):
+    """現在表示中のThreads画面から自分の @ユーザー名 を取得"""
+    try:
+        href = page.evaluate("""() => {
+            const links = Array.from(document.querySelectorAll('a[href^="/@"]'));
+            for (const a of links) {
+                const h = a.getAttribute('href') || '';
+                if (/^\\/@[A-Za-z0-9._]+\\/?$/.test(h)) {
+                    return h;
+                }
+            }
+            return '';
+        }""")
+        if href:
+            cleaned = str(href).strip().strip("/").lstrip("@").strip()
+            if cleaned:
+                return cleaned
+    except Exception:
+        pass
+    return str(fallback_account_name or "").strip().lstrip("@").strip()
+
+
+def _verify_post_appeared_on_profile(page, account_name, text_content, profile_handle="", has_image=False, log_func=print):
+    """
+    トースト通知・API応答が確認できなかった場合のみ、プロフィールページを開いて
+    投稿が実際にThreads上へ反映されたか最終確認する（空振りの誤成功判定を完全防止）。
+    """
+    snippets = _extract_verification_snippets(text_content)
+    handle = (profile_handle or "").strip().lstrip("@").strip() or str(account_name or "").strip().lstrip("@").strip()
+    if not handle or (not snippets and not has_image):
+        return False, "プロフィール確認用のハンドルまたは投稿内容が不足しているため反映確認不可"
+
+    profile_url = f"https://www.threads.com/@{handle}"
+    if log_func:
+        log_func(f"[*] [{account_name}] プロフィール画面 ({profile_url}) に移動して実際の投稿反映を確認します...")
+
+    try:
+        page.goto(profile_url, wait_until="domcontentloaded", timeout=25000)
+        for attempt in range(2):
+            time.sleep(2.5 if attempt == 0 else 2.2)
+            cur_url = (page.url or "").lower()
+            if "/login" in cur_url or "accounts/login" in cur_url:
+                return False, "セッション切れ（ログイン画面へリダイレクトされました）"
+
+            try:
+                feed_text = page.evaluate("""() => {
+                    const root = document.querySelector('main') || document.querySelector('div[role="main"]') || document.body;
+                    return (root ? root.innerText : '') || '';
+                }""")
+            except Exception:
+                feed_text = ""
+
+            norm_feed = re.sub(r'\s+', '', str(feed_text or ''))[:6000]
+            for sn in snippets:
+                if sn and sn in norm_feed:
+                    if log_func:
+                        log_func(f"[SUCCESS] [{account_name}] 🎉 プロフィール (@{handle}) 上部に投稿本文（「{sn[:12]}...」）の反映を実確認しました！")
+                    return True, f"プロフィール(@{handle})に投稿反映を確認"
+
+            if not snippets and has_image:
+                try:
+                    recent_img_post = page.evaluate("""() => {
+                        const root = document.querySelector('main') || document.querySelector('div[role="main"]') || document.body;
+                        const txt = (root ? root.innerText : '').slice(0, 1800);
+                        const hasImg = !!(root && root.querySelector('img'));
+                        const hasFreshTime = /(たった今|今すぐ|Just now|\\bnow\\b|\\b\\d{1,2}秒\\b|\\b1分\\b|\\b0分\\b|\\b1m\\b)/i.test(txt);
+                        return hasImg && hasFreshTime;
+                    }""")
+                    if recent_img_post:
+                        if log_func:
+                            log_func(f"[SUCCESS] [{account_name}] 🎉 プロフィール (@{handle}) 上部に画像投稿の反映を実確認しました！")
+                        return True, f"プロフィール(@{handle})に画像投稿反映を確認"
+                except Exception:
+                    pass
+
+            if attempt == 0:
+                try:
+                    page.reload(wait_until="domcontentloaded", timeout=20000)
+                except Exception:
+                    pass
+
+        return False, f"@{handle} のプロフィール一覧上部に投稿が表示されていません"
+    except Exception as ve:
+        return False, f"プロフィール確認例外: {ve}"
 
 
 def _perform_fill_and_submit_post(
@@ -2544,37 +2922,173 @@ def _perform_fill_and_submit_post(
 ):
     """
     指定されたテキストボックスに入力、トピック・画像を設定し、
-    「投稿」ボタンをクリックして送信完了（トースト通知またはフォーム終了）を確認する汎用投稿関数
+    「投稿」ボタンをクリックして送信完了（完了通知 / API成功レスポンス / プロフィール反映）を
+    厳密に検証する汎用投稿関数（未投稿なのに完了扱いになる誤検知を完全防止）
     """
-    try:
-        # 1. テキストボックスのフォーカス＆クリア
-        textbox.click()
+    profile_handle = _detect_profile_handle_on_page(page, account_name)
+    network_state = {
+        "request_seen": False,
+        "confirmed": False,
+        "error": "",
+    }
+
+    def _on_post_response(response):
         try:
-            textbox.press("Control+A")
-            textbox.press("Backspace")
+            import urllib.parse
+            req = response.request
+            if req.method != "POST":
+                return
+            url = (response.url or "").lower()
+            if not any(d in url for d in ["threads.net", "threads.com", "instagram.com"]):
+                return
+            if not any(ep in url for ep in ["/graphql", "/configure", "/publish", "/api/v1/media/", "/api/v1/text_feed/"]):
+                return
+            raw_post_data = req.post_data or ""
+            try:
+                decoded_post_data = urllib.parse.unquote_plus(raw_post_data).lower()
+            except Exception:
+                decoded_post_data = raw_post_data.lower()
+            is_post_call = (
+                "/configure" in url
+                or "/publish" in url
+                or "/text_feed/" in url
+                or any(k in decoded_post_data for k in [
+                    "createthread", "create_thread", "barcelonacreate", "barcelonapublish",
+                    "publishpost", "createpost", "text_post_app", "publish_mode", "caption"
+                ])
+            )
+            if not is_post_call:
+                return
+            network_state["request_seen"] = True
+            status_code = response.status
+            body_text = ""
+            try:
+                body_text = response.text()[:4000]
+            except Exception:
+                pass
+            if status_code >= 400 or any(e in body_text for e in [
+                '"status":"fail"', '"status": "fail"', 'feedback_required',
+                'checkpoint_required', '"errors":[', '"errors": ['
+            ]):
+                network_state["error"] = f"サーバー拒否/APIエラー (HTTP {status_code})"
+            elif status_code == 200 and any(ok_k in body_text for ok_k in [
+                '"pk"', '"code"', '"media"', '"id"', '"data":', 'text_post_app_thread', '"status":"ok"', '"status": "ok"'
+            ]):
+                network_state["confirmed"] = True
         except Exception:
             pass
-        time.sleep(0.3)
 
-        # 2. 本文のタイピング入力
-        lines = text_content.split("\n")
+    def _focus_body_textbox_safely():
+        """トピックポップオーバーが右側を覆っていても安全に左側から下の本文欄（「最近どう？」）をクリックしてフォーカスする"""
+        clicked = False
+        try:
+            box = textbox.bounding_box()
+            if box:
+                safe_pt = page.evaluate("""({x, y, w, h}) => {
+                    const y1 = y + Math.min(18, Math.max(6, h * 0.45));
+                    const xs = [x + 28, x + 48, x + 16, x + Math.min(80, w * 0.2), x + w * 0.5];
+                    for (const cx of xs) {
+                        if (cx < x + 4 || cx > x + w - 4) continue;
+                        const el = document.elementFromPoint(cx, y1);
+                        if (el && (el.isContentEditable || el.closest('[contenteditable="true"], [role="textbox"]'))) {
+                            const txt = (el.innerText || '').trim();
+                            if (!txt || txt.includes('最近どう') || el.getAttribute('role') === 'textbox' || el.isContentEditable) {
+                                return { cx, cy: y1, covered: false };
+                            }
+                        }
+                    }
+                    return { cx: x + Math.min(28, w * 0.2), cy: y1, covered: true };
+                }""", {"x": box['x'], "y": box['y'], "w": box['width'], "h": box['height']})
+                if safe_pt:
+                    page.mouse.click(safe_pt["cx"], safe_pt["cy"])
+                    if safe_pt.get("covered"):
+                        time.sleep(0.22)
+                        page.mouse.click(safe_pt["cx"], safe_pt["cy"])
+                    clicked = True
+        except Exception:
+            pass
+        if not clicked:
+            textbox.click()
+
+    def _fill_body_into_textbox(use_insert_text=False):
+        _focus_body_textbox_safely()
+        try:
+            cur_txt = (textbox.inner_text() or "").strip()
+            if cur_txt and cur_txt != "最近どう？":
+                textbox.press("Control+A")
+                textbox.press("Backspace")
+        except Exception:
+            pass
+        time.sleep(0.22)
+        lines = str(text_content or "").split("\n")
         for l_idx, line in enumerate(lines):
             if line:
-                textbox.press_sequentially(line, delay=random.randint(15, 30))
+                if use_insert_text:
+                    page.keyboard.insert_text(line)
+                else:
+                    textbox.press_sequentially(line, delay=random.randint(15, 30))
             if l_idx < len(lines) - 1:
-                textbox.press("Shift+Enter")
-                time.sleep(0.1)
+                if use_insert_text:
+                    page.keyboard.press("Shift+Enter")
+                else:
+                    textbox.press("Shift+Enter")
+                time.sleep(0.08)
 
-        time.sleep(1.0)
+    if (not text_content or not str(text_content).strip()) and not resolved_img:
+        return False, "投稿本文（ポスト文章）が空です。Excelの「ポスト文章」列をご確認ください。"
 
-        # 3. トピック設定
+    try:
+        # 1. トピックを先に設定（トピック入力後に下の本文欄へそのまま移動して入力）
         if target_topic:
             try:
-                set_topic_in_threads_composer(page, container, target_topic, log_func)
-                time.sleep(0.5)
+                set_topic_in_threads_composer(page, container, target_topic, body_textbox=textbox, log_func=log_func)
+                time.sleep(0.35)
             except Exception as te:
                 if log_func:
                     log_func(f"[DEBUG] トピック設定例外: {te}")
+
+        # トピック適用後のDOM再描画に備えて本文入力欄（「最近どう？」）参照を安全に最新化
+        try:
+            if container and container.is_visible():
+                all_tbs = container.locator('div[role="textbox"][contenteditable="true"], div[role="textbox"], [data-lexical-editor="true"]').all()
+                matched_body_tb = None
+                for cand_tb in all_tbs:
+                    try:
+                        if not cand_tb.is_visible():
+                            continue
+                        aria_tb = ((cand_tb.get_attribute("aria-label") or "") + " " + (cand_tb.get_attribute("placeholder") or "")).strip()
+                        txt_tb = (cand_tb.inner_text() or "").strip()
+                        if any(k in aria_tb or k in txt_tb for k in ["最近どう", "Start a thread", "空のテキスト"]):
+                            matched_body_tb = cand_tb
+                            break
+                        if target_topic and target_topic in txt_tb and len(all_tbs) > 1:
+                            continue
+                        if matched_body_tb is None:
+                            matched_body_tb = cand_tb
+                    except Exception:
+                        pass
+                if matched_body_tb is not None and matched_body_tb.is_visible():
+                    textbox = matched_body_tb
+        except Exception:
+            pass
+
+        # 2. 本文をテキストボックスへ入力
+        if text_content and str(text_content).strip():
+            _fill_body_into_textbox(use_insert_text=False)
+            time.sleep(0.7)
+
+            # 3. 本文が確実に入力されているか最終確認（欠落していれば直接テキスト挿入で再入力）
+            try:
+                cur_tb_txt = (textbox.inner_text() or "").strip()
+            except Exception:
+                cur_tb_txt = ""
+            expected_snippets = _extract_verification_snippets(text_content)
+            norm_tb = re.sub(r'\s+', '', cur_tb_txt)
+            if not norm_tb or norm_tb == "最近どう？" or (expected_snippets and not any(sn[:10] in norm_tb for sn in expected_snippets)):
+                if log_func:
+                    log_func(f"[WARN] [{account_name}] 本文入力欄のテキストが未反映だったため直接入力モードで再入力します...")
+                _fill_body_into_textbox(use_insert_text=True)
+                time.sleep(0.6)
 
         # 4. 画像添付
         if resolved_img:
@@ -2648,14 +3162,14 @@ def _perform_fill_and_submit_post(
                             log_func(f"[{account_name}] 画像プレビュー確認完了（アップロード成功）")
                         break
 
-        time.sleep(1.0)
+        time.sleep(0.8)
 
-        # 5. 余計なポップアップメニュー（返信範囲設定等）をEscapeでクローズ
+        # 5. 余計なポップアップメニュー（返信範囲設定等）をクローズ
         for pop_sel in ['text="返信と引用ができる人"', 'text="返信できる人"', 'div[role="menu"]']:
             try:
                 if page.locator(pop_sel).first.is_visible():
                     page.keyboard.press("Escape")
-                    time.sleep(0.5)
+                    time.sleep(0.4)
                     break
             except Exception:
                 pass
@@ -2678,118 +3192,199 @@ def _perform_fill_and_submit_post(
                         pass
                 if candidates:
                     cand_btn = candidates[-1]
-                    is_disabled = (cand_btn.get_attribute("aria-disabled") == "true") or (cand_btn.get_attribute("disabled") is not None)
+                    try:
+                        is_disabled = bool(cand_btn.evaluate("""(el) => {
+                            if (el.getAttribute('aria-disabled') === 'true' || el.hasAttribute('disabled') || el.getAttribute('tabindex') === '-1') return true;
+                            if (el.closest('[aria-disabled="true"]')) return true;
+                            const st = window.getComputedStyle(el);
+                            if (st && (parseFloat(st.opacity) < 0.7 || st.pointerEvents === 'none' || st.cursor === 'not-allowed')) return true;
+                            return false;
+                        }"""))
+                    except Exception:
+                        is_disabled = (cand_btn.get_attribute("aria-disabled") == "true") or (cand_btn.get_attribute("disabled") is not None)
                     if not is_disabled:
                         submit_btn = cand_btn
                         break
                 time.sleep(1)
 
         if not submit_btn:
-            return False, "「投稿」ボタンがアクティブになりませんでした（文字数超過またはアップロード中の可能性）"
+            return False, "「投稿」ボタンがアクティブになりませんでした（本文未入力・文字数超過・画像処理中の可能性）"
 
-        if log_func:
-            log_func(f"[{account_name}] 【{route_name}】「投稿」ボタンをクリックしました。Threads送信処理を確認中...")
+        # 送信前にネットワークレスポンス監視をアタッチし、1回だけ確実にクリックする
+        page.on("response", _on_post_response)
         try:
-            submit_btn.scroll_into_view_if_needed()
-            submit_btn.click(force=True)
-        except Exception:
-            pass
-        try:
-            submit_btn.evaluate("el => el.click()")
-        except Exception:
-            pass
-        try:
-            textbox.focus()
-            page.keyboard.press("Control+Enter")
-        except Exception:
-            pass
-
-        # 7. 送信完了チェック
-        posted_success = False
-        post_error_detected = ""
-
-        for check_idx in range(30):
-            time.sleep(0.8)
-            # (A) 画面下部の黒い完了通知トースト
-            for s_sel in [
-                'text="投稿完了"', ':has-text("投稿完了")',
-                'text="投稿しました"', ':has-text("投稿しました")',
-                'text="スレッドを投稿しました"', ':has-text("スレッドを投稿しました")',
-                'text="スレッドを表示"', ':has-text("スレッドを表示")',
-                'text="スレッドが投稿されました"', ':has-text("スレッドが投稿されました")',
-                'text="Posted"', 'text="View post"',
-                'div[role="alert"]:has-text("投稿")', 'div[role="alert"]:has-text("スレッド")',
-                'div:has-text("投稿完了")', 'div:has-text("投稿しました")',
-                'div:has-text("スレッドを投稿しました")'
-            ]:
+            if log_func:
+                log_func(f"[{account_name}] 【{route_name}】「投稿」ボタンをクリックしました。Threads送信処理を確認中...")
+            try:
+                submit_btn.scroll_into_view_if_needed()
+                submit_btn.click()
+            except Exception:
                 try:
-                    if page.locator(s_sel).first.is_visible():
-                        posted_success = True
-                        if log_func:
-                            log_func(f"[SUCCESS] [{account_name}] 🎉 完了通知（'{s_sel}'）を確認し、投稿完了しました！")
-                        break
+                    submit_btn.click(force=True)
                 except Exception:
-                    pass
-            if posted_success:
-                break
-
-            # (B) エラー画面通知
-            for err_sel in [
-                'div[role="alert"]:has-text("エラー")', 'text="投稿できませんでした"',
-                'text="アップロードできませんでした"', 'text="エラーが発生しました"',
-                'text="問題が発生しました"', 'text="コミュニティガイドライン"',
-                'text="後でもう一度お試しください"'
-            ]:
-                try:
-                    err_el = page.locator(err_sel).first
-                    if err_el.is_visible():
-                        post_error_detected = err_el.inner_text().strip()[:80]
-                        break
-                except Exception:
-                    pass
-            if post_error_detected:
-                break
-
-            # (C) フォームの消失またはクリア検知
-            form_cleared_or_closed = False
-            if container and container.is_visible():
-                try:
-                    if not textbox.is_visible() or not textbox.inner_text().strip():
-                        form_cleared_or_closed = True
-                except Exception:
-                    form_cleared_or_closed = True
-            else:
-                form_cleared_or_closed = True
-
-            if form_cleared_or_closed and check_idx >= 2:
-                time.sleep(0.4)
-                for err_sel in ['div[role="alert"]:has-text("エラー")', 'text="投稿できませんでした"']:
                     try:
-                        if page.locator(err_sel).first.is_visible():
-                            post_error_detected = "エラー通知検出"
-                            break
+                        submit_btn.evaluate("el => el.click()")
                     except Exception:
                         pass
-                if not post_error_detected:
-                    posted_success = True
-                    if log_func:
-                        log_func(f"[SUCCESS] [{account_name}] 🎉 投稿フォームが正常に送信され完了しました！")
-                    break
 
-            if check_idx in [5, 12]:
+            strict_toast_selectors = [
+                'div[role="alert"]:has-text("投稿しました")',
+                'div[role="alert"]:has-text("投稿完了")',
+                'div[role="alert"]:has-text("スレッドを投稿しました")',
+                'div[role="alert"]:has-text("スレッドが投稿されました")',
+                'div[role="alert"]:has-text("Posted")',
+                'div[role="status"]:has-text("投稿しました")',
+                'div[role="status"]:has-text("投稿完了")',
+                'div[role="status"]:has-text("Posted")',
+                'span:text-is("投稿しました")',
+                'span:text-is("スレッドを投稿しました")',
+                'span:text-is("投稿が完了しました")',
+                'span:text-is("Posted")',
+                'a:has-text("スレッドを表示")',
+                'a:has-text("View post")',
+            ]
+            err_selectors = [
+                'div[role="alert"]:has-text("エラー")',
+                'div[role="alert"]:has-text("できませんでした")',
+                'div[role="alert"]:has-text("失敗")',
+                'div[role="alert"]:has-text("制限")',
+                'span:text-is("投稿できませんでした")',
+                'span:text-is("アップロードできませんでした")',
+                'span:text-is("エラーが発生しました")',
+                'span:text-is("問題が発生しました")',
+                'span:text-is("後でもう一度お試しください")',
+                'span:text-is("しばらくしてからもう一度お試しください")',
+                'text="コミュニティガイドライン"',
+                'text="スレッドを破棄しますか？"',
+                'text="投稿を破棄しますか？"',
+                'text="Discard thread?"',
+            ]
+
+            def _check_toast_or_error():
+                for s_sel in strict_toast_selectors:
+                    try:
+                        t_el = page.locator(s_sel).first
+                        if t_el.is_visible():
+                            return "toast", s_sel
+                    except Exception:
+                        pass
                 try:
-                    if submit_btn and submit_btn.is_visible():
-                        submit_btn.click(force=True)
+                    js_toast = page.evaluate("""() => {
+                        const nodes = Array.from(document.querySelectorAll('div, span, p, a'));
+                        for (const el of nodes) {
+                            const rect = el.getBoundingClientRect();
+                            if (rect.width < 20 || rect.height < 12 || rect.height > 90) continue;
+                            if (rect.top < window.innerHeight * 0.62) continue;
+                            const txt = (el.innerText || '').trim();
+                            if (!txt || txt.length > 60) continue;
+                            if (
+                                txt === '投稿しました' || txt === 'スレッドを投稿しました' ||
+                                txt === '投稿が完了しました' || txt === 'Posted' ||
+                                (txt.includes('投稿しました') && !txt.includes('できません'))
+                            ) {
+                                return txt;
+                            }
+                        }
+                        return '';
+                    }""")
+                    if js_toast:
+                        return "toast", js_toast
                 except Exception:
                     pass
+                if network_state["error"]:
+                    return "error", network_state["error"]
+                for e_sel in err_selectors:
+                    try:
+                        e_el = page.locator(e_sel).first
+                        if e_el.is_visible():
+                            return "error", (e_el.inner_text().strip()[:80] or e_sel)
+                    except Exception:
+                        pass
+                return None, ""
 
-        if post_error_detected:
-            return False, f"Threads画面エラー: {post_error_detected}"
+            posted_success = False
+            post_error_detected = ""
 
-        if posted_success:
-            return True, ""
-        else:
-            return False, "投稿ボタン押下後30秒経過しても完了通知が確認できませんでした"
+            # 7. 送信完了チェック（最大24秒）
+            for check_idx in range(30):
+                time.sleep(0.8)
+
+                sig_type, sig_val = _check_toast_or_error()
+                if sig_type == "error":
+                    post_error_detected = sig_val
+                    break
+                if sig_type == "toast" and not network_state["error"]:
+                    posted_success = True
+                    if log_func:
+                        log_func(f"[SUCCESS] [{account_name}] 🎉 完了通知（'{sig_val}'）を確認し、投稿完了しました！")
+                    break
+
+                # (C) フォームの消失または送信確認 → そのまま完了扱いせず、必ず通知/API/プロフィール反映を検証
+                form_cleared_or_closed = False
+                if container and container.is_visible():
+                    try:
+                        if not textbox.is_visible() or (network_state["request_seen"] and not textbox.inner_text().strip()):
+                            form_cleared_or_closed = True
+                    except Exception:
+                        form_cleared_or_closed = True
+                else:
+                    form_cleared_or_closed = True
+
+                if form_cleared_or_closed and check_idx >= 2:
+                    # 遅延トースト・APIレスポンス確定を少し待ってから判定
+                    time.sleep(1.2)
+                    sig_type, sig_val = _check_toast_or_error()
+                    if sig_type == "error":
+                        post_error_detected = sig_val
+                        break
+                    if sig_type == "toast" and not network_state["error"]:
+                        posted_success = True
+                        if log_func:
+                            log_func(f"[SUCCESS] [{account_name}] 🎉 完了通知（'{sig_val}'）を確認し、投稿完了しました！")
+                        break
+                    if network_state["confirmed"] and not network_state["error"]:
+                        posted_success = True
+                        if log_func:
+                            log_func(f"[SUCCESS] [{account_name}] 🎉 Threadsサーバーからの投稿作成成功レスポンスを確認しました！")
+                        break
+
+                    if log_func:
+                        log_func(f"[INFO] [{account_name}] 入力フォーム終了を検知（完了通知/API未確認）。誤検知防止のためプロフィールで実際の投稿反映を検証します...")
+                    verified_ok, verify_detail = _verify_post_appeared_on_profile(
+                        page=page,
+                        account_name=account_name,
+                        text_content=text_content,
+                        profile_handle=profile_handle,
+                        has_image=bool(resolved_img),
+                        log_func=log_func
+                    )
+                    if verified_ok:
+                        posted_success = True
+                        break
+                    else:
+                        post_error_detected = f"未投稿と判定: {verify_detail}"
+                        break
+
+                if check_idx == 6 and not network_state["request_seen"]:
+                    try:
+                        if submit_btn and submit_btn.is_visible():
+                            is_dis = (submit_btn.get_attribute("aria-disabled") == "true") or (submit_btn.get_attribute("disabled") is not None)
+                            if not is_dis:
+                                submit_btn.click(force=True)
+                    except Exception:
+                        pass
+
+            if post_error_detected:
+                return False, f"Threads送信確認エラー: {post_error_detected}"
+
+            if posted_success:
+                return True, ""
+            return False, "投稿ボタン押下後、完了通知・API成功レスポンスのいずれも確認できませんでした"
+        finally:
+            try:
+                page.remove_listener("response", _on_post_response)
+            except Exception:
+                pass
 
     except Exception as e:
         return False, str(e)
@@ -2958,6 +3553,7 @@ def execute_threads_post_with_fallback(
                 return True, ""
             else:
                 last_error = err or "左下「＋」からの投稿送信に失敗しました"
+                log_func(f"[WARN] [{account_name}] 第1ルート未完了理由: {last_error}")
         else:
             last_error = "左下「＋」ボタンをクリックしましたが、新規投稿モーダルが開きませんでした"
     except Exception as e:
@@ -2973,13 +3569,51 @@ def execute_threads_post_with_fallback(
             return False, "停止ボタンによる中断"
         log_func(f"[{account_name}] 🔄 プラスボタンで投稿できなかったため、タイムライン上部の【最近どう？ / 投稿】枠から代替投稿を実行します...")
         try:
-            # 画面の余計なダイアログをクリーンアップ＆タイムライン最上部にスクロール
+            # 残っているモーダル（新しいスレッド等）を確実に閉じてからホームタイムラインに復帰
+            try:
+                dlg_open = page.locator('div[role="dialog"], div[aria-modal="true"]').first
+                if dlg_open.is_visible():
+                    for cancel_sel in [
+                        'div[role="button"]:has-text("キャンセル")',
+                        'button:has-text("キャンセル")',
+                        'div[role="button"]:has-text("Cancel")',
+                        'button:has-text("Cancel")',
+                    ]:
+                        c_btn = dlg_open.locator(cancel_sel).first
+                        if c_btn.is_visible():
+                            c_btn.click(force=True)
+                            time.sleep(0.5)
+                            break
+                    for disc_sel in [
+                        'div[role="button"]:has-text("破棄")',
+                        'button:has-text("破棄")',
+                        'div[role="button"]:has-text("Discard")',
+                        'button:has-text("Discard")',
+                    ]:
+                        d_btn = page.locator(disc_sel).first
+                        if d_btn.is_visible():
+                            d_btn.click(force=True)
+                            time.sleep(0.5)
+                            break
+            except Exception:
+                pass
             for _ in range(3):
                 try:
                     page.keyboard.press("Escape")
-                    time.sleep(0.3)
+                    time.sleep(0.25)
                 except Exception:
                     pass
+            try:
+                still_dlg = page.locator('div[role="dialog"], div[aria-modal="true"]').first.is_visible()
+            except Exception:
+                still_dlg = False
+            try:
+                cur_path = (page.url or "").split('?')[0].rstrip('/')
+                if still_dlg or not (cur_path.endswith("threads.net") or cur_path.endswith("threads.com")):
+                    page.goto("https://www.threads.net/", wait_until="domcontentloaded", timeout=25000)
+                    time.sleep(2.0)
+            except Exception:
+                pass
             try:
                 page.evaluate("window.scrollTo(0, 0)")
                 time.sleep(1.0)
@@ -3023,12 +3657,12 @@ def capture_error_diagnostic(page, account_name="unknown", context_label="postin
     """
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     clean_acc = re.sub(r'[^a-zA-Z0-9_-]', '_', str(account_name))
-    ss_dir = os.path.join(BASE_DIR, "error_screenshots")
+    ss_dir = SCREENSHOTS_DIR
     os.makedirs(ss_dir, exist_ok=True)
     
     ss_filename = f"error_{clean_acc}_{ts}.png"
     ss_path = os.path.join(ss_dir, ss_filename)
-    rel_ss = os.path.join("error_screenshots", ss_filename)
+    rel_ss = os.path.join("スクショ", ss_filename)
     
     ss_saved = False
     if page:
@@ -5125,7 +5759,7 @@ class ThreadsPosterGUI:
         toolbar3 = tk.Frame(self.root, bg="#121212", pady=2, padx=16)
         toolbar3.pack(fill="x")
 
-        btn_open_ss = tk.Button(toolbar3, text="📷 エラー画像", font=("Segoe UI", 9, "bold"), bg="#450a0a", fg="#fca5a5", padx=8, pady=4, relief="flat", cursor="hand2", command=self.open_error_screenshots_dir)
+        btn_open_ss = tk.Button(toolbar3, text="📷 スクショ", font=("Segoe UI", 9, "bold"), bg="#450a0a", fg="#fca5a5", padx=8, pady=4, relief="flat", cursor="hand2", command=self.open_error_screenshots_dir)
         btn_open_ss.pack(side="left", padx=3)
 
         btn_open_log = tk.Button(toolbar3, text="📝 エラーログ(txt)", font=("Segoe UI", 9, "bold"), bg="#991b1b", fg="#ffffff", padx=8, pady=4, relief="flat", cursor="hand2", command=self.open_error_log)
@@ -6417,11 +7051,11 @@ class ThreadsPosterGUI:
             self.log(f"[WARN] フォルダを開けませんでした: {e}")
 
     def open_error_screenshots_dir(self):
-        ss_dir = os.path.join(BASE_DIR, "error_screenshots")
+        ss_dir = SCREENSHOTS_DIR
         os.makedirs(ss_dir, exist_ok=True)
         try:
             os.startfile(ss_dir)
-            self.log("[INFO] 📷 エラー画像フォルダを開きました。")
+            self.log("[INFO] 📷 エラースクショフォルダ (スクショ) を開きました。")
         except Exception as e:
             self.log(f"[WARN] フォルダを開けませんでした: {e}")
 
