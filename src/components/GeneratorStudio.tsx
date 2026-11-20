@@ -316,7 +316,7 @@ export const GeneratorStudio: React.FC<GeneratorStudioProps> = ({
     onApplyToAccountPosts(newItems, replaceOnImport, imgMap);
   };
 
-  const handleDownloadPackZip = () => {
+  const handleDownloadPackZip = async () => {
     if (generatedBundles.length === 0) return;
 
     const postsForExcel: PostItem[] = generatedBundles.map((b) => ({
@@ -327,7 +327,7 @@ export const GeneratorStudio: React.FC<GeneratorStudioProps> = ({
       status: '未投稿',
     }));
 
-    const xlsxBytes = buildAccountWorkbookBytes(currentAccount, postsForExcel, dailySlots);
+    const xlsxBytes = await buildAccountWorkbookBytes(currentAccount, postsForExcel, dailySlots);
     const zipFiles: ZipInputFile[] = [
       {
         name: `${currentAccount.id}.xlsx`,
@@ -429,7 +429,7 @@ export const GeneratorStudio: React.FC<GeneratorStudioProps> = ({
                   })
                 }
                 className="flex items-center gap-1 px-2.5 py-1 bg-sky-600/20 hover:bg-sky-600/30 text-sky-300 border border-sky-500/40 rounded-md text-[11px] font-semibold cursor-pointer transition-colors whitespace-nowrap shrink-0"
-                title="入力中のアカウント設計をこのアカウントに紐づけて保存（Excel出力にも反映）"
+                title="入力中のアカウント設計プリセットをこのアカウントに保存"
               >
                 <Save className="w-3 h-3" />
                 <span>@{currentAccount.id} に保存</span>

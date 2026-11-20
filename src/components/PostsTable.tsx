@@ -42,9 +42,11 @@ export const PostsTable: React.FC<PostsTableProps> = ({
 }) => {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | '未投稿' | '投稿完了' | 'エラー'>('all');
+  const [themeFilter, setThemeFilter] = useState<string>('all');
   
   // Single Add
   const [isAdding, setIsAdding] = useState(false);
+  const [newTheme, setNewTheme] = useState('基本');
   const [newText, setNewText] = useState('');
   const [newTopic, setNewTopic] = useState('信太山新地');
   const [newImagePath, setNewImagePath] = useState('image.png');
@@ -52,6 +54,7 @@ export const PostsTable: React.FC<PostsTableProps> = ({
 
   // Bulk Add Modal
   const [isBulkAdding, setIsBulkAdding] = useState(false);
+  const [bulkTheme, setBulkTheme] = useState('基本');
   const [bulkTextInput, setBulkTextInput] = useState('');
   const [bulkTopic, setBulkTopic] = useState('信太山新地');
   const [bulkImageOption, setBulkImageOption] = useState<'none' | 'alternate' | 'image1' | 'image2'>('alternate');
@@ -66,12 +69,18 @@ export const PostsTable: React.FC<PostsTableProps> = ({
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
 
+  const availableThemes = Array.from(new Set(posts.map((p) => (p.theme || '基本').trim() || '基本')));
+  const activeThemeFilter = themeFilter === 'all' || availableThemes.includes(themeFilter) ? themeFilter : 'all';
+
   const filteredPosts = posts.filter((p) => {
+    const pTheme = (p.theme || '基本').trim() || '基本';
+    if (activeThemeFilter !== 'all' && pTheme !== activeThemeFilter) return false;
     if (statusFilter !== 'all' && p.status !== statusFilter) return false;
     if (search.trim()) {
       const q = search.toLowerCase();
       return (
         p.text.toLowerCase().includes(q) ||
+        pTheme.toLowerCase().includes(q) ||
         (p.topic && p.topic.toLowerCase().includes(q)) ||
         (p.imagePath && p.imagePath.toLowerCase().includes(q))
       );
@@ -89,6 +98,7 @@ export const PostsTable: React.FC<PostsTableProps> = ({
     if (!newText.trim()) return;
     onAddPost({
       text: newText.trim(),
+      theme: newTheme.trim() || '基本',
       topic: newTopic.trim(),
       imagePath: newImagePath.trim(),
       status: '未投稿',
@@ -106,6 +116,7 @@ export const PostsTable: React.FC<PostsTableProps> = ({
 
   const handleExecuteBulkAdd = () => {
     if (parsedBulkItems.length === 0) return;
+    const targetTheme = bulkTheme.trim() || '基本';
 
     const newItems: Omit<PostItem, 'id'>[] = parsedBulkItems.map((text, idx) => {
       let imagePath = '';
@@ -117,6 +128,7 @@ export const PostsTable: React.FC<PostsTableProps> = ({
 
       return {
         text,
+        theme: targetTheme,
         topic: bulkTopic.trim() || '信太山新地',
         imagePath,
         status: '未投稿',
@@ -256,6 +268,43 @@ export const PostsTable: React.FC<PostsTableProps> = ({
         </div>
       </div>
 
+      {/* Theme Sheet Tabs Bar */}
+      {availableThemes.length > 0 && (
+        <div className="px-4 py-2 bg-zinc-950/60 border-b border-zinc-800 flex items-center gap-1.5 flex-wrap text-[11px]">
+          <span className="text-zinc-500 mr-1 font-medium">テーマシート:</span>
+          <button
+            onClick={() => setThemeFilter('all')}
+            className={`px-2.5 py-0.5 rounded font-medium cursor-pointer transition-colors ${
+              activeThemeFilter === 'all'
+                ? 'bg-indigo-600 text-white'
+                : 'bg-zinc-900 text-zinc-400 border border-zinc-800 hover:text-white'
+            }`}
+          >
+            全テーマ ({posts.length})
+          </button>
+          {availableThemes.map((tName) => {
+            const tCount = posts.filter((p) => ((p.theme || '基本').trim() || '基本') === tName).length;
+            return (
+              <button
+                key={tName}
+                onClick={() => {
+                  setThemeFilter(tName);
+                  setNewTheme(tName);
+                  setBulkTheme(tName);
+                }}
+                className={`px-2.5 py-0.5 rounded font-medium cursor-pointer transition-colors ${
+                  activeThemeFilter === tName
+                    ? 'bg-indigo-600 text-white'
+                    : 'bg-zinc-900 text-indigo-300 border border-zinc-800 hover:border-indigo-700'
+                }`}
+              >
+                {tName} ({tCount})
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {/* Clear Confirmation Modal */}
       {showClearConfirm && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4 z-50">
@@ -355,7 +404,18 @@ export const PostsTable: React.FC<PostsTableProps> = ({
               />
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <label className="text-zinc-400 block mb-1">登録先テーマ (シート名)</label>
+                <input
+                  type="text"
+                  value={bulkTheme}
+                  onChange={(e) => setBulkTheme(e.target.value)}
+                  placeholder="例: 基本 / お給料"
+                  className="w-full bg-zinc-950 border border-zinc-700 text-white px-2.5 py-1.5 rounded focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+
               <div>
                 <label className="text-zinc-400 block mb-1">一括設定トピック (カテゴリ)</label>
                 <input
@@ -434,7 +494,17 @@ export const PostsTable: React.FC<PostsTableProps> = ({
             className="w-full bg-zinc-900 border border-zinc-700 text-white text-xs p-2.5 rounded-lg focus:outline-none focus:border-emerald-500"
             required
           />
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+            <div>
+              <label className="text-zinc-400 block mb-1">テーマ (シート名)</label>
+              <input
+                type="text"
+                value={newTheme}
+                onChange={(e) => setNewTheme(e.target.value)}
+                placeholder="例: 基本 / お給料"
+                className="w-full bg-zinc-900 border border-zinc-700 text-white text-xs px-2.5 py-1.5 rounded focus:outline-none focus:border-emerald-500"
+              />
+            </div>
             <div>
               <label className="text-zinc-400 block mb-1">トピック / カテゴリ</label>
               <input
@@ -514,17 +584,28 @@ export const PostsTable: React.FC<PostsTableProps> = ({
                 />
               </div>
             </div>
-            <div>
-              <label className="text-zinc-400 text-xs block mb-1">ステータス</label>
-              <select
-                value={editingPost.status}
-                onChange={(e) => setEditingPost({ ...editingPost, status: e.target.value as PostItem['status'] })}
-                className="w-full bg-zinc-950 border border-zinc-700 text-white text-xs px-2.5 py-1.5 rounded focus:outline-none"
-              >
-                <option value="未投稿">未投稿</option>
-                <option value="投稿完了">投稿完了</option>
-                <option value="エラー">エラー</option>
-              </select>
+            <div className="grid grid-cols-2 gap-3 text-xs">
+              <div>
+                <label className="text-zinc-400 block mb-1">テーマ (シート名)</label>
+                <input
+                  type="text"
+                  value={editingPost.theme || '基本'}
+                  onChange={(e) => setEditingPost({ ...editingPost, theme: e.target.value })}
+                  className="w-full bg-zinc-950 border border-zinc-700 text-white text-xs px-2.5 py-1.5 rounded focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="text-zinc-400 block mb-1">ステータス</label>
+                <select
+                  value={editingPost.status}
+                  onChange={(e) => setEditingPost({ ...editingPost, status: e.target.value as PostItem['status'] })}
+                  className="w-full bg-zinc-950 border border-zinc-700 text-white text-xs px-2.5 py-1.5 rounded focus:outline-none"
+                >
+                  <option value="未投稿">未投稿</option>
+                  <option value="投稿完了">投稿完了</option>
+                  <option value="エラー">エラー</option>
+                </select>
+              </div>
             </div>
             <div className="flex justify-end gap-2 pt-2 border-t border-zinc-800">
               <button
@@ -593,6 +674,9 @@ export const PostsTable: React.FC<PostsTableProps> = ({
                         {post.text}
                       </div>
                       <div className="flex items-center gap-2 mt-0.5 text-[10px] text-zinc-500 font-mono">
+                        <span className="px-1.5 py-0.2 rounded bg-indigo-950/80 text-indigo-300 border border-indigo-800/60">
+                          {post.theme || '基本'}
+                        </span>
                         <span>{post.text.length} 文字</span>
                         {post.text.includes('http') && (
                           <span className="flex items-center gap-0.5 text-sky-400">

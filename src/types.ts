@@ -42,6 +42,13 @@ export interface AccountInfo {
 export interface PostItem {
   id: number;
   text: string;
+  theme?: string;
+  themeTimeSlot?: string;
+  themeWeekdays?: string;
+  timeSlot?: string;
+  weekdays?: string;
+  intervalStr?: string;
+  mode?: 0 | 1;
   topic?: string;
   imagePath?: string;
   status: '未投稿' | '投稿中' | '投稿完了' | 'エラー';

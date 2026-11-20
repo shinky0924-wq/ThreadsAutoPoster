@@ -18,6 +18,7 @@ import time
 import random
 import re
 import threading
+import unicodedata
 from datetime import datetime, timedelta
 
 # EXE実行時とPythonスクリプト実行時の基準ディレクトリを自動判別
@@ -97,16 +98,29 @@ def get_account_log_path(account_name):
         return os.path.join(LOG_DIR, "system.log")
     return os.path.join(LOG_DIR, f"{clean_acc}.log")
 
-def get_account_images_dir(account_name, create=True):
+def sanitize_theme_folder_name(theme_name):
+    if not theme_name:
+        return ""
+    cleaned = str(theme_name).strip()
+    cleaned = re.sub(r'[\\/:*?"<>|]+', "_", cleaned)
+    return cleaned.strip(" .")
+
+def get_account_images_dir(account_name, create=True, theme_name=None):
     clean_acc = sanitize_account_folder_name(account_name)
     if create:
         os.makedirs(IMAGES_DIR, exist_ok=True)
     if not clean_acc:
-        return IMAGES_DIR
-    acc_dir = os.path.join(IMAGES_DIR, clean_acc)
+        target_dir = IMAGES_DIR
+    else:
+        target_dir = os.path.join(IMAGES_DIR, clean_acc)
     if create:
-        os.makedirs(acc_dir, exist_ok=True)
-    return acc_dir
+        os.makedirs(target_dir, exist_ok=True)
+    clean_theme = sanitize_theme_folder_name(theme_name) if theme_name else ""
+    if clean_theme:
+        target_dir = os.path.join(target_dir, clean_theme)
+        if create:
+            os.makedirs(target_dir, exist_ok=True)
+    return target_dir
 
 def extract_account_name_from_msg(msg):
     if not msg:
@@ -224,6 +238,213 @@ def read_excel_records(filepath):
     if not filepath or not os.path.exists(filepath):
         return []
 
+def _is_daily_greeting_sheet(sname, ws=None):
+    """朝・昼・夜枠の専用『日常ポスト』システムシートかどうかをシート名＋構造で正確に判定（『日常ツイート』等のテーマシートと誤認しない）"""
+    s = str(sname or "").strip()
+    sl = s.lower()
+    if not s:
+        return False
+    if ws is not None:
+        try:
+            rows = list(ws.iter_rows(max_row=10, values_only=True))
+            if rows and any("枠名" in str(c or "") for c in (rows[0] or [])):
+                return True
+            hdr_idx = _find_post_header_row_in_sheet(rows)
+            if hdr_idx is not None:
+                h_cells = [str(c or "").strip().upper() for c in (rows[hdr_idx - 1] or [])]
+                r1_str = " ".join(str(c or "") for c in (rows[0] or []))
+                if "ID" in h_cells or "ステータス" in h_cells or "投稿モード" in r1_str or "ポスト間隔" in r1_str or "ツイート間隔" in r1_str:
+                    return False
+        except Exception:
+            pass
+    if sl in ["日常ポスト", "日常挨拶", "日常あいさつ", "日常枠", "あいさつ", "挨拶", "daily", "daily_posts", "dailygreeting"]:
+        return True
+    if "日常" in sl and any(k in sl for k in ["挨拶", "あいさつ", "枠"]):
+        return True
+    if "daily" in sl and "post" in sl:
+        return True
+    return False
+
+
+def _is_system_sheet_name(sname, ws=None):
+    s = str(sname or "").strip()
+    sl = s.lower()
+    if not s:
+        return True
+    if any(k in sl for k in ["設定", "config", "setting", "基本設定", "テーマ設定", "themesetting", "themeconfig"]):
+        return True
+    if _is_daily_greeting_sheet(sname, ws=ws):
+        return True
+    if "設計" in s:
+        return True
+    if any(k in sl for k in ["アカウント情報", "accountinfo", "account_info"]):
+        return True
+    return False
+
+
+def _is_legacy_flat_post_sheet_name(sname):
+    sl = str(sname or "").strip().lower()
+    return sl in ["投稿リスト", "投稿", "ポスト", "post", "posts", "tweet", "tweets", "postlist"]
+
+
+def _find_post_header_row_in_sheet(rows):
+    for r_idx, row in enumerate((rows or [])[:15], start=1):
+        if not row:
+            continue
+        row_cells_norm = [re.sub(r'[\s　_\-:=]+', '', str(c).strip().lower()) for c in row if c is not None]
+        if any(any(k in cell for k in ["ポスト文章", "投稿本文", "ツイート文章", "posttext", "投稿文章", "ポスト本文", "ポスト内容", "投稿内容", "本文"]) for cell in row_cells_norm):
+            return r_idx
+    return None
+
+
+def _norm_meta_label(val):
+    return re.sub(r'[\s　_\-:=()（）\[\]【】/]+', '', str(val or "").strip().lower())
+
+
+def parse_interval_range(raw_val):
+    """ポスト間隔文字列・行データを (min_sec, max_sec, 表示文字列) に正規化"""
+    if raw_val is None:
+        return None, None, ""
+    if isinstance(raw_val, (list, tuple)):
+        parts = [str(c).strip() for c in raw_val if c is not None and str(c).strip() != ""]
+        raw_str = " ".join(parts)
+    else:
+        raw_str = str(raw_val).strip()
+    if not raw_str or raw_str.startswith(("(", "（", "※")):
+        return None, None, ""
+
+    low = raw_str.lower()
+    is_seconds = ("秒" in raw_str or "sec" in low) and ("分" not in raw_str and "min" not in low)
+    mult = 1 if is_seconds else 60
+    unit_lbl = "秒" if is_seconds else "分"
+
+    nums = re.findall(r'\d+(?:\.\d+)?', raw_str)
+    if len(nums) >= 2:
+        try:
+            a = int(round(float(nums[0])))
+            b = int(round(float(nums[1])))
+        except Exception:
+            return None, None, ""
+        if a > b:
+            a, b = b, a
+        a = max(1, a)
+        b = max(a, b)
+        return int(a * mult), int(b * mult), f"{a}〜{b}{unit_lbl}"
+    elif len(nums) == 1:
+        try:
+            a = max(1, int(round(float(nums[0]))))
+        except Exception:
+            return None, None, ""
+        return int(a * mult), int(a * mult), f"{a}{unit_lbl}"
+    return None, None, ""
+
+
+def parse_post_mode(raw_val, default=1):
+    """投稿モード（0:上から順, 1:ランダム）を (int_mode, 表示文字列) に正規化"""
+    if raw_val is None:
+        return default, ("1: ランダム" if default == 1 else "0: 上から順")
+    s = str(raw_val).strip()
+    if not s or s.startswith(("(", "（", "※")):
+        return default, ("1: ランダム" if default == 1 else "0: 上から順")
+    low = s.lower()
+    if s.startswith("0") or "上から" in s or "順番" in s or "seq" in low:
+        return 0, "0: 上から順"
+    if s.startswith("1") or "ランダム" in s or "random" in low:
+        return 1, "1: ランダム"
+    return default, ("1: ランダム" if default == 1 else "0: 上から順")
+
+
+def read_sheet_theme_meta(rows, header_row_idx, sheet_name):
+    """テーマ別シート上部のメタ設定行（実行時間・曜日・ポスト間隔・投稿モード・有効/無効・メモ）を読み取る"""
+    meta = {
+        "name": str(sheet_name or "").strip(),
+        "sheet_name": str(sheet_name or "").strip(),
+        "time_slot": "0:00-0:00",
+        "weekdays": "毎日",
+        "interval_str": "120〜360分",
+        "min_interval_sec": 7200,
+        "max_interval_sec": 21600,
+        "post_mode": 1,
+        "mode_str": "1: ランダム",
+        "topic": "",
+        "status": "有効",
+        "enabled": True,
+        "memo": "",
+    }
+    if not rows or not header_row_idx or header_row_idx <= 1:
+        return meta
+
+    meta_rows = rows[:header_row_idx - 1]
+    label_keywords = ["実行時間", "時間帯", "投稿時間", "配信時間", "時間枠", "曜日", "ツイート間隔", "ポスト間隔", "投稿間隔", "間隔", "投稿モード", "モード", "有効", "状態", "メモ", "備考"]
+
+    def _is_lbl(cell_val):
+        nl = _norm_meta_label(cell_val)
+        return bool(nl) and len(nl) <= 20 and any(k in nl for k in label_keywords)
+
+    def _fmt_cell_val(cell_val):
+        if cell_val is None:
+            return ""
+        if hasattr(cell_val, "strftime"):
+            return cell_val.strftime("%H:%M")
+        return str(cell_val).strip()
+
+    for r_i, row in enumerate(meta_rows):
+        if not row:
+            continue
+        for c_i, cell in enumerate(row):
+            nl = _norm_meta_label(cell)
+            if not nl:
+                continue
+            below_val = ""
+            if r_i + 1 < len(meta_rows) and meta_rows[r_i + 1] and c_i < len(meta_rows[r_i + 1]):
+                cand_below = meta_rows[r_i + 1][c_i]
+                if not _is_lbl(cand_below):
+                    below_val = _fmt_cell_val(cand_below)
+            right_val = ""
+            if c_i + 1 < len(row) and not _is_lbl(row[c_i + 1]):
+                right_val = _fmt_cell_val(row[c_i + 1])
+
+            val = below_val or right_val
+            if any(k in nl for k in ["実行時間", "時間帯", "投稿時間", "配信時間", "時間枠"]) and not any(ex in nl for ex in ["完了", "最終"]):
+                if val and not val.startswith(("(", "（", "※")):
+                    meta["time_slot"] = val
+            elif "曜日" in nl:
+                if val and not val.startswith(("(", "（", "※")):
+                    meta["weekdays"] = val
+            elif any(k in nl for k in ["ツイート間隔", "ポスト間隔", "投稿間隔", "間隔", "interval"]):
+                cand_sources = []
+                if val:
+                    cand_sources.append(val)
+                if r_i + 1 < len(meta_rows) and meta_rows[r_i + 1]:
+                    cand_sources.append(meta_rows[r_i + 1][c_i:])
+                if r_i + 2 < len(meta_rows) and meta_rows[r_i + 2]:
+                    cand_sources.append(meta_rows[r_i + 2][c_i:])
+                for cs in cand_sources:
+                    mn_s, mx_s, disp_s = parse_interval_range(cs)
+                    if mn_s is not None:
+                        meta["min_interval_sec"] = mn_s
+                        meta["max_interval_sec"] = mx_s
+                        meta["interval_str"] = disp_s
+                        break
+            elif any(k in nl for k in ["投稿モード", "モード", "mode"]):
+                pm, pm_str = parse_post_mode(val, default=meta["post_mode"])
+                meta["post_mode"] = pm
+                meta["mode_str"] = pm_str
+            elif any(k in nl for k in ["有効", "状態", "status"]):
+                if val:
+                    en = val not in ["無効", "停止", "OFF", "off", "0", "false"]
+                    meta["enabled"] = en
+                    meta["status"] = "有効" if en else "無効"
+            elif any(k in nl for k in ["メモ", "備考", "note"]):
+                if val:
+                    meta["memo"] = val
+
+    return meta
+
+
+def read_excel_records(filepath):
+    if not filepath or not os.path.exists(filepath):
+        return []
     wb = None
     # 1. ExcelファイルがMicrosoft Excel等で開かれている場合のファイルロック回避 (バイナリ共有読込 + 3回リトライ)
     for attempt in range(3):
@@ -250,10 +471,10 @@ def read_excel_records(filepath):
         fname_base = os.path.basename(filepath).lower()
         is_account_file = any(k in fname_base for k in ["アカウント", "account"])
 
-        target_ws = None
-        target_header_row_idx = 1
-
+        sheets_to_parse = []
         if is_account_file:
+            target_ws = None
+            target_header_row_idx = 1
             candidate_sheets = []
             for sname in wb.sheetnames:
                 if any(k in sname.lower() for k in ["アカウント", "account", "ユーザー", "user"]):
@@ -274,127 +495,125 @@ def read_excel_records(filepath):
                         break
                 if target_ws:
                     break
+            if not target_ws:
+                target_ws = wb.active
+                target_header_row_idx = 1
+            sheets_to_parse.append((target_ws.title, list(target_ws.iter_rows(values_only=True)), target_header_row_idx, None))
         else:
-            # 投稿リストファイルの場合（<account_id>.xlsx 等）:
-            # 1. シート名に「投稿」「post」「tweet」「リスト」が含まれるシートを最優先
-            # 2. シート名に「設定」「config」「setting」が含まれるシートは設定用のため絶対にスキップ！
-            candidate_sheets = []
-            for sname in wb.sheetnames:
-                s_lower = sname.lower()
-                if any(k in s_lower for k in ["投稿", "post", "tweet", "リスト"]):
-                    candidate_sheets.append(wb[sname])
-            for sname in wb.sheetnames:
-                s_lower = sname.lower()
-                if not any(k in s_lower for k in ["設定", "config", "setting", "日常"]) and wb[sname] not in candidate_sheets:
-                    candidate_sheets.append(wb[sname])
-            for sname in wb.sheetnames:
-                if wb[sname] not in candidate_sheets:
-                    candidate_sheets.append(wb[sname])
+            # 投稿ファイル (<account_id>.xlsx 等):
+            # 「設定」「日常ポスト」「テーマ設定」「アカウント設計」以外の全シートを「テーマ別投稿シート」として一括読み込み
+            theme_sheets = [wb[s] for s in wb.sheetnames if not _is_system_sheet_name(s, wb[s])]
+            if not theme_sheets:
+                non_setting = [wb[s] for s in wb.sheetnames if not any(k in s.lower() for k in ["設定", "config", "setting"])]
+                theme_sheets = non_setting[:1] if non_setting else [wb.active]
 
-            for ws in candidate_sheets:
-                if any(k in ws.title.lower() for k in ["設定", "config", "setting"]) and len(candidate_sheets) > 1:
-                    continue
+            for ws in theme_sheets:
                 all_rows = list(ws.iter_rows(values_only=True))
-                for r_idx, row in enumerate(all_rows[:15], start=1):
-                    if not row:
-                        continue
-                    row_cells_norm = [re.sub(r'[\s　_\-:=]+', '', str(c).strip().lower()) for c in row if c is not None]
-                    if any(any(k in cell for k in ["ポスト文章", "投稿本文", "ツイート文章", "posttext", "本文", "ポスト内容", "投稿内容"]) for cell in row_cells_norm):
-                        target_ws = ws
-                        target_header_row_idx = r_idx
-                        break
-                if target_ws:
-                    break
+                hdr_idx = _find_post_header_row_in_sheet(all_rows)
+                if hdr_idx is None:
+                    continue
+                s_meta = read_sheet_theme_meta(all_rows, hdr_idx, ws.title)
+                sheets_to_parse.append((ws.title, all_rows, hdr_idx, s_meta))
 
-        if not target_ws:
-            non_setting = [wb[s] for s in wb.sheetnames if not any(k in s.lower() for k in ["設定", "config", "setting"])]
-            target_ws = non_setting[0] if non_setting else wb.active
-            target_header_row_idx = 1
-
-        rows = list(target_ws.iter_rows(values_only=True))
-        sheet_name = target_ws.title
         wb.close()
 
-        if not rows or len(rows) < target_header_row_idx:
-            return []
-
-        header_row = rows[target_header_row_idx - 1]
-        headers = [str(h).strip() if h is not None else f"col_{i}" for i, h in enumerate(header_row)]
-
         records = []
-        for r_idx, row in enumerate(rows[target_header_row_idx:], start=target_header_row_idx + 1):
-            if not row or all(c is None or str(c).strip() == "" for c in row):
+        for sheet_name, rows, target_header_row_idx, sheet_meta in sheets_to_parse:
+            if not rows or len(rows) < target_header_row_idx:
                 continue
-            r_dict = {"_row_idx": r_idx, "_sheet_name": sheet_name}
-            for h, val in zip(headers, row):
-                val_clean = "" if val is None else str(val).strip()
-                r_dict[h] = val_clean
 
-                norm_h = re.sub(r'[\s　_\-:=]+', '', str(h).strip().lower())
-                if any(k in norm_h for k in ["エラー", "error", "ログ", "log"]):
-                    if val_clean or not r_dict.get("エラー内容"):
-                        r_dict["エラー内容"] = val_clean
-                elif any(k in norm_h for k in ["ポスト文章", "投稿本文", "ツイート文章", "posttext", "投稿文章", "ポスト本文", "ポスト内容", "投稿内容", "本文"]) or norm_h in ["text", "post", "content", "内容"]:
-                    if val_clean or not r_dict.get("ポスト文章"):
-                        r_dict["ポスト文章"] = val_clean
-                        r_dict["投稿本文"] = val_clean
-                        r_dict["ツイート文章"] = val_clean
-                        r_dict["本文"] = val_clean
-                elif any(k in norm_h for k in ["アカウント", "account", "ユーザー", "username", "userid"]) or norm_h in ["id", "uid"]:
-                    if val_clean or not r_dict.get("アカウントID"):
-                        r_dict["アカウントID"] = val_clean
-                        r_dict["アカウント名"] = val_clean
-                        r_dict["アカウント"] = val_clean
-                        r_dict["id"] = val_clean
-                elif any(k in norm_h for k in ["パスワード", "password", "暗証番号"]) or norm_h in ["pw", "pass"]:
-                    if val_clean or not r_dict.get("パスワード"):
-                        r_dict["パスワード"] = val_clean
-                        r_dict["password"] = val_clean
-                        r_dict["PW"] = val_clean
-                        r_dict["Pass"] = val_clean
-                elif any(k in norm_h for k in ["sessionid", "authtoken", "トークン", "token", "セッション"]):
-                    if val_clean or not r_dict.get("sessionid"):
-                        r_dict["sessionid"] = val_clean
-                        r_dict["auth_token"] = val_clean
-                elif any(k in norm_h for k in ["ステータス", "status", "状態"]):
-                    if val_clean or not r_dict.get("ステータス"):
-                        r_dict["ステータス"] = val_clean
-                elif any(k in norm_h for k in ["有効", "無効"]):
-                    if val_clean or not r_dict.get("有効/無効"):
-                        r_dict["有効/無効"] = val_clean
-                elif any(k in norm_h for k in ["画像", "image", "media"]):
-                    if val_clean or not r_dict.get("画像ファイルパス"):
-                        r_dict["画像ファイルパス"] = val_clean
-                        r_dict["画像"] = val_clean
-                elif any(k in norm_h for k in ["コミュニティ", "トピック", "タグ", "topic"]) and not any(ex in norm_h for ex in ["適用", "使用", "選択", "実績"]):
-                    if val_clean or not r_dict.get("コミュニティまたはトピック"):
-                        r_dict["コミュニティまたはトピック"] = val_clean
-                        r_dict["トピック"] = val_clean
-                elif any(k in norm_h for k in ["備考", "メモ", "note", "notes"]):
-                    if val_clean or not r_dict.get("備考"):
-                        r_dict["備考"] = val_clean
+            header_row = rows[target_header_row_idx - 1]
+            headers = [str(h).strip() if h is not None else f"col_{i}" for i, h in enumerate(header_row)]
 
-            if is_account_file:
-                if not r_dict.get("アカウントID") and len(row) > 0 and row[0] is not None and str(row[0]).strip():
-                    val_a = str(row[0]).strip()
-                    r_dict["アカウントID"] = val_a
-                    r_dict["アカウント名"] = val_a
-                    r_dict["アカウント"] = val_a
-                    r_dict["id"] = val_a
-                if not r_dict.get("パスワード") and len(row) > 1 and row[1] is not None and str(row[1]).strip():
-                    val_b = str(row[1]).strip()
-                    r_dict["パスワード"] = val_b
-                    r_dict["password"] = val_b
-                    r_dict["PW"] = val_b
-                    r_dict["Pass"] = val_b
-                if "有効/無効" not in r_dict or not r_dict["有効/無効"]:
-                    r_dict["有効/無効"] = "有効"
-            else:
-                # 投稿リストの場合: ステータスが空欄なら「未投稿」として初期化
-                if "ステータス" not in r_dict or not r_dict["ステータス"]:
-                    r_dict["ステータス"] = "未投稿"
+            for r_idx, row in enumerate(rows[target_header_row_idx:], start=target_header_row_idx + 1):
+                if not row or all(c is None or str(c).strip() == "" for c in row):
+                    continue
+                r_dict = {"_row_idx": r_idx, "_sheet_name": sheet_name}
+                if sheet_meta is not None:
+                    r_dict["_sheet_theme_meta"] = sheet_meta
 
-            records.append(r_dict)
+                for h, val in zip(headers, row):
+                    val_clean = "" if val is None else str(val).strip()
+                    r_dict[h] = val_clean
+
+                    norm_h = re.sub(r'[\s　_\-:=]+', '', str(h).strip().lower())
+                    if any(k in norm_h for k in ["エラー", "error", "ログ", "log"]):
+                        if val_clean or not r_dict.get("エラー内容"):
+                            r_dict["エラー内容"] = val_clean
+                    elif any(k in norm_h for k in ["ポスト文章", "投稿本文", "ツイート文章", "posttext", "投稿文章", "ポスト本文", "ポスト内容", "投稿内容", "本文"]) or norm_h in ["text", "post", "content", "内容"]:
+                        if val_clean or not r_dict.get("ポスト文章"):
+                            r_dict["ポスト文章"] = val_clean
+                            r_dict["投稿本文"] = val_clean
+                            r_dict["ツイート文章"] = val_clean
+                            r_dict["本文"] = val_clean
+                    elif any(k in norm_h for k in ["アカウント", "account", "ユーザー", "username", "userid"]) or norm_h in ["id", "uid"]:
+                        if val_clean or not r_dict.get("アカウントID"):
+                            r_dict["アカウントID"] = val_clean
+                            r_dict["アカウント名"] = val_clean
+                            r_dict["アカウント"] = val_clean
+                            r_dict["id"] = val_clean
+                    elif any(k in norm_h for k in ["パスワード", "password", "暗証番号"]) or norm_h in ["pw", "pass"]:
+                        if val_clean or not r_dict.get("パスワード"):
+                            r_dict["パスワード"] = val_clean
+                            r_dict["password"] = val_clean
+                            r_dict["PW"] = val_clean
+                            r_dict["Pass"] = val_clean
+                    elif any(k in norm_h for k in ["sessionid", "authtoken", "トークン", "token", "セッション"]):
+                        if val_clean or not r_dict.get("sessionid"):
+                            r_dict["sessionid"] = val_clean
+                            r_dict["auth_token"] = val_clean
+                    elif any(k in norm_h for k in ["ステータス", "status", "状態"]):
+                        if val_clean or not r_dict.get("ステータス"):
+                            r_dict["ステータス"] = val_clean
+                    elif any(k in norm_h for k in ["有効", "無効"]):
+                        if val_clean or not r_dict.get("有効/無効"):
+                            r_dict["有効/無効"] = val_clean
+                    elif any(k in norm_h for k in ["画像", "image", "media"]):
+                        if val_clean or not r_dict.get("画像ファイルパス"):
+                            r_dict["画像ファイルパス"] = val_clean
+                            r_dict["画像"] = val_clean
+                    elif any(k in norm_h for k in ["コミュニティ", "トピック", "タグ", "topic"]) and not any(ex in norm_h for ex in ["適用", "使用", "選択", "実績"]):
+                        if val_clean or not r_dict.get("コミュニティまたはトピック"):
+                            r_dict["コミュニティまたはトピック"] = val_clean
+                            r_dict["トピック"] = val_clean
+                    elif norm_h in ["テーマ", "テーマ名", "theme", "カテゴリ", "カテゴリー"] or ("テーマ" in norm_h and not any(ex in norm_h for ex in ["システム", "配色", "カラー"])):
+                        if val_clean or not r_dict.get("テーマ"):
+                            r_dict["テーマ"] = val_clean
+                    elif any(k in norm_h for k in ["時間帯", "実行時間", "投稿時間", "配信時間", "timeslot", "時間枠"]) and not any(ex in norm_h for ex in ["完了", "最終", "実行ログ", "posted"]):
+                        if val_clean or not r_dict.get("時間帯"):
+                            r_dict["時間帯"] = val_clean
+                            r_dict["実行時間"] = val_clean
+                    elif any(k in norm_h for k in ["曜日", "weekday", "weekdays"]):
+                        if val_clean or not r_dict.get("曜日"):
+                            r_dict["曜日"] = val_clean
+                    elif any(k in norm_h for k in ["備考", "メモ", "note", "notes"]):
+                        if val_clean or not r_dict.get("備考"):
+                            r_dict["備考"] = val_clean
+
+                if is_account_file:
+                    if not r_dict.get("アカウントID") and len(row) > 0 and row[0] is not None and str(row[0]).strip():
+                        val_a = str(row[0]).strip()
+                        r_dict["アカウントID"] = val_a
+                        r_dict["アカウント名"] = val_a
+                        r_dict["アカウント"] = val_a
+                        r_dict["id"] = val_a
+                    if not r_dict.get("パスワード") and len(row) > 1 and row[1] is not None and str(row[1]).strip():
+                        val_b = str(row[1]).strip()
+                        r_dict["パスワード"] = val_b
+                        r_dict["password"] = val_b
+                        r_dict["PW"] = val_b
+                        r_dict["Pass"] = val_b
+                    if "有効/無効" not in r_dict or not r_dict["有効/無効"]:
+                        r_dict["有効/無効"] = "有効"
+                else:
+                    # シートタブ名をデフォルトのテーマ名として設定（従来「投稿リスト」シートを除く）
+                    if not _is_legacy_flat_post_sheet_name(sheet_name) and not r_dict.get("テーマ"):
+                        r_dict["テーマ"] = sheet_name
+                    # 投稿リストの場合: ステータスが空欄なら「未投稿」として初期化
+                    if "ステータス" not in r_dict or not r_dict["ステータス"]:
+                        r_dict["ステータス"] = "未投稿"
+
+                records.append(r_dict)
         return records
     except Exception as e:
         print(f"[ERROR] Excelパース例外 ({filepath}): {e}")
@@ -406,12 +625,15 @@ def read_account_settings_from_post_file(filepath):
         return settings
     try:
         wb = openpyxl.load_workbook(filepath, data_only=True)
-        # 投稿リスト sheet は設定用ではないため絶対に読み込まない（ID「1」の誤取得防止）
-        candidate_sheets = [s for s in wb.sheetnames if any(k in s for k in ["設定", "config", "setting", "基本設定"])]
+        # 旧「設定」シートがある場合のみ互換フォールバックとして読み取る（テーマシート自体は誤読込しない）
+        candidate_sheets = [
+            s for s in wb.sheetnames
+            if any(k in s.lower() for k in ["設定", "config", "setting", "基本設定"])
+            and not any(ex in s for ex in ["テーマ", "日常", "投稿", "post", "Post", "リスト"])
+        ]
         if not candidate_sheets:
-            candidate_sheets = [s for s in wb.sheetnames if not any(p in s for p in ["投稿", "post", "Post", "リスト"])]
-        if not candidate_sheets and wb.sheetnames:
-            candidate_sheets = [wb.sheetnames[0]]
+            wb.close()
+            return settings
 
         for sname in candidate_sheets:
             ws = wb[sname]
@@ -578,27 +800,37 @@ def update_post_status(filepath, row_idx, status="投稿完了", finish_time=Non
 
         for r_num, row_cells in enumerate(ws.iter_rows(max_row=15), start=1):
             vals = [str(cell.value).strip() if cell.value is not None else "" for cell in row_cells]
+            cand_status = None
+            cand_time = None
+            cand_err = None
+            cand_topic = None
+            cand_applied = None
             for candidate in ["ステータス", "status", "状態"]:
                 if candidate in vals:
-                    status_col = vals.index(candidate) + 1
+                    cand_status = vals.index(candidate) + 1
                     break
             for candidate in ["投稿完了日時", "完了日時", "日時", "posted_at"]:
                 if candidate in vals:
-                    time_col = vals.index(candidate) + 1
+                    cand_time = vals.index(candidate) + 1
                     break
             for candidate in ["エラー内容", "エラー", "error"]:
                 if candidate in vals:
-                    err_col = vals.index(candidate) + 1
+                    cand_err = vals.index(candidate) + 1
                     break
             for candidate in ["適用トピック", "使用トピック", "選択トピック", "投稿トピック"]:
                 if candidate in vals:
-                    applied_topic_col = vals.index(candidate) + 1
+                    cand_applied = vals.index(candidate) + 1
                     break
             for candidate in ["コミュニティまたはトピック", "トピック", "コミュニティ"]:
                 if candidate in vals:
-                    topic_col = vals.index(candidate) + 1
+                    cand_topic = vals.index(candidate) + 1
                     break
-            if status_col:
+            if cand_status:
+                status_col = cand_status
+                time_col = cand_time
+                err_col = cand_err
+                topic_col = cand_topic
+                applied_topic_col = cand_applied
                 break
 
         if status_col:
@@ -615,6 +847,7 @@ def update_post_status(filepath, row_idx, status="投稿完了", finish_time=Non
                 # 空欄の場合は適用されたトピックを記録
                 if not cur_v or str(cur_v).strip() in ["", "None", "nan"]:
                     ws.cell(row=row_idx, column=topic_col, value=applied_topic)
+        style_theme_worksheet(ws)
         wb.save(filepath)
         wb.close()
         return True
@@ -876,7 +1109,7 @@ def restore_portable_session_if_needed(context, profile_dir, account_name, log_f
     PC AからPC B（VPS等）へプロファイルをコピーした際、
     Windows DPAPI暗号化キーの不一致によりChromeの内部Cookieがリセットされる問題を完全解決。
     profile_dir内に保存された「portable_session.json」または「cookies.json」から
-    Cookieを自動検知して復元し、PC BのWindows DPAPIで再暗号化保存させます。
+    Cookie（およびlocalStorage）を自動検知して復元し、PC BのWindows DPAPIで再暗号化保存させます。
     """
     if not profile_dir or not os.path.exists(profile_dir):
         return False
@@ -887,10 +1120,13 @@ def restore_portable_session_if_needed(context, profile_dir, account_name, log_f
     if not os.path.exists(portable_file) or os.path.getsize(portable_file) < 5:
         return False
 
+    rebind_marker = os.path.join(profile_dir, ".portable_needs_rebind")
+    force_rebind = os.path.exists(rebind_marker)
+
     try:
         cur_cookies = context.cookies(["https://www.threads.net", "https://www.threads.com", "https://www.instagram.com"])
         has_session = any(c.get("name") == "sessionid" and c.get("value") for c in cur_cookies)
-        if has_session:
+        if has_session and not force_rebind:
             return True
 
         import json
@@ -898,6 +1134,7 @@ def restore_portable_session_if_needed(context, profile_dir, account_name, log_f
             data = json.load(f)
 
         cookies_to_add = data.get("cookies", []) if isinstance(data, dict) else (data if isinstance(data, list) else [])
+        restored_any = False
         if cookies_to_add:
             cleaned_cookies = []
             for c in cookies_to_add:
@@ -908,12 +1145,49 @@ def restore_portable_session_if_needed(context, profile_dir, account_name, log_f
                 if "sameSite" in c_clean:
                     s = str(c_clean["sameSite"]).capitalize()
                     c_clean["sameSite"] = s if s in ["Strict", "Lax", "None"] else "Lax"
-                cleaned_cookies.append(c_clean)
+                if c_clean.get("name") and c_clean.get("domain"):
+                    cleaned_cookies.append(c_clean)
 
-            context.add_cookies(cleaned_cookies)
-            log_func(f"[SUCCESS] [{account_name}] 🔄 PC間移行を検知: portable_session.json からセッションCookie ({len(cleaned_cookies)}件) を自動復元しました！")
-            log_func(f"[INFO] [{account_name}] 🛡️ 現在のPCのWindows暗号化(DPAPI)にセッションを自動再バインドしました。")
-            return True
+            if cleaned_cookies:
+                context.add_cookies(cleaned_cookies)
+                restored_any = True
+                log_func(f"[SUCCESS] [{account_name}] 🔄 PC間移行を検知: portable_session.json からセッションCookie ({len(cleaned_cookies)}件) を自動復元しました！")
+                log_func(f"[INFO] [{account_name}] 🛡️ 現在のPCのWindows暗号化(DPAPI)にセッションを自動再バインドしました。")
+
+        # localStorage (origins) が保存されている場合は初回ページ読み込み時に補完
+        origins = data.get("origins", []) if isinstance(data, dict) else []
+        if origins:
+            ls_map = {}
+            for org in origins:
+                o_url = str(org.get("origin") or "").strip()
+                items = org.get("localStorage") or []
+                if o_url and items:
+                    ls_map[o_url] = {str(it.get("name")): str(it.get("value")) for it in items if it.get("name")}
+            if ls_map:
+                try:
+                    ls_json = json.dumps(ls_map, ensure_ascii=False)
+                    context.add_init_script(f"""(() => {{
+                        try {{
+                            const map = {ls_json};
+                            const items = map[window.location.origin];
+                            if (items) {{
+                                for (const [k, v] of Object.entries(items)) {{
+                                    if (!window.localStorage.getItem(k)) {{
+                                        window.localStorage.setItem(k, v);
+                                    }}
+                                }}
+                            }}
+                        }} catch (e) {{}}
+                    }})();""")
+                except Exception:
+                    pass
+
+        if force_rebind:
+            try:
+                os.remove(rebind_marker)
+            except Exception:
+                pass
+        return restored_any
     except Exception as e:
         log_func(f"[WARN] portable_session.json 復元エラー: {e}")
     return False
@@ -1101,6 +1375,556 @@ def auto_bootstrap_countermeasure_profiles(accounts_data, log_func=print):
                 log_func(f"[DEBUG] auto_bootstrap write: {e}")
 
     return bootstrapped_count
+
+
+def upsert_account_excel_row(filepath, account_row, log_func=print):
+    """
+    アカウント情報.xlsx に1アカウント分の設定を安全に追加または上書き更新する（既存列・他アカウント行を保持）。
+    ファイルが無い場合は標準5列（アカウントID, パスワード, プロファイル名, auth_token, 有効/無効）で新規作成。
+    """
+    if not filepath or not isinstance(account_row, dict):
+        return False
+    acc_id = str(
+        account_row.get("アカウントID")
+        or account_row.get("アカウント名")
+        or account_row.get("アカウント")
+        or account_row.get("id")
+        or ""
+    ).strip()
+    if not acc_id:
+        return False
+    clean_norm_id = acc_id.lstrip("@").strip().lower()
+
+    try:
+        if os.path.exists(filepath):
+            wb = openpyxl.load_workbook(filepath)
+        else:
+            wb = openpyxl.Workbook()
+            ws_new = wb.active
+            ws_new.title = "アカウント設定"
+            ws_new.append(["アカウントID", "パスワード", "プロファイル名", "auth_token", "有効/無効"])
+
+        ws = None
+        for sname in wb.sheetnames:
+            if any(k in sname.lower() for k in ["アカウント", "account", "ユーザー", "user"]):
+                ws = wb[sname]
+                break
+        if not ws:
+            ws = wb.active
+
+        header_row_idx = 1
+        col_map = {}
+        for r_num, row_cells in enumerate(ws.iter_rows(max_row=10), start=1):
+            vals = [str(cell.value).strip() if cell.value is not None else "" for cell in row_cells]
+            temp_map = {}
+            for idx, raw_h in enumerate(vals, start=1):
+                if not raw_h:
+                    continue
+                nh = re.sub(r'[\s　_\-:=]+', '', raw_h.lower())
+                if any(k in nh for k in ["アカウント", "account", "ユーザー", "username", "userid"]) or nh in ["id", "uid"]:
+                    temp_map.setdefault("id", idx)
+                elif any(k in nh for k in ["パスワード", "password", "暗証番号"]) or nh in ["pw", "pass"]:
+                    temp_map.setdefault("pw", idx)
+                elif any(k in nh for k in ["プロファイル", "profile"]):
+                    temp_map.setdefault("profile", idx)
+                elif any(k in nh for k in ["authtoken", "sessionid", "トークン", "token", "セッション"]):
+                    temp_map.setdefault("token", idx)
+                elif any(k in nh for k in ["有効", "無効", "ステータス", "status"]):
+                    temp_map.setdefault("status", idx)
+                elif any(k in nh for k in ["コミュニティ", "トピック", "topic"]):
+                    temp_map.setdefault("topic", idx)
+                temp_map.setdefault(f"raw:{raw_h}", idx)
+            if "id" in temp_map:
+                header_row_idx = r_num
+                col_map = temp_map
+                break
+
+        if not col_map:
+            ws.cell(row=1, column=1, value="アカウントID")
+            ws.cell(row=1, column=2, value="パスワード")
+            ws.cell(row=1, column=3, value="プロファイル名")
+            ws.cell(row=1, column=4, value="auth_token")
+            ws.cell(row=1, column=5, value="有効/無効")
+            header_row_idx = 1
+            col_map = {"id": 1, "pw": 2, "profile": 3, "token": 4, "status": 5}
+
+        id_col = col_map["id"]
+        target_row = None
+        for r_num in range(header_row_idx + 1, ws.max_row + 1):
+            cell_val = ws.cell(row=r_num, column=id_col).value
+            if cell_val and str(cell_val).strip().lstrip("@").strip().lower() == clean_norm_id:
+                target_row = r_num
+                break
+
+        is_new_row = target_row is None
+        if target_row is None:
+            last_used = header_row_idx
+            for r_num in range(header_row_idx + 1, ws.max_row + 1):
+                if any(ws.cell(row=r_num, column=c).value not in (None, "") for c in range(1, ws.max_column + 1)):
+                    last_used = r_num
+            target_row = last_used + 1
+
+        pw_val = str(account_row.get("パスワード") or account_row.get("password") or "").strip()
+        prof_val = str(account_row.get("プロファイル名") or account_row.get("profile") or acc_id.lstrip("@")).strip()
+        tok_val = str(account_row.get("auth_token") or account_row.get("sessionid") or account_row.get("Authトークン_sessionid") or "").strip()
+        status_val = str(account_row.get("有効/無効") or account_row.get("有効無効") or account_row.get("ステータス") or "有効").strip()
+        topic_val = str(account_row.get("コミュニティまたはトピック") or account_row.get("トピック") or "").strip()
+
+        ws.cell(row=target_row, column=id_col, value=acc_id)
+        if "pw" in col_map and (pw_val or is_new_row):
+            ws.cell(row=target_row, column=col_map["pw"], value=pw_val)
+        if "profile" in col_map and (prof_val or is_new_row):
+            ws.cell(row=target_row, column=col_map["profile"], value=prof_val)
+        if "token" in col_map and (tok_val or is_new_row):
+            ws.cell(row=target_row, column=col_map["token"], value=tok_val)
+        if "status" in col_map:
+            ws.cell(row=target_row, column=col_map["status"], value=status_val or "有効")
+        if "topic" in col_map and topic_val:
+            ws.cell(row=target_row, column=col_map["topic"], value=topic_val)
+
+        wb.save(filepath)
+        wb.close()
+        return True
+    except Exception as e:
+        if log_func:
+            log_func(f"[WARN] アカウントExcel更新エラー: {e}")
+        return False
+
+
+def _sync_posts_excel_profile_path(posts_xlsx_path, prof_name, log_func=None):
+    """投稿Excel内の「設定」シートにあるChromeプロファイル保存パスが別アカウントのままになっていたら補正する"""
+    if not posts_xlsx_path or not os.path.exists(posts_xlsx_path) or not prof_name:
+        return False
+    expected_sub = f"chrome_profiles/{prof_name}"
+    changed = False
+    try:
+        wb = openpyxl.load_workbook(posts_xlsx_path)
+        for sname in wb.sheetnames:
+            if not any(k in sname.lower() for k in ["設定", "config", "setting", "基本設定"]):
+                continue
+            ws = wb[sname]
+            rows = list(ws.iter_rows(values_only=False))
+            for r_idx, row in enumerate(rows):
+                row_txt = " ".join([str(c.value).strip() for c in row if c.value is not None])
+                if any(k in row_txt for k in ["Chromeプロファイル", "プロファイル保存パス", "プロファイル保存先"]):
+                    for offset in range(1, 3):
+                        if r_idx + offset >= len(rows):
+                            break
+                        sub_row = rows[r_idx + offset]
+                        sub_txt = " ".join([str(c.value).strip() for c in sub_row if c.value is not None])
+                        if any(h in sub_txt for h in ["コミュニティ", "トピック", "モード", "間隔", "ツイート", "ポスト", "実行時間"]):
+                            break
+                        for cell in sub_row:
+                            if cell.value is not None:
+                                c_s = str(cell.value).strip()
+                                if c_s and not c_s.startswith(("(", "（", "※")):
+                                    c_base = os.path.basename(c_s.replace("\\", "/")).lstrip("@").strip()
+                                    if "chrome_profiles" in c_s.lower() and c_base.lower() != prof_name.lower():
+                                        cell.value = expected_sub
+                                        changed = True
+                                    break
+        if changed:
+            wb.save(posts_xlsx_path)
+            if log_func:
+                log_func(f"[INFO] 📝 '{os.path.basename(posts_xlsx_path)}' 内のプロファイル参照先を '{expected_sub}' に自動補正しました。")
+        wb.close()
+    except Exception:
+        pass
+    return changed
+
+
+def _disable_other_accounts_in_excel(filepath, keep_clean_ids, log_func=None):
+    """指定したアカウントID以外をアカウント情報.xlsx上で『無効』に設定する"""
+    if not filepath or not os.path.exists(filepath):
+        return 0
+    keep_norm = {str(k).strip().lstrip("@").lower() for k in (keep_clean_ids or []) if str(k).strip()}
+    if not keep_norm:
+        return 0
+    changed_cnt = 0
+    try:
+        wb = openpyxl.load_workbook(filepath)
+        ws = None
+        for sname in wb.sheetnames:
+            if any(k in sname.lower() for k in ["アカウント", "account", "ユーザー", "user"]):
+                ws = wb[sname]
+                break
+        if not ws:
+            ws = wb.active
+
+        header_row_idx = 1
+        id_col = 1
+        status_col = None
+        for r_num, row_cells in enumerate(ws.iter_rows(max_row=10), start=1):
+            vals = [str(c.value).strip() if c.value is not None else "" for c in row_cells]
+            found_id = None
+            found_status = None
+            for idx, raw_h in enumerate(vals, start=1):
+                nh = re.sub(r'[\s　_\-:=]+', '', raw_h.lower())
+                if not found_id and (any(k in nh for k in ["アカウント", "account", "ユーザー", "username", "userid"]) or nh in ["id", "uid"]):
+                    found_id = idx
+                elif not found_status and any(k in nh for k in ["有効", "無効", "ステータス", "status"]):
+                    found_status = idx
+            if found_id:
+                header_row_idx = r_num
+                id_col = found_id
+                status_col = found_status
+                break
+
+        if status_col is None:
+            status_col = ws.max_column + 1
+            ws.cell(row=header_row_idx, column=status_col, value="有効/無効")
+
+        for r_num in range(header_row_idx + 1, ws.max_row + 1):
+            val = ws.cell(row=r_num, column=id_col).value
+            if not val or str(val).strip() == "":
+                continue
+            norm_id = str(val).strip().lstrip("@").strip().lower()
+            if norm_id in keep_norm:
+                ws.cell(row=r_num, column=status_col, value="有効")
+            else:
+                cur_st = str(ws.cell(row=r_num, column=status_col).value or "").strip()
+                if cur_st != "無効":
+                    ws.cell(row=r_num, column=status_col, value="無効")
+                    changed_cnt += 1
+
+        wb.save(filepath)
+        wb.close()
+        if log_func and changed_cnt > 0:
+            log_func(f"[INFO] ⚙️ アカウント情報.xlsx の他アカウント {changed_cnt}件を『無効』に切り替えました。")
+    except Exception as e:
+        if log_func:
+            log_func(f"[WARN] 他アカウント無効化エラー: {e}")
+    return changed_cnt
+
+
+def _resolve_profile_dir_for_account(account_rec, base_dir=BASE_DIR, custom_settings=None):
+    raw_id = str(
+        account_rec.get("アカウントID")
+        or account_rec.get("アカウント名")
+        or account_rec.get("アカウント")
+        or ""
+    ).strip() if isinstance(account_rec, dict) else str(account_rec or "").strip()
+    clean_id = sanitize_account_folder_name(raw_id) or raw_id.lstrip("@").strip()
+    raw_prof = str(account_rec.get("プロファイル名") or account_rec.get("profile") or "").strip().lstrip("@").strip() if isinstance(account_rec, dict) else ""
+    prof_name = ""
+    if raw_prof and raw_prof.lower() not in ["nan", "none", ""] and not any(k in raw_prof for k in ["コミュニティ", "トピック", "モード", "間隔", "ツイート", "ポスト"]):
+        prof_name = sanitize_account_folder_name(os.path.basename(raw_prof.replace("\\", "/")))
+
+    if not prof_name and isinstance(custom_settings, dict):
+        p_sub = str(custom_settings.get("profile_dir") or "").strip()
+        if p_sub and not any(k in p_sub for k in ["コミュニティ", "トピック", "モード", "間隔", "ツイート", "ポスト"]):
+            sub_base = sanitize_account_folder_name(os.path.basename(p_sub.replace("\\", "/")))
+            # 別アカウントの投稿Excelコピー由来で異なるプロファイル名が書かれていても、自アカウントのフォルダが存在するなら自アカウント優先
+            own_dir = os.path.join(base_dir, "chrome_profiles", clean_id)
+            if sub_base and (sub_base.lower() == clean_id.lower() or not os.path.exists(own_dir)):
+                if sub_base not in _KNOWN_ACCOUNT_NAMES or sub_base.lower() == clean_id.lower():
+                    prof_name = sub_base
+
+    if not prof_name:
+        prof_name = clean_id
+    return raw_id, clean_id, prof_name, os.path.join(base_dir, "chrome_profiles", prof_name)
+
+
+def _find_posts_excel_for_account(account_id, base_dir=BASE_DIR):
+    clean_id = str(account_id or "").strip().lstrip("@").strip()
+    if not clean_id:
+        return None
+    for cand in [
+        os.path.join(base_dir, f"{clean_id}.xlsx"),
+        os.path.join(base_dir, f"@{clean_id}.xlsx"),
+    ]:
+        if os.path.exists(cand):
+            return cand
+    for fn in os.listdir(base_dir) if os.path.exists(base_dir) else []:
+        if fn.lower().endswith(".xlsx") and not fn.startswith("~$") and clean_id.lower() in fn.lower():
+            if not any(k in fn for k in ["アカウント", "account"]):
+                return os.path.join(base_dir, fn)
+    return None
+
+
+def export_account_package(account_rec, output_zip_path, base_dir=BASE_DIR, posts_file=None, log_func=print):
+    """
+    1アカウント分の全データ（アカウント設定・セッションCookie/DPAPI移行用JSON・指紋・プロファイル・
+    投稿リストExcel・専用画像フォルダ）を1つの .zip ファイルに書き出す。
+    """
+    import zipfile
+    raw_id, clean_id, prof_name, profile_dir = _resolve_profile_dir_for_account(account_rec, base_dir=base_dir)
+    if not raw_id:
+        return False, {"error": "アカウントIDが空です"}
+
+    if not posts_file:
+        posts_file = _find_posts_excel_for_account(clean_id, base_dir=base_dir) or _find_posts_excel_for_account(raw_id, base_dir=base_dir)
+
+    clean_row = {
+        k: v for k, v in account_rec.items()
+        if not str(k).startswith("_") and str(k) != ""
+    }
+
+    portable_path = os.path.join(profile_dir, "portable_session.json")
+    cookies_path = os.path.join(profile_dir, "cookies.json")
+    has_session = False
+    cookie_count = 0
+    for jpath in (portable_path, cookies_path):
+        if os.path.exists(jpath):
+            try:
+                jdata = json.load(open(jpath, "r", encoding="utf-8"))
+                clist = jdata.get("cookies", []) if isinstance(jdata, dict) else (jdata if isinstance(jdata, list) else [])
+                cookie_count = max(cookie_count, len(clist))
+                for c in clist:
+                    if c.get("name") == "sessionid" and len(str(c.get("value") or "")) > 15:
+                        has_session = True
+                        if not clean_row.get("auth_token"):
+                            clean_row["auth_token"] = str(c.get("value"))
+                            clean_row["sessionid"] = str(c.get("value"))
+            except Exception:
+                pass
+    if not has_session and len(str(clean_row.get("auth_token") or clean_row.get("sessionid") or "").strip()) > 15:
+        has_session = True
+
+    skip_cache_dirs = {
+        "cache", "code cache", "gpucache", "grshadercache", "dawncache",
+        "shadercache", "crashpad", "blob_storage", "metrics", "media cache"
+    }
+    skip_files = {"singletonlock", "singletoncookie", "singletonsocket", "lockfile"}
+
+    profile_files_count = 0
+    image_count = 0
+    posts_included = False
+    posts_basename = os.path.basename(posts_file) if (posts_file and os.path.exists(posts_file)) else ""
+
+    manifest = {
+        "format": "threads_autoposter_account_package_v1",
+        "account_id": raw_id,
+        "clean_id": clean_id,
+        "prof_name": prof_name,
+        "exported_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "posts_filename": posts_basename,
+        "has_portable_session": os.path.exists(portable_path),
+        "has_valid_session": has_session,
+        "cookie_count": cookie_count,
+        "account_row": clean_row,
+    }
+
+    os.makedirs(os.path.dirname(os.path.abspath(output_zip_path)), exist_ok=True)
+    with zipfile.ZipFile(output_zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("account_manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
+
+        if os.path.exists(profile_dir):
+            for root, dirs, files in os.walk(profile_dir):
+                dirs[:] = [
+                    d for d in dirs
+                    if d.lower() not in skip_cache_dirs
+                    and not (os.path.basename(root).lower() == "service worker" and d.lower() in {"cachestorage", "scriptcache"})
+                ]
+                for fn in files:
+                    if fn.lower() in skip_files or fn == ".portable_needs_rebind":
+                        continue
+                    fp = os.path.join(root, fn)
+                    rel = os.path.relpath(fp, profile_dir).replace("\\", "/")
+                    zf.write(fp, f"profile/{rel}")
+                    profile_files_count += 1
+
+        if posts_file and os.path.exists(posts_file):
+            zf.write(posts_file, f"posts/{posts_basename}")
+            posts_included = True
+
+        acc_img_dir = os.path.join(base_dir, "images", clean_id)
+        if os.path.exists(acc_img_dir):
+            for root, dirs, files in os.walk(acc_img_dir):
+                for fn in files:
+                    fp = os.path.join(root, fn)
+                    rel = os.path.relpath(fp, acc_img_dir).replace("\\", "/")
+                    zf.write(fp, f"images/account/{rel}")
+                    image_count += 1
+
+        if posts_file and os.path.exists(posts_file):
+            try:
+                recs = read_excel_records(posts_file)
+                seen_shared = set()
+                for rec in recs:
+                    img_ref = str(rec.get("画像ファイルパス") or rec.get("画像") or "").strip()
+                    if not img_ref or img_ref.lower() in ("none", "nan"):
+                        continue
+                    for cand_img in [
+                        os.path.join(base_dir, "images", os.path.basename(img_ref)),
+                        os.path.join(base_dir, img_ref),
+                    ]:
+                        if os.path.isfile(cand_img) and os.path.abspath(cand_img) not in seen_shared:
+                            if not os.path.abspath(cand_img).startswith(os.path.abspath(acc_img_dir) + os.sep):
+                                seen_shared.add(os.path.abspath(cand_img))
+                                zf.write(cand_img, f"images/shared/{os.path.basename(cand_img)}")
+                                image_count += 1
+                            break
+            except Exception:
+                pass
+
+    return True, {
+        "account_id": raw_id,
+        "clean_id": clean_id,
+        "prof_name": prof_name,
+        "has_session": has_session,
+        "cookie_count": cookie_count,
+        "profile_files": profile_files_count,
+        "posts_included": posts_included,
+        "posts_filename": posts_basename,
+        "image_count": image_count,
+        "zip_path": output_zip_path,
+        "zip_size": os.path.getsize(output_zip_path),
+    }
+
+
+def inspect_account_package(zip_path):
+    """書き出しZIPファイルの中身（account_manifest.json）を事前確認する"""
+    import zipfile
+    if not zip_path or not os.path.exists(zip_path):
+        return None
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        names = zf.namelist()
+        if "account_manifest.json" in names:
+            return json.loads(zf.read("account_manifest.json").decode("utf-8"))
+    return None
+
+
+def import_account_package(zip_path, base_dir=BASE_DIR, account_config_path=None, overwrite_posts=True, log_func=print):
+    """
+    別PC等で書き出したアカウントパッケージ(.zip)を取り込み、アカウント設定Excel・
+    chrome_profiles（PC間セッション自動再バインド予約付き）・投稿Excel・画像を復元する。
+    """
+    import zipfile
+    if not zip_path or not os.path.exists(zip_path):
+        return False, {"error": "ZIPファイルが見つかりません"}
+
+    if not account_config_path:
+        account_config_path = os.path.join(base_dir, "アカウント情報.xlsx")
+
+    def _safe_target(target_root, rel_part):
+        rel_clean = rel_part.replace("\\", "/").lstrip("/")
+        if ".." in rel_clean.split("/"):
+            raise ValueError(f"不正なパスをスキップ: {rel_part}")
+        dest = os.path.abspath(os.path.join(target_root, rel_clean))
+        root_abs = os.path.abspath(target_root)
+        if dest != root_abs and not dest.startswith(root_abs + os.sep):
+            raise ValueError(f"出力先範囲外パス: {rel_part}")
+        return dest
+
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        names = zf.namelist()
+        if "account_manifest.json" not in names:
+            return False, {"error": "このZIPはアカウント書き出しパッケージではありません（account_manifest.jsonが見つかりません）"}
+
+        manifest = json.loads(zf.read("account_manifest.json").decode("utf-8"))
+        raw_id = str(manifest.get("account_id") or "").strip()
+        clean_id = sanitize_account_folder_name(manifest.get("clean_id") or raw_id) or raw_id.lstrip("@").strip()
+        prof_name = sanitize_account_folder_name(manifest.get("prof_name") or clean_id) or clean_id
+        account_row = dict(manifest.get("account_row") or {})
+        if not account_row.get("アカウントID") and raw_id:
+            account_row["アカウントID"] = raw_id
+
+        profile_dir = os.path.join(base_dir, "chrome_profiles", prof_name)
+        os.makedirs(profile_dir, exist_ok=True)
+        has_portable = any(n in ("profile/portable_session.json", "profile/cookies.json") for n in names)
+
+        if has_portable:
+            for stale_rel in [
+                "Default/Cookies", "Default/Cookies-journal",
+                "Default/Network/Cookies", "Default/Network/Cookies-journal",
+                "SingletonLock", "SingletonCookie", "SingletonSocket",
+            ]:
+                sp = os.path.join(profile_dir, stale_rel)
+                if os.path.exists(sp):
+                    try:
+                        os.remove(sp)
+                    except Exception:
+                        pass
+
+        restored_profile_files = 0
+        restored_images = 0
+        posts_restored_name = ""
+
+        for member in names:
+            if member.endswith("/") or member == "account_manifest.json":
+                continue
+            norm_m = member.replace("\\", "/")
+
+            if norm_m.startswith("profile/"):
+                sub = norm_m[len("profile/"):]
+                if has_portable and os.path.basename(sub).lower() in ("cookies", "cookies-journal") and "default" in sub.lower():
+                    continue
+                if os.path.basename(sub).lower() in ("singletonlock", "singletoncookie", "singletonsocket"):
+                    continue
+                dest = _safe_target(profile_dir, sub)
+                os.makedirs(os.path.dirname(dest), exist_ok=True)
+                with zf.open(member) as src_f, open(dest, "wb") as out_f:
+                    out_f.write(src_f.read())
+                restored_profile_files += 1
+
+            elif norm_m.startswith("posts/"):
+                sub = os.path.basename(norm_m[len("posts/"):])
+                if sub:
+                    dest_posts = os.path.join(base_dir, sub)
+                    if overwrite_posts or not os.path.exists(dest_posts):
+                        with zf.open(member) as src_f, open(dest_posts, "wb") as out_f:
+                            out_f.write(src_f.read())
+                        _sync_posts_excel_profile_path(dest_posts, prof_name, log_func=log_func)
+                        posts_restored_name = sub
+
+            elif norm_m.startswith("images/account/"):
+                sub = norm_m[len("images/account/"):]
+                acc_img_dir = os.path.join(base_dir, "images", clean_id)
+                os.makedirs(acc_img_dir, exist_ok=True)
+                dest_img = _safe_target(acc_img_dir, sub)
+                os.makedirs(os.path.dirname(dest_img), exist_ok=True)
+                with zf.open(member) as src_f, open(dest_img, "wb") as out_f:
+                    out_f.write(src_f.read())
+                restored_images += 1
+
+            elif norm_m.startswith("images/shared/"):
+                sub = os.path.basename(norm_m[len("images/shared/"):])
+                if sub:
+                    shared_dir = os.path.join(base_dir, "images")
+                    os.makedirs(shared_dir, exist_ok=True)
+                    dest_img = _safe_target(shared_dir, sub)
+                    with zf.open(member) as src_f, open(dest_img, "wb") as out_f:
+                        out_f.write(src_f.read())
+                    restored_images += 1
+
+        if has_portable:
+            try:
+                with open(os.path.join(profile_dir, ".portable_needs_rebind"), "w", encoding="utf-8") as mf:
+                    mf.write(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+            except Exception:
+                pass
+
+            for p_cand in (
+                os.path.join(profile_dir, "portable_session.json"),
+                os.path.join(profile_dir, "cookies.json"),
+            ):
+                if os.path.exists(p_cand):
+                    try:
+                        pdata = json.load(open(p_cand, "r", encoding="utf-8"))
+                        clist = pdata.get("cookies", []) if isinstance(pdata, dict) else (pdata if isinstance(pdata, list) else [])
+                        for c in clist:
+                            if c.get("name") == "sessionid" and len(str(c.get("value") or "")) > 15:
+                                account_row["auth_token"] = str(c.get("value"))
+                                account_row["sessionid"] = str(c.get("value"))
+                                break
+                    except Exception:
+                        pass
+
+        excel_ok = upsert_account_excel_row(account_config_path, account_row, log_func=log_func)
+        os.makedirs(os.path.join(base_dir, "log"), exist_ok=True)
+        os.makedirs(os.path.join(base_dir, "images", clean_id), exist_ok=True)
+
+        return True, {
+            "account_id": raw_id,
+            "clean_id": clean_id,
+            "prof_name": prof_name,
+            "has_portable_session": has_portable,
+            "excel_updated": excel_ok,
+            "profile_files": restored_profile_files,
+            "posts_restored": posts_restored_name,
+            "images_restored": restored_images,
+        }
 
 
 def safe_launch_persistent_context(p, profile_dir, headless=False, log_func=print):
@@ -2316,9 +3140,17 @@ def ensure_authenticated_session(page, context, account, filepath, log_func=prin
         log_func(f"[WARN] [{account_name}] セッションIDが未設定または無効で、パスワードも「アカウント情報.xlsx」に未記入のため、ログインを実行できません。Excelの「パスワード」列にご記入ください。")
         return False
 
-def resolve_image_path(raw_path, post_text="", account_name=""):
+def resolve_image_path(raw_path, post_text="", account_name="", theme_name=""):
     search_dirs = []
     clean_acc = sanitize_account_folder_name(account_name)
+    clean_theme = sanitize_theme_folder_name(theme_name) if theme_name else ""
+    if clean_acc and clean_theme:
+        search_dirs.extend([
+            os.path.join(BASE_DIR, "images", clean_acc, clean_theme),
+            os.path.join(BASE_DIR, "imeges", clean_acc, clean_theme),
+            os.path.join(os.getcwd(), "images", clean_acc, clean_theme),
+            os.path.join(os.getcwd(), "imeges", clean_acc, clean_theme),
+        ])
     if clean_acc:
         search_dirs.extend([
             os.path.join(BASE_DIR, "images", clean_acc),
@@ -2334,33 +3166,60 @@ def resolve_image_path(raw_path, post_text="", account_name=""):
         os.path.join(os.getcwd(), "imeges"),
         os.getcwd(),
     ])
-    
-    if raw_path and str(raw_path).strip().lower() not in ["", "nan", "none"]:
-        cleaned = str(raw_path).strip()
+
+    def _search_in_dirs(token):
+        if not token:
+            return ""
+        cleaned = str(token).strip().strip('"\'')
+        if cleaned.lower() in ["", "nan", "none"]:
+            return ""
         if os.path.isabs(cleaned) and os.path.exists(cleaned):
             return cleaned
+        norm_rel = cleaned.replace("\\", "/").lstrip("/")
         for d in search_dirs:
             cand = os.path.join(d, cleaned)
-            if os.path.exists(cand):
+            if os.path.exists(cand) and os.path.isfile(cand):
                 return os.path.abspath(cand)
-            base_name = os.path.basename(cleaned)
+            if norm_rel != cleaned:
+                cand_norm = os.path.join(d, norm_rel)
+                if os.path.exists(cand_norm) and os.path.isfile(cand_norm):
+                    return os.path.abspath(cand_norm)
+            base_name = os.path.basename(norm_rel)
             cand_base = os.path.join(d, base_name)
-            if os.path.exists(cand_base):
+            if os.path.exists(cand_base) and os.path.isfile(cand_base):
                 return os.path.abspath(cand_base)
+        # フォールバック: アカウント画像フォルダ配下のサブフォルダ(他テーマ含む)も探索
+        if clean_acc:
+            base_name = os.path.basename(norm_rel)
+            for root_base in [
+                os.path.join(BASE_DIR, "images", clean_acc),
+                os.path.join(BASE_DIR, "imeges", clean_acc),
+            ]:
+                if os.path.isdir(root_base):
+                    try:
+                        for sub in sorted(os.listdir(root_base)):
+                            sub_path = os.path.join(root_base, sub)
+                            if os.path.isdir(sub_path):
+                                c_sub = os.path.join(sub_path, base_name)
+                                if os.path.exists(c_sub) and os.path.isfile(c_sub):
+                                    return os.path.abspath(c_sub)
+                    except Exception:
+                        pass
+        return ""
+
+    if raw_path and str(raw_path).strip().lower() not in ["", "nan", "none"]:
+        found = _search_in_dirs(raw_path)
+        if found:
+            return found
 
     if post_text:
         try:
-            # ハイフンや記号による文字範囲エラーを防ぐ安全な正規表現
             matches = [m.group(0) for m in re.finditer(r'[-a-zA-Z0-9_./\\:]+?\.(?:png|jpg|jpeg|webp|gif)', str(post_text), re.IGNORECASE)]
             for m in matches:
                 m_clean = m.strip(' ,()[]{}')
-                for d in search_dirs:
-                    cand = os.path.join(d, m_clean)
-                    if os.path.exists(cand):
-                        return os.path.abspath(cand)
-                    cand_base = os.path.join(d, os.path.basename(m_clean))
-                    if os.path.exists(cand_base):
-                        return os.path.abspath(cand_base)
+                found = _search_in_dirs(m_clean)
+                if found:
+                    return found
         except Exception:
             pass
 
@@ -2797,26 +3656,35 @@ def set_topic_in_threads_composer(page, dialog, topic_name, body_textbox=None, l
     return topic_set
 
 
+def _normalize_verify_text(txt):
+    """プロフィール検証用にUnicode正規化(NFKC)し、空白・ゼロ幅文字を除去"""
+    s = unicodedata.normalize("NFKC", str(txt or ""))
+    s = re.sub(r'[\s\u200b-\u200d\ufeff]+', '', s)
+    return s
+
+
 def _extract_verification_snippets(text_content):
     """プロフィール反映確認用に投稿本文から検索スニペット（URL以外の先頭行・短文対応）を抽出"""
     snippets = []
     if not text_content:
         return snippets
     for raw_line in str(text_content).splitlines():
-        line = re.sub(r'\s+', ' ', raw_line).strip()
+        line = re.sub(r'\s+', ' ', unicodedata.normalize("NFKC", raw_line)).strip()
         if not line:
             continue
         if re.match(r'^https?://\S+$', line, re.IGNORECASE):
             continue
-        compact = re.sub(r'\s+', '', line)
+        compact = _normalize_verify_text(line)
         if len(compact) >= 6:
             snippets.append(compact[:18])
             if len(compact) >= 24:
                 snippets.append(compact[6:24])
-        if len(snippets) >= 3:
+        elif len(compact) >= 3:
+            snippets.append(compact)
+        if len(snippets) >= 4:
             break
     if not snippets:
-        whole = re.sub(r'\s+', '', str(text_content)).strip()
+        whole = _normalize_verify_text(text_content)
         if len(whole) >= 1:
             snippets.append(whole[:22])
     return snippets
@@ -2861,41 +3729,44 @@ def _verify_post_appeared_on_profile(page, account_name, text_content, profile_h
     try:
         page.goto(profile_url, wait_until="domcontentloaded", timeout=25000)
         for attempt in range(2):
-            time.sleep(2.5 if attempt == 0 else 2.2)
-            cur_url = (page.url or "").lower()
-            if "/login" in cur_url or "accounts/login" in cur_url:
-                return False, "セッション切れ（ログイン画面へリダイレクトされました）"
+            # React SPAの描画・投稿一覧取得が完了するまで段階的に待機しながら確認（最大約7秒×2）
+            for wait_step in range(14):
+                time.sleep(0.5)
+                cur_url = (page.url or "").lower()
+                if "/login" in cur_url or "accounts/login" in cur_url:
+                    return False, "セッション切れ（ログイン画面へリダイレクトされました）"
 
-            try:
-                feed_text = page.evaluate("""() => {
-                    const root = document.querySelector('main') || document.querySelector('div[role="main"]') || document.body;
-                    return (root ? root.innerText : '') || '';
-                }""")
-            except Exception:
-                feed_text = ""
-
-            norm_feed = re.sub(r'\s+', '', str(feed_text or ''))[:6000]
-            for sn in snippets:
-                if sn and sn in norm_feed:
-                    if log_func:
-                        log_func(f"[SUCCESS] [{account_name}] 🎉 プロフィール (@{handle}) 上部に投稿本文（「{sn[:12]}...」）の反映を実確認しました！")
-                    return True, f"プロフィール(@{handle})に投稿反映を確認"
-
-            if not snippets and has_image:
                 try:
-                    recent_img_post = page.evaluate("""() => {
+                    snap = page.evaluate("""() => {
                         const root = document.querySelector('main') || document.querySelector('div[role="main"]') || document.body;
-                        const txt = (root ? root.innerText : '').slice(0, 1800);
+                        const txt = (root ? root.innerText : '') || '';
+                        const postLinks = root ? root.querySelectorAll('a[href*="/post/"]').length : 0;
                         const hasImg = !!(root && root.querySelector('img'));
-                        const hasFreshTime = /(たった今|今すぐ|Just now|\\bnow\\b|\\b\\d{1,2}秒\\b|\\b1分\\b|\\b0分\\b|\\b1m\\b)/i.test(txt);
-                        return hasImg && hasFreshTime;
+                        return { txt, postLinks, hasImg };
                     }""")
-                    if recent_img_post:
+                except Exception:
+                    snap = {"txt": "", "postLinks": 0, "hasImg": False}
+
+                feed_text = snap.get("txt", "") or ""
+                norm_feed = _normalize_verify_text(feed_text)[:20000]
+
+                for sn in snippets:
+                    if sn and sn in norm_feed:
+                        if log_func:
+                            log_func(f"[SUCCESS] [{account_name}] 🎉 プロフィール (@{handle}) 上部に投稿本文（「{sn[:12]}...」）の反映を実確認しました！")
+                        return True, f"プロフィール(@{handle})に投稿反映を確認"
+
+                if not snippets and has_image and snap.get("hasImg"):
+                    top_txt = feed_text[:2200]
+                    if re.search(r'(たった今|今すぐ|Just now|\bnow\b|\b\d{1,2}秒\b|\b[01]分\b|\b1m\b)', top_txt, re.IGNORECASE):
                         if log_func:
                             log_func(f"[SUCCESS] [{account_name}] 🎉 プロフィール (@{handle}) 上部に画像投稿の反映を実確認しました！")
                         return True, f"プロフィール(@{handle})に画像投稿反映を確認"
-                except Exception:
-                    pass
+
+                # 投稿一覧リンクが十分描画されてから2.5秒経過しても見つからない場合のみ次のリロードへ
+                if wait_step >= 5 and snap.get("postLinks", 0) >= 2 and len(norm_feed) > 250:
+                    if wait_step >= 9:
+                        break
 
             if attempt == 0:
                 try:
@@ -2948,13 +3819,20 @@ def _perform_fill_and_submit_post(
                 decoded_post_data = urllib.parse.unquote_plus(raw_post_data).lower()
             except Exception:
                 decoded_post_data = raw_post_data.lower()
+            friendly_hdr = ""
+            try:
+                friendly_hdr = str(req.headers.get("x-fb-friendly-name") or "").lower()
+            except Exception:
+                friendly_hdr = ""
+            combined_meta = f"{decoded_post_data} {friendly_hdr}"
             is_post_call = (
                 "/configure" in url
                 or "/publish" in url
                 or "/text_feed/" in url
-                or any(k in decoded_post_data for k in [
+                or any(k in combined_meta for k in [
                     "createthread", "create_thread", "barcelonacreate", "barcelonapublish",
-                    "publishpost", "createpost", "text_post_app", "publish_mode", "caption"
+                    "publishpost", "createpost", "text_post_app", "publish_mode", "caption",
+                    "usebarcelonacreate", "media_publish"
                 ])
             )
             if not is_post_call:
@@ -3210,11 +4088,104 @@ def _perform_fill_and_submit_post(
         if not submit_btn:
             return False, "「投稿」ボタンがアクティブになりませんでした（本文未入力・文字数超過・画像処理中の可能性）"
 
-        # 送信前にネットワークレスポンス監視をアタッチし、1回だけ確実にクリックする
+        # 送信前にネットワークレスポンス監視＋一瞬の「投稿完了」トーストも逃さないDOM MutationObserverを設置
         page.on("response", _on_post_response)
         try:
+            try:
+                page.evaluate("""() => {
+                    if (window.__threadsPostMonitor && window.__threadsPostMonitor.observer) {
+                        try { window.__threadsPostMonitor.observer.disconnect(); } catch (e) {}
+                    }
+                    const mon = { toast: '', error: '', posting: false, observer: null };
+                    const isReject = (t) => !t || /(できません|失敗|エラー|破棄|未投稿|問題が発生|制限)/.test(t);
+                    const isSuccessToast = (t) => {
+                        if (!t || t.length > 60 || isReject(t)) return false;
+                        return (
+                            t === '投稿完了' ||
+                            t === '投稿しました' ||
+                            t === 'スレッドを投稿しました' ||
+                            t === 'スレッドが投稿されました' ||
+                            t === '投稿が完了しました' ||
+                            t === 'Posted' ||
+                            t === 'Thread posted' ||
+                            t.includes('投稿完了') ||
+                            t.includes('投稿しました') ||
+                            t.includes('スレッドを表示') ||
+                            t.includes('View post')
+                        );
+                    };
+                    const isPostingToast = (t) => {
+                        if (!t || t.length > 40) return false;
+                        return (t === '投稿中' || t === '投稿中...' || t === '投稿中…' || t === 'Posting' || t === 'Posting...');
+                    };
+                    const isErrorToast = (t) => {
+                        if (!t || t.length > 100) return false;
+                        return /(投稿できませんでした|アップロードできませんでした|エラーが発生しました|問題が発生しました|後でもう一度お試しください)/.test(t);
+                    };
+                    const inspectNode = (node) => {
+                        if (!node || node.nodeType !== 1) return;
+                        const candidates = [node];
+                        if (node.querySelectorAll) {
+                            node.querySelectorAll('div, span, p, a').forEach((c) => candidates.push(c));
+                        }
+                        for (const el of candidates) {
+                            if (el.closest && el.closest('[contenteditable="true"], [role="textbox"]')) continue;
+                            const txt = (el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
+                            if (!txt || txt === '投稿' || txt === '投稿する') continue;
+                            if (isErrorToast(txt)) {
+                                mon.error = txt;
+                                return;
+                            }
+                            if (isPostingToast(txt)) {
+                                mon.posting = true;
+                            }
+                            if (isSuccessToast(txt)) {
+                                try {
+                                    const rect = el.getBoundingClientRect();
+                                    const role = (el.getAttribute && (el.getAttribute('role') || '')) || '';
+                                    const isExactDone = (
+                                        txt === '投稿完了' || txt === '投稿しました' ||
+                                        txt === 'スレッドを投稿しました' || txt === 'スレッドが投稿されました' ||
+                                        txt === '投稿が完了しました' || txt === 'Posted'
+                                    );
+                                    const inLowerOrAlert = (
+                                        role === 'alert' || role === 'status' ||
+                                        (el.closest && el.closest('[role="alert"], [role="status"]')) ||
+                                        (isExactDone && !(el.closest && el.closest('article'))) ||
+                                        (rect.width >= 20 && rect.height >= 10 && rect.height <= 120 && rect.top >= window.innerHeight * 0.45)
+                                    );
+                                    if (inLowerOrAlert) {
+                                        mon.toast = txt;
+                                        return;
+                                    }
+                                } catch (e) {
+                                    mon.toast = txt;
+                                    return;
+                                }
+                            }
+                        }
+                    };
+                    const obs = new MutationObserver((mutations) => {
+                        for (const m of mutations) {
+                            if (m.type === 'childList') {
+                                m.addedNodes.forEach((n) => inspectNode(n));
+                            } else if (m.type === 'characterData' && m.target && m.target.parentElement) {
+                                inspectNode(m.target.parentElement);
+                            }
+                            if (mon.toast || mon.error) break;
+                        }
+                    });
+                    if (document.body) {
+                        obs.observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['style', 'class', 'aria-hidden'] });
+                    }
+                    mon.observer = obs;
+                    window.__threadsPostMonitor = mon;
+                }""")
+            except Exception:
+                pass
+
             if log_func:
-                log_func(f"[{account_name}] 【{route_name}】「投稿」ボタンをクリックしました。Threads送信処理を確認中...")
+                log_func(f"[{account_name}] 【{route_name}】「投稿」ボタンをクリックしました。画面下部の「投稿完了」通知を待機中...")
             try:
                 submit_btn.scroll_into_view_if_needed()
                 submit_btn.click()
@@ -3228,14 +4199,16 @@ def _perform_fill_and_submit_post(
                         pass
 
             strict_toast_selectors = [
-                'div[role="alert"]:has-text("投稿しました")',
                 'div[role="alert"]:has-text("投稿完了")',
+                'div[role="alert"]:has-text("投稿しました")',
                 'div[role="alert"]:has-text("スレッドを投稿しました")',
                 'div[role="alert"]:has-text("スレッドが投稿されました")',
                 'div[role="alert"]:has-text("Posted")',
-                'div[role="status"]:has-text("投稿しました")',
                 'div[role="status"]:has-text("投稿完了")',
+                'div[role="status"]:has-text("投稿しました")',
                 'div[role="status"]:has-text("Posted")',
+                'span:text-is("投稿完了")',
+                'div:text-is("投稿完了")',
                 'span:text-is("投稿しました")',
                 'span:text-is("スレッドを投稿しました")',
                 'span:text-is("投稿が完了しました")',
@@ -3261,26 +4234,42 @@ def _perform_fill_and_submit_post(
             ]
 
             def _check_toast_or_error():
+                try:
+                    mon_res = page.evaluate("""() => {
+                        const m = window.__threadsPostMonitor;
+                        if (!m) return { toast: '', error: '', posting: false };
+                        return { toast: m.toast || '', error: m.error || '', posting: !!m.posting };
+                    }""")
+                    if mon_res and mon_res.get("error"):
+                        return "error", mon_res["error"]
+                    if mon_res and mon_res.get("toast"):
+                        return "toast", mon_res["toast"]
+                except Exception:
+                    pass
                 for s_sel in strict_toast_selectors:
                     try:
                         t_el = page.locator(s_sel).first
                         if t_el.is_visible():
-                            return "toast", s_sel
+                            return "toast", (t_el.inner_text().strip()[:60] or s_sel)
                     except Exception:
                         pass
                 try:
                     js_toast = page.evaluate("""() => {
                         const nodes = Array.from(document.querySelectorAll('div, span, p, a'));
                         for (const el of nodes) {
+                            if (el.closest && el.closest('[contenteditable="true"], [role="textbox"]')) continue;
                             const rect = el.getBoundingClientRect();
-                            if (rect.width < 20 || rect.height < 12 || rect.height > 90) continue;
-                            if (rect.top < window.innerHeight * 0.62) continue;
-                            const txt = (el.innerText || '').trim();
-                            if (!txt || txt.length > 60) continue;
+                            if (rect.width < 20 || rect.height < 10 || rect.height > 110) continue;
+                            if (rect.top < window.innerHeight * 0.45) continue;
+                            const txt = (el.innerText || '').replace(/\\s+/g, ' ').trim();
+                            if (!txt || txt.length > 60 || txt === '投稿' || txt === '投稿する') continue;
+                            if (/(できません|失敗|エラー|破棄|未投稿)/.test(txt)) continue;
                             if (
-                                txt === '投稿しました' || txt === 'スレッドを投稿しました' ||
+                                txt === '投稿完了' || txt === '投稿しました' ||
+                                txt === 'スレッドを投稿しました' || txt === 'スレッドが投稿されました' ||
                                 txt === '投稿が完了しました' || txt === 'Posted' ||
-                                (txt.includes('投稿しました') && !txt.includes('できません'))
+                                txt.includes('投稿完了') || txt.includes('投稿しました') ||
+                                txt.includes('スレッドを表示') || txt.includes('View post')
                             ) {
                                 return txt;
                             }
@@ -3304,10 +4293,14 @@ def _perform_fill_and_submit_post(
 
             posted_success = False
             post_error_detected = ""
+            closed_at_idx = None
+            closed_wait_logged = False
+            api_confirmed_at_idx = None
 
-            # 7. 送信完了チェック（最大24秒）
-            for check_idx in range(30):
-                time.sleep(0.8)
+            # 7. 送信完了チェック（0.25秒刻み・最大25秒）
+            #    フォームが閉じた直後にプロフィールへ遷移せず、そのまま画面で「投稿完了」通知を十分待機する
+            for check_idx in range(100):
+                time.sleep(0.25)
 
                 sig_type, sig_val = _check_toast_or_error()
                 if sig_type == "error":
@@ -3319,7 +4312,17 @@ def _perform_fill_and_submit_post(
                         log_func(f"[SUCCESS] [{account_name}] 🎉 完了通知（'{sig_val}'）を確認し、投稿完了しました！")
                     break
 
-                # (C) フォームの消失または送信確認 → そのまま完了扱いせず、必ず通知/API/プロフィール反映を検証
+                # API成功レスポンスが先に来た場合も、「投稿完了」トーストの表示を最大2秒待ってから確定
+                if network_state["confirmed"] and not network_state["error"]:
+                    if api_confirmed_at_idx is None:
+                        api_confirmed_at_idx = check_idx
+                    elif check_idx - api_confirmed_at_idx >= 8:
+                        posted_success = True
+                        if log_func:
+                            log_func(f"[SUCCESS] [{account_name}] 🎉 Threadsサーバーからの投稿作成成功レスポンスを確認しました！")
+                        break
+
+                # フォームが閉じた／空になったか検知（ただし即プロフィールへは移動せず待機を継続）
                 form_cleared_or_closed = False
                 if container and container.is_visible():
                     try:
@@ -3330,42 +4333,27 @@ def _perform_fill_and_submit_post(
                 else:
                     form_cleared_or_closed = True
 
-                if form_cleared_or_closed and check_idx >= 2:
-                    # 遅延トースト・APIレスポンス確定を少し待ってから判定
-                    time.sleep(1.2)
-                    sig_type, sig_val = _check_toast_or_error()
-                    if sig_type == "error":
-                        post_error_detected = sig_val
-                        break
-                    if sig_type == "toast" and not network_state["error"]:
-                        posted_success = True
+                if form_cleared_or_closed:
+                    if closed_at_idx is None:
+                        closed_at_idx = check_idx
+                    if not closed_wait_logged and (check_idx - closed_at_idx) >= 4:
+                        closed_wait_logged = True
                         if log_func:
-                            log_func(f"[SUCCESS] [{account_name}] 🎉 完了通知（'{sig_val}'）を確認し、投稿完了しました！")
-                        break
-                    if network_state["confirmed"] and not network_state["error"]:
-                        posted_success = True
-                        if log_func:
-                            log_func(f"[SUCCESS] [{account_name}] 🎉 Threadsサーバーからの投稿作成成功レスポンスを確認しました！")
+                            log_func(f"[INFO] [{account_name}] 入力フォーム終了を検知。「投稿完了」表示が出るまでこの画面のまま待機します...")
+
+                    # 投稿中表示が出ている間は最大25秒まで待機を延長、そうでなくてもフォーム終了後14秒（56回）は必ず待つ
+                    posting_active = False
+                    try:
+                        posting_active = bool(page.evaluate("() => !!(window.__threadsPostMonitor && window.__threadsPostMonitor.posting)"))
+                    except Exception:
+                        posting_active = False
+
+                    waited_after_close = check_idx - closed_at_idx
+                    min_wait_ticks = 76 if posting_active else 56  # 19秒 or 14秒
+                    if waited_after_close >= min_wait_ticks:
                         break
 
-                    if log_func:
-                        log_func(f"[INFO] [{account_name}] 入力フォーム終了を検知（完了通知/API未確認）。誤検知防止のためプロフィールで実際の投稿反映を検証します...")
-                    verified_ok, verify_detail = _verify_post_appeared_on_profile(
-                        page=page,
-                        account_name=account_name,
-                        text_content=text_content,
-                        profile_handle=profile_handle,
-                        has_image=bool(resolved_img),
-                        log_func=log_func
-                    )
-                    if verified_ok:
-                        posted_success = True
-                        break
-                    else:
-                        post_error_detected = f"未投稿と判定: {verify_detail}"
-                        break
-
-                if check_idx == 6 and not network_state["request_seen"]:
+                if check_idx == 18 and closed_at_idx is None and not network_state["request_seen"]:
                     try:
                         if submit_btn and submit_btn.is_visible():
                             is_dis = (submit_btn.get_attribute("aria-disabled") == "true") or (submit_btn.get_attribute("disabled") is not None)
@@ -3374,6 +4362,23 @@ def _perform_fill_and_submit_post(
                     except Exception:
                         pass
 
+            # 十分な待機時間内にトーストもAPI成功レスポンスも得られなかった場合のみ、最終確認としてプロフィールへ移動して検証
+            if not post_error_detected and not posted_success:
+                if log_func:
+                    log_func(f"[INFO] [{account_name}] 「投稿完了」通知・API応答が待機時間内に未確認のため、最終確認としてプロフィールで実際の投稿反映を検証します...")
+                verified_ok, verify_detail = _verify_post_appeared_on_profile(
+                    page=page,
+                    account_name=account_name,
+                    text_content=text_content,
+                    profile_handle=profile_handle,
+                    has_image=bool(resolved_img),
+                    log_func=log_func
+                )
+                if verified_ok:
+                    posted_success = True
+                else:
+                    post_error_detected = f"未投稿と判定: {verify_detail}"
+
             if post_error_detected:
                 return False, f"Threads送信確認エラー: {post_error_detected}"
 
@@ -3381,6 +4386,15 @@ def _perform_fill_and_submit_post(
                 return True, ""
             return False, "投稿ボタン押下後、完了通知・API成功レスポンスのいずれも確認できませんでした"
         finally:
+            try:
+                page.evaluate("""() => {
+                    if (window.__threadsPostMonitor && window.__threadsPostMonitor.observer) {
+                        try { window.__threadsPostMonitor.observer.disconnect(); } catch (e) {}
+                    }
+                    delete window.__threadsPostMonitor;
+                }""")
+            except Exception:
+                pass
             try:
                 page.remove_listener("response", _on_post_response)
             except Exception:
@@ -3786,47 +4800,45 @@ def is_within_target_hours(time_setting, current_hour=None):
     return False
 
 def reset_posts_file_silent(posts_file):
-    """Excelの全ポストのステータスを『未投稿』に戻し、エラー内容をクリアする（自動ループ・周回用）"""
+    """Excelの全テーマシートの全ポストのステータスを『未投稿』に戻し、エラー内容をクリアする（自動ループ・周回用）"""
     if not posts_file or not os.path.exists(posts_file):
         return 0
     try:
         wb = openpyxl.load_workbook(posts_file)
-        target_ws = None
-        header_row_idx = 1
-        for sname in wb.sheetnames:
-            ws = wb[sname]
-            for r_idx, row in enumerate(list(ws.iter_rows(values_only=True))[:15], start=1):
-                if row and any(k in [str(c).strip() for c in row if c is not None] for k in ["ポスト文章", "投稿本文", "ツイート文章"]):
-                    target_ws = ws
-                    header_row_idx = r_idx
-                    break
-            if target_ws:
-                break
-        if not target_ws:
-            target_ws = wb.active
-            header_row_idx = 1
-
-        headers = [str(c.value).strip() if c.value is not None else "" for c in target_ws[header_row_idx]]
-        status_col_idx = None
-        text_col_idx = None
-        err_col_idx = None
-        for idx, h in enumerate(headers, start=1):
-            if "ステータス" in h:
-                status_col_idx = idx
-            if any(k in h for k in ["ポスト文章", "投稿本文", "ツイート文章"]):
-                text_col_idx = idx
-            if any(k in h for k in ["エラー内容", "エラー", "error"]):
-                err_col_idx = idx
+        candidate_sheets = [wb[s] for s in wb.sheetnames if not _is_system_sheet_name(s, wb[s])]
+        if not candidate_sheets:
+            candidate_sheets = [wb.active]
 
         reset_count = 0
-        if status_col_idx:
-            for row_idx in range(header_row_idx + 1, target_ws.max_row + 1):
-                txt_val = target_ws.cell(row=row_idx, column=text_col_idx).value if text_col_idx else None
-                if txt_val and str(txt_val).strip():
-                    target_ws.cell(row=row_idx, column=status_col_idx).value = "未投稿"
-                    if err_col_idx:
-                        target_ws.cell(row=row_idx, column=err_col_idx).value = ""
-                    reset_count += 1
+        for target_ws in candidate_sheets:
+            all_rows = list(target_ws.iter_rows(values_only=True))
+            header_row_idx = _find_post_header_row_in_sheet(all_rows)
+            if not header_row_idx:
+                continue
+
+            headers = [str(c.value).strip() if c.value is not None else "" for c in target_ws[header_row_idx]]
+            status_col_idx = None
+            text_col_idx = None
+            err_col_idx = None
+            for idx, h in enumerate(headers, start=1):
+                if "ステータス" in h:
+                    status_col_idx = idx
+                if any(k in h for k in ["ポスト文章", "投稿本文", "ツイート文章", "本文", "ポスト内容", "投稿内容"]):
+                    text_col_idx = idx
+                if any(k in h for k in ["エラー内容", "エラー", "error"]):
+                    err_col_idx = idx
+
+            if status_col_idx:
+                for row_idx in range(header_row_idx + 1, target_ws.max_row + 1):
+                    txt_val = target_ws.cell(row=row_idx, column=text_col_idx).value if text_col_idx else None
+                    if txt_val and str(txt_val).strip():
+                        target_ws.cell(row=row_idx, column=status_col_idx).value = "未投稿"
+                        if err_col_idx:
+                            target_ws.cell(row=row_idx, column=err_col_idx).value = ""
+                        reset_count += 1
+            style_theme_worksheet(target_ws)
+
+        if reset_count > 0:
             wb.save(posts_file)
         wb.close()
         return reset_count
@@ -4031,6 +5043,1128 @@ def is_time_in_slot(now_dt, slot_str):
                 pass
     return False
 
+
+def is_now_within_time_slot(now_dt, slot_str):
+    """
+    アカウント・テーマ・個別投稿の時間帯判定用（空欄 / 0:00-0:00 / 0-24 は常にTrue。複数範囲のカンマ区切りにも対応）
+    """
+    if now_dt is None:
+        now_dt = datetime.now()
+    if slot_str is None:
+        return True
+    raw = str(slot_str).strip()
+    if not raw or raw.lower() in ["nan", "none", "終日", "いつでも", "all"]:
+        return True
+    parts = [p.strip() for p in raw.replace("、", ",").replace(";", ",").split(",") if p.strip()]
+    if not parts:
+        return True
+    for part in parts:
+        norm_p = part.replace(" ", "").replace("　", "")
+        if norm_p in ["0:00-0:00", "0:00〜0:00", "0:00~0:00", "0-24", "0:00-24:00", "0:00〜24:00", "0-0"]:
+            return True
+        if ":" in part:
+            if is_time_in_slot(now_dt, part):
+                return True
+        else:
+            if is_within_target_hours(part, now_dt.hour):
+                return True
+    return False
+
+
+_WEEKDAY_TOKEN_MAP = {
+    "月": 0, "月曜": 0, "月曜日": 0, "mon": 0, "monday": 0,
+    "火": 1, "火曜": 1, "火曜日": 1, "tue": 1, "tues": 1, "tuesday": 1,
+    "水": 2, "水曜": 2, "水曜日": 2, "wed": 2, "wednesday": 2,
+    "木": 3, "木曜": 3, "木曜日": 3, "thu": 3, "thur": 3, "thurs": 3, "thursday": 3,
+    "金": 4, "金曜": 4, "金曜日": 4, "fri": 4, "friday": 4,
+    "土": 5, "土曜": 5, "土曜日": 5, "sat": 5, "saturday": 5,
+    "日": 6, "日曜": 6, "日曜日": 6, "sun": 6, "sunday": 6,
+}
+
+
+def is_now_within_weekdays(now_dt, weekday_str):
+    """
+    テーマ・個別投稿の曜日判定用。
+    例: 空欄 / '毎日' / '全日' / 'all' -> True, '平日' / '月〜金', '土日', '月,水,金', '月水金', 'Mon,Wed,Fri' 等に対応
+    """
+    if now_dt is None:
+        now_dt = datetime.now()
+    if weekday_str is None:
+        return True
+    raw = str(weekday_str).strip()
+    norm_all = raw.lower().replace(" ", "").replace("　", "")
+    if not norm_all or norm_all in ["nan", "none", "毎日", "全日", "すべて", "全て", "全曜日", "all", "everyday", "指定なし"]:
+        return True
+
+    allowed_days = set()
+    tokens = [t.strip() for t in re.split(r'[,，、/;；\s　・]+', raw) if t.strip()]
+    for tok in tokens:
+        tl = tok.lower()
+        if tl in ["毎日", "全日", "すべて", "全て", "all", "everyday"]:
+            return True
+        if tl in ["平日", "weekdays", "weekday"]:
+            allowed_days.update([0, 1, 2, 3, 4])
+            continue
+        if tl in ["土日", "週末", "土日祝", "weekend", "weekends"]:
+            allowed_days.update([5, 6])
+            continue
+
+        range_matched = False
+        for sep in ["〜", "-", "~", "ー", "to"]:
+            if sep in tl:
+                parts = tl.split(sep, 1)
+                d1 = _WEEKDAY_TOKEN_MAP.get(parts[0].strip())
+                d2 = _WEEKDAY_TOKEN_MAP.get(parts[1].strip())
+                if d1 is not None and d2 is not None:
+                    cur = d1
+                    for _ in range(7):
+                        allowed_days.add(cur)
+                        if cur == d2:
+                            break
+                        cur = (cur + 1) % 7
+                    range_matched = True
+                    break
+        if range_matched:
+            continue
+
+        if tl in _WEEKDAY_TOKEN_MAP:
+            allowed_days.add(_WEEKDAY_TOKEN_MAP[tl])
+            continue
+
+        # 「月水金」「土日」など連続した漢字表記に対応
+        if all(ch in "月火水木金土日" for ch in tl):
+            for ch in tl:
+                allowed_days.add(_WEEKDAY_TOKEN_MAP[ch])
+
+    if not allowed_days:
+        return True
+    return now_dt.weekday() in allowed_days
+
+
+def _normalize_theme_key(theme_name):
+    return str(theme_name or "").strip().lower()
+
+
+_STANDARD_EXCEL_RGBS = {
+    "", "00000000", "FFFFFFFF", "FFF8FAFC", "FFF1F5F9", "FFEFF6FF",
+    "FFDBEAFE", "FFF0F9FF", "FF1E3A8A", "FF1E293B", "FF0F766E",
+    "FFDCFCE7", "FFFEF3C7", "FFFEE2E2", "FF312E81", "FF0F172A",
+}
+
+
+def _is_standard_or_empty_fill(cell):
+    fill = getattr(cell, "fill", None)
+    if not fill or not getattr(fill, "fill_type", None):
+        return True
+    fg = getattr(fill, "fgColor", None)
+    sc = getattr(fill, "start_color", None)
+    c_type = getattr(fg, "type", None) or getattr(sc, "type", None)
+    if c_type == "theme":
+        return False
+    rgb = str(getattr(fg, "rgb", None) or getattr(sc, "rgb", None) or "").upper()
+    return rgb in _STANDARD_EXCEL_RGBS
+
+
+def style_theme_worksheet(ws):
+    """テーマシートを見やすく視認性高く整形し、セル削除・行削除でも色と罫線が消えないよう事前書式・条件付き書式を適用"""
+    try:
+        from openpyxl.styles import PatternFill, Font, Border, Side, Alignment
+        from openpyxl.utils import get_column_letter
+        from openpyxl.formatting.rule import CellIsRule
+    except Exception:
+        return
+
+    try:
+        all_rows = list(ws.iter_rows(values_only=True))
+        hdr_idx = _find_post_header_row_in_sheet(all_rows) or 4
+        max_col = max(9, ws.max_column or 9)
+
+        try:
+            ws.views.sheetView[0].showGridLines = True
+        except Exception:
+            pass
+        ws.freeze_panes = f"A{hdr_idx + 1}"
+
+        thin_data = Side(style="thin", color="CBD5E1")
+        thin_meta = Side(style="thin", color="60A5FA")
+        thin_hdr = Side(style="thin", color="334155")
+        border_data = Border(left=thin_data, right=thin_data, top=thin_data, bottom=thin_data)
+        border_meta = Border(left=thin_meta, right=thin_meta, top=thin_meta, bottom=thin_meta)
+        border_hdr = Border(left=thin_hdr, right=thin_hdr, top=thin_hdr, bottom=thin_hdr)
+
+        fill_meta_hdr = PatternFill("solid", start_color="1E3A8A", end_color="1E3A8A")
+        fill_meta_val = PatternFill("solid", start_color="DBEAFE", end_color="DBEAFE")
+        fill_meta_memo = PatternFill("solid", start_color="EFF6FF", end_color="EFF6FF")
+        fill_post_hdr = PatternFill("solid", start_color="0F766E", end_color="0F766E")
+        fill_id_col = PatternFill("solid", start_color="F1F5F9", end_color="F1F5F9")
+        fill_sched_col = PatternFill("solid", start_color="F0F9FF", end_color="F0F9FF")
+        fill_odd = PatternFill("solid", start_color="FFFFFF", end_color="FFFFFF")
+        fill_even = PatternFill("solid", start_color="F8FAFC", end_color="F8FAFC")
+        fill_green = PatternFill("solid", start_color="DCFCE7", end_color="DCFCE7")
+        fill_amber = PatternFill("solid", start_color="FEF3C7", end_color="FEF3C7")
+        fill_red = PatternFill("solid", start_color="FEE2E2", end_color="FEE2E2")
+        fill_clear = PatternFill(fill_type=None)
+
+        font_hdr = Font(name="Meiryo UI", size=10, bold=True, color="FFFFFF")
+        font_meta_val = Font(name="Meiryo UI", size=10, bold=True, color="1E3A8A")
+        font_meta_memo = Font(name="Meiryo UI", size=9, bold=False, color="334155")
+        font_body = Font(name="Meiryo UI", size=10, bold=False, color="0F172A")
+        font_id = Font(name="Meiryo UI", size=10, bold=True, color="475569")
+        font_green = Font(name="Meiryo UI", size=10, bold=True, color="166534")
+        font_amber = Font(name="Meiryo UI", size=10, bold=True, color="92400E")
+        font_red = Font(name="Meiryo UI", size=10, bold=True, color="991B1B")
+
+        align_center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        align_left_ctr = Alignment(horizontal="left", vertical="center", wrap_text=True)
+        align_left_top = Alignment(horizontal="left", vertical="top", wrap_text=True)
+
+        # 1. 上部テーマ設定ブロック (1〜2行目) + 余白行 (3行目)
+        meta_col_count = 6
+        status_meta_col = None
+        if hdr_idx >= 4:
+            for c_m in range(1, max_col + 1):
+                if ws.cell(row=1, column=c_m).value is not None:
+                    meta_col_count = max(meta_col_count, c_m)
+            ws.row_dimensions[1].height = 26
+            ws.row_dimensions[2].height = 36
+            ws.row_dimensions[3].height = 12
+            for c_m in range(1, meta_col_count + 1):
+                c1 = ws.cell(row=1, column=c_m)
+                c1_txt = str(c1.value or "").strip()
+                is_memo_col = ("メモ" in c1_txt or "備考" in c1_txt)
+                if "有効" in c1_txt or "状態" in c1_txt:
+                    status_meta_col = c_m
+                if _is_standard_or_empty_fill(c1):
+                    c1.fill = fill_meta_hdr
+                c1.font = font_hdr
+                c1.border = border_hdr
+                c1.alignment = align_center
+
+                c2 = ws.cell(row=2, column=c_m)
+                c2_val = str(c2.value or "").strip()
+                if c_m == status_meta_col:
+                    is_off = c2_val in ["無効", "停止", "OFF", "off", "0", "false"]
+                    if _is_standard_or_empty_fill(c2):
+                        c2.fill = fill_red if is_off else fill_green
+                    c2.font = font_red if is_off else font_green
+                    c2.alignment = align_center
+                else:
+                    if _is_standard_or_empty_fill(c2):
+                        c2.fill = fill_meta_memo if is_memo_col else fill_meta_val
+                    c2.font = font_meta_memo if is_memo_col else font_meta_val
+                    c2.alignment = align_left_ctr if is_memo_col else align_center
+                c2.border = border_meta
+
+                c3 = ws.cell(row=3, column=c_m)
+                if c3.value in (None, "") and _is_standard_or_empty_fill(c3):
+                    c3.fill = fill_clear
+                    c3.border = Border()
+
+        # 2. 投稿テーブルヘッダー (hdr_idx 行)
+        post_col_count = max(9, max((c for c in range(1, max_col + 1) if ws.cell(row=hdr_idx, column=c).value is not None), default=9))
+        ws.row_dimensions[hdr_idx].height = 28
+        col_roles = {}
+        for c_h in range(1, post_col_count + 1):
+            ch = ws.cell(row=hdr_idx, column=c_h)
+            h_txt = str(ch.value or "").strip()
+            nh = re.sub(r'[\s　_\-:=]+', '', h_txt.lower())
+            if nh in ["id", "uid"]:
+                col_roles[c_h] = "id"
+            elif any(k in nh for k in ["ポスト文章", "投稿本文", "ツイート文章", "posttext", "投稿文章", "ポスト本文", "ポスト内容", "投稿内容", "本文"]):
+                col_roles[c_h] = "text"
+            elif any(k in nh for k in ["コミュニティ", "トピック", "タグ", "topic"]):
+                col_roles[c_h] = "topic"
+            elif any(k in nh for k in ["画像", "image", "media"]):
+                col_roles[c_h] = "image"
+            elif any(k in nh for k in ["実行時間", "時間帯", "timeslot"]) and "完了" not in nh and "最終" not in nh:
+                col_roles[c_h] = "time_slot"
+            elif any(k in nh for k in ["曜日", "weekday"]):
+                col_roles[c_h] = "weekdays"
+            elif any(k in nh for k in ["ステータス", "status", "状態"]):
+                col_roles[c_h] = "status"
+            elif any(k in nh for k in ["完了日時", "投稿完了"]):
+                col_roles[c_h] = "finish_time"
+            elif any(k in nh for k in ["エラー", "error"]):
+                col_roles[c_h] = "error"
+            else:
+                col_roles[c_h] = "other"
+
+            if _is_standard_or_empty_fill(ch):
+                ch.fill = fill_post_hdr
+            ch.font = font_hdr
+            ch.border = border_hdr
+            ch.alignment = align_center
+
+        # 3. 列幅の設定（文字切れ防止）
+        width_by_role = {
+            "id": 16,
+            "text": 56,
+            "topic": 26,
+            "image": 26,
+            "time_slot": 18,
+            "weekdays": 16,
+            "status": 16,
+            "finish_time": 22,
+            "error": 30,
+            "other": 18,
+        }
+        for c_w in range(1, max(post_col_count, meta_col_count) + 1):
+            role = col_roles.get(c_w, "other")
+            w = width_by_role.get(role, 18)
+            if hdr_idx >= 4 and c_w <= meta_col_count:
+                m_lbl = str(ws.cell(row=1, column=c_w).value or "").strip()
+                if "メモ" in m_lbl or "備考" in m_lbl:
+                    w = max(w, 38)
+                elif "モード" in m_lbl:
+                    w = max(w, 24)
+                elif "間隔" in m_lbl:
+                    w = max(w, 24)
+                elif "実行時間" in m_lbl:
+                    w = max(w, 16)
+            ws.column_dimensions[get_column_letter(c_w)].width = w
+
+        # 4. データ行（+ 将来の追加・行削除用バッファ行まで事前配色＆罫線付与）
+        last_real_row = hdr_idx
+        for r_scan in range(hdr_idx + 1, ws.max_row + 1):
+            if any(ws.cell(row=r_scan, column=c_s).value not in (None, "") for c_s in range(1, post_col_count + 1)):
+                last_real_row = r_scan
+        end_row = max(last_real_row + 60, hdr_idx + 120)
+        status_col = next((c for c, r in col_roles.items() if r == "status"), None)
+        text_col = next((c for c, r in col_roles.items() if r == "text"), None)
+        err_col = next((c for c, r in col_roles.items() if r == "error"), None)
+
+        for r_idx in range(hdr_idx + 1, end_row + 1):
+            is_even = ((r_idx - hdr_idx) % 2 == 0)
+            row_fill = fill_even if is_even else fill_odd
+            has_content = False
+            max_lines = 1
+
+            for c_idx in range(1, post_col_count + 1):
+                cell = ws.cell(row=r_idx, column=c_idx)
+                val_s = "" if cell.value is None else str(cell.value).strip()
+                if val_s:
+                    has_content = True
+                role = col_roles.get(c_idx, "other")
+
+                cell.border = border_data
+                if role in ("id", "time_slot", "weekdays", "status"):
+                    cell.alignment = align_center
+                elif role in ("text", "error"):
+                    cell.alignment = align_left_top
+                else:
+                    cell.alignment = align_left_ctr
+
+                if c_idx == status_col and val_s:
+                    if "完了" in val_s:
+                        if _is_standard_or_empty_fill(cell):
+                            cell.fill = fill_green
+                        cell.font = font_green
+                    elif "エラー" in val_s:
+                        if _is_standard_or_empty_fill(cell):
+                            cell.fill = fill_red
+                        cell.font = font_red
+                    elif "未投稿" in val_s:
+                        if _is_standard_or_empty_fill(cell):
+                            cell.fill = fill_amber
+                        cell.font = font_amber
+                    else:
+                        if _is_standard_or_empty_fill(cell):
+                            cell.fill = row_fill
+                        cell.font = font_body
+                else:
+                    target_fill = row_fill
+                    target_font = font_body
+                    if role == "id":
+                        target_fill = fill_id_col
+                        target_font = font_id
+                    elif role in ("time_slot", "weekdays"):
+                        target_fill = fill_sched_col
+                    if _is_standard_or_empty_fill(cell):
+                        cell.fill = target_fill
+                    cell.font = target_font
+
+                if val_s and c_idx in (text_col, err_col):
+                    wrap_chars = 36 if c_idx == text_col else 24
+                    line_cnt = sum(max(1, (len(seg) + wrap_chars - 1) // wrap_chars) for seg in val_s.split("\n"))
+                    max_lines = max(max_lines, line_cnt)
+
+            if has_content:
+                ws.row_dimensions[r_idx].height = max(36, min(140, max_lines * 18 + 12))
+            else:
+                ws.row_dimensions[r_idx].height = 24
+
+        # 5. Excelネイティブ条件付き書式（Excel上で文字削除・編集・新規追記しても色が消えない保護）
+        try:
+            ws.conditional_formatting._cf_rules.clear()
+        except Exception:
+            pass
+        if status_col:
+            s_col_ltr = get_column_letter(status_col)
+            s_rng = f"{s_col_ltr}{hdr_idx + 1}:{s_col_ltr}{max(end_row + 200, 500)}"
+            ws.conditional_formatting.add(s_rng, CellIsRule(operator="equal", formula=['"投稿完了"'], fill=fill_green, font=font_green))
+            ws.conditional_formatting.add(s_rng, CellIsRule(operator="equal", formula=['"未投稿"'], fill=fill_amber, font=font_amber))
+            ws.conditional_formatting.add(s_rng, CellIsRule(operator="equal", formula=['"エラー"'], fill=fill_red, font=font_red))
+        if status_meta_col and hdr_idx >= 4:
+            m_col_ltr = get_column_letter(status_meta_col)
+            m_rng = f"{m_col_ltr}2"
+            ws.conditional_formatting.add(m_rng, CellIsRule(operator="equal", formula=['"有効"'], fill=fill_green, font=font_green))
+            ws.conditional_formatting.add(m_rng, CellIsRule(operator="equal", formula=['"無効"'], fill=fill_red, font=font_red))
+    except Exception:
+        pass
+
+
+def style_daily_worksheet(ws):
+    """「日常ポスト」シートを見やすく配色＆列幅・条件付き書式整形"""
+    try:
+        from openpyxl.styles import PatternFill, Font, Border, Side, Alignment
+        from openpyxl.utils import get_column_letter
+        from openpyxl.formatting.rule import CellIsRule
+    except Exception:
+        return
+
+    try:
+        try:
+            ws.views.sheetView[0].showGridLines = True
+        except Exception:
+            pass
+        ws.freeze_panes = "A2"
+
+        thin_data = Side(style="thin", color="CBD5E1")
+        thin_hdr = Side(style="thin", color="312E81")
+        border_data = Border(left=thin_data, right=thin_data, top=thin_data, bottom=thin_data)
+        border_hdr = Border(left=thin_hdr, right=thin_hdr, top=thin_hdr, bottom=thin_hdr)
+
+        fill_hdr = PatternFill("solid", start_color="312E81", end_color="312E81")
+        fill_odd = PatternFill("solid", start_color="FFFFFF", end_color="FFFFFF")
+        fill_even = PatternFill("solid", start_color="F8FAFC", end_color="F8FAFC")
+        fill_green = PatternFill("solid", start_color="DCFCE7", end_color="DCFCE7")
+        fill_red = PatternFill("solid", start_color="FEE2E2", end_color="FEE2E2")
+
+        font_hdr = Font(name="Meiryo UI", size=10, bold=True, color="FFFFFF")
+        font_body = Font(name="Meiryo UI", size=10, bold=False, color="0F172A")
+        font_green = Font(name="Meiryo UI", size=10, bold=True, color="166534")
+        font_red = Font(name="Meiryo UI", size=10, bold=True, color="991B1B")
+
+        align_center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        align_left = Alignment(horizontal="left", vertical="center", wrap_text=True)
+
+        max_c = max(6, max((c for c in range(1, max(ws.max_column, 7) + 1) if ws.cell(1, c).value is not None), default=6))
+        ws.row_dimensions[1].height = 26
+        enabled_col = None
+        for c in range(1, max_c + 1):
+            ch = ws.cell(row=1, column=c)
+            h_txt = str(ch.value or "").strip()
+            if _is_standard_or_empty_fill(ch):
+                ch.fill = fill_hdr
+            ch.font = font_hdr
+            ch.border = border_hdr
+            ch.alignment = align_center
+
+            w = 16
+            if "枠" in h_txt:
+                w = 14
+            elif "時間" in h_txt and "最終" not in h_txt:
+                w = 16
+            elif "文章" in h_txt or "本文" in h_txt:
+                w = 58
+            elif "トピック" in h_txt or "コミュニティ" in h_txt:
+                w = 28
+            elif "有効" in h_txt:
+                w = 14
+                enabled_col = c
+            elif "最終" in h_txt:
+                w = 20
+            ws.column_dimensions[get_column_letter(c)].width = w
+
+        last_real_r = 1
+        for r_scan in range(2, ws.max_row + 1):
+            if any(ws.cell(row=r_scan, column=c_s).value not in (None, "") for c_s in range(1, max_c + 1)):
+                last_real_r = r_scan
+        end_r = max(last_real_r + 30, 80)
+        for r in range(2, end_r + 1):
+            row_fill = fill_even if (r % 2 == 0) else fill_odd
+            has_val = False
+            for c in range(1, max_c + 1):
+                cell = ws.cell(row=r, column=c)
+                v = "" if cell.value is None else str(cell.value).strip()
+                if v:
+                    has_val = True
+                cell.border = border_data
+                h_txt = str(ws.cell(row=1, column=c).value or "").strip()
+                cell.alignment = align_left if ("文章" in h_txt or "トピック" in h_txt or "コミュニティ" in h_txt) else align_center
+                if c == enabled_col and v:
+                    is_off = v in ["無効", "停止", "OFF", "off", "0", "false"]
+                    if _is_standard_or_empty_fill(cell):
+                        cell.fill = fill_red if is_off else fill_green
+                    cell.font = font_red if is_off else font_green
+                else:
+                    if _is_standard_or_empty_fill(cell):
+                        cell.fill = row_fill
+                    cell.font = font_body
+            ws.row_dimensions[r].height = 36 if has_val else 24
+
+        try:
+            ws.conditional_formatting._cf_rules.clear()
+        except Exception:
+            pass
+        if enabled_col:
+            e_ltr = get_column_letter(enabled_col)
+            e_rng = f"{e_ltr}2:{e_ltr}{max(end_r + 100, 300)}"
+            ws.conditional_formatting.add(e_rng, CellIsRule(operator="equal", formula=['"有効"'], fill=fill_green, font=font_green))
+            ws.conditional_formatting.add(e_rng, CellIsRule(operator="equal", formula=['"無効"'], fill=fill_red, font=font_red))
+    except Exception:
+        pass
+
+
+def _sanitize_excel_sheet_name(name):
+    cleaned = re.sub(r'[\\/?*\[\]:]+', "_", str(name or "").strip())
+    cleaned = cleaned.strip("' ")
+    if not cleaned:
+        cleaned = "基本"
+    return cleaned[:31]
+
+
+def _post_sheet_header_row():
+    return ["ID", "ポスト文章", "コミュニティまたはトピック", "画像ファイルパス", "実行時間", "曜日", "ステータス", "投稿完了日時", "エラー内容"]
+
+
+def _init_theme_sheet_rows(ws, time_slot="0:00-0:00", weekdays="毎日", interval="120〜360分", post_mode=1, status="有効", memo=""):
+    """テーマシートの上部メタ設定行(1-2行目)・空行(3行目)・投稿テーブルヘッダー(4行目)を構築し見やすく色付け"""
+    stat_val = "無効" if str(status).strip() in ["無効", "停止", "OFF", "off", "0", "false"] else "有効"
+    _, _, norm_iv = parse_interval_range(interval)
+    iv_val = norm_iv or (str(interval or "").strip()) or "120〜360分"
+    _, mode_str = parse_post_mode(post_mode, default=1)
+    ws.append(["実行時間", "曜日", "ポスト間隔", "投稿モード", "有効/無効", "メモ"])
+    ws.append([(time_slot or "0:00-0:00").strip(), (weekdays or "毎日").strip(), iv_val, mode_str, stat_val, (memo or "").strip()])
+    ws.append([""])
+    ws.append(_post_sheet_header_row())
+    style_theme_worksheet(ws)
+
+
+def _write_sheet_theme_meta(ws, time_slot="0:00-0:00", weekdays="毎日", interval="120〜360分", post_mode=1, status="有効", memo=""):
+    """テーマ別シート上部のメタ設定行（実行時間・曜日・ポスト間隔・投稿モード・有効/無効・メモ）を更新/作成し書式保持"""
+    all_rows = list(ws.iter_rows(values_only=True))
+    hdr_idx = _find_post_header_row_in_sheet(all_rows)
+    stat_val = "無効" if str(status).strip() in ["無効", "停止", "OFF", "off", "0", "false"] else "有効"
+    _, _, norm_iv = parse_interval_range(interval)
+    iv_val = norm_iv or (str(interval or "").strip()) or "120〜360分"
+    _, mode_str = parse_post_mode(post_mode, default=1)
+
+    if ws.max_row == 0 or (hdr_idx is None and all(all(c is None or str(c).strip() == "" for c in r) for r in all_rows)):
+        if ws.max_row > 0:
+            ws.delete_rows(1, ws.max_row)
+        _init_theme_sheet_rows(ws, time_slot=time_slot, weekdays=weekdays, interval=iv_val, post_mode=mode_str, status=stat_val, memo=memo)
+        return
+
+    if hdr_idx is None or hdr_idx <= 2:
+        if not _is_legacy_flat_post_sheet_name(ws.title):
+            ws.insert_rows(1, 3)
+            ws.cell(row=1, column=1).value = "実行時間"
+            ws.cell(row=1, column=2).value = "曜日"
+            ws.cell(row=1, column=3).value = "ポスト間隔"
+            ws.cell(row=1, column=4).value = "投稿モード"
+            ws.cell(row=1, column=5).value = "有効/無効"
+            ws.cell(row=1, column=6).value = "メモ"
+            ws.cell(row=2, column=1).value = (time_slot or "0:00-0:00").strip()
+            ws.cell(row=2, column=2).value = (weekdays or "毎日").strip()
+            ws.cell(row=2, column=3).value = iv_val
+            ws.cell(row=2, column=4).value = mode_str
+            ws.cell(row=2, column=5).value = stat_val
+            ws.cell(row=2, column=6).value = (memo or "").strip()
+        style_theme_worksheet(ws)
+        return
+
+    # 既存のメタ設定行を6列構成（実行時間 / 曜日 / ポスト間隔 / 投稿モード / 有効/無効 / メモ）に統一（下部テーブルは保持）
+    max_meta_c = max(ws.max_column, 6)
+    for c_clr in range(1, max_meta_c + 1):
+        ws.cell(row=1, column=c_clr).value = None
+        ws.cell(row=2, column=c_clr).value = None
+    ws.cell(row=1, column=1).value = "実行時間"
+    ws.cell(row=1, column=2).value = "曜日"
+    ws.cell(row=1, column=3).value = "ポスト間隔"
+    ws.cell(row=1, column=4).value = "投稿モード"
+    ws.cell(row=1, column=5).value = "有効/無効"
+    ws.cell(row=1, column=6).value = "メモ"
+    ws.cell(row=2, column=1).value = (time_slot or "0:00-0:00").strip()
+    ws.cell(row=2, column=2).value = (weekdays or "毎日").strip()
+    ws.cell(row=2, column=3).value = iv_val
+    ws.cell(row=2, column=4).value = mode_str
+    ws.cell(row=2, column=5).value = stat_val
+    ws.cell(row=2, column=6).value = (memo or "").strip()
+    style_theme_worksheet(ws)
+
+
+def _find_theme_sheet_in_wb(wb, theme_name="", create_if_missing=False, default_meta=None):
+    clean_theme = str(theme_name or "").strip()
+    target_key = _normalize_theme_key(clean_theme)
+    safe_key = _normalize_theme_key(_sanitize_excel_sheet_name(clean_theme))
+
+    if clean_theme:
+        for sname in wb.sheetnames:
+            if _is_system_sheet_name(sname, wb[sname]):
+                continue
+            sk = _normalize_theme_key(sname)
+            if sk == target_key or sk == safe_key:
+                return wb[sname]
+
+    if create_if_missing and clean_theme:
+        safe_title = _sanitize_excel_sheet_name(clean_theme)
+        # 既定シート構成（テーマ別シート群 -> 日常ポスト）に並べる
+        insert_idx = len(wb.sheetnames)
+        for idx_s, sname in enumerate(wb.sheetnames):
+            if _is_daily_greeting_sheet(sname, wb[sname]) or any(k in sname.lower() for k in ["設計", "テーマ設定"]):
+                insert_idx = idx_s
+                break
+        ws = wb.create_sheet(title=safe_title, index=insert_idx)
+        dm = default_meta or {}
+        _init_theme_sheet_rows(
+            ws,
+            time_slot=dm.get("time_slot", "0:00-0:00"),
+            weekdays=dm.get("weekdays", "毎日"),
+            interval=dm.get("interval_str", dm.get("interval", "120〜360分")),
+            post_mode=dm.get("post_mode", dm.get("mode", 1)),
+            status=dm.get("status", "有効"),
+            memo=dm.get("memo", ""),
+        )
+        return ws
+
+    for sname in wb.sheetnames:
+        if not _is_system_sheet_name(sname, wb[sname]):
+            return wb[sname]
+    return wb.active
+
+
+def _find_post_sheet_in_wb(wb, create_if_missing=False, theme_name=None):
+    if theme_name:
+        return _find_theme_sheet_in_wb(wb, theme_name=theme_name, create_if_missing=create_if_missing)
+    for sname in wb.sheetnames:
+        if not _is_system_sheet_name(sname, wb[sname]) and not _is_legacy_flat_post_sheet_name(sname):
+            return wb[sname]
+    for sname in wb.sheetnames:
+        if not _is_system_sheet_name(sname, wb[sname]):
+            return wb[sname]
+    if create_if_missing:
+        return _find_theme_sheet_in_wb(wb, theme_name="基本", create_if_missing=True)
+    return wb.active
+
+
+def _ensure_post_sheet_headers(ws, required_cols=None):
+    if required_cols is None:
+        required_cols = ["実行時間", "曜日"]
+    if ws.max_row == 0:
+        if _is_legacy_flat_post_sheet_name(ws.title):
+            ws.append(["ID", "テーマ", "ポスト文章", "コミュニティまたはトピック", "画像ファイルパス", "実行時間", "曜日", "ステータス", "投稿完了日時", "エラー内容"])
+        else:
+            _init_theme_sheet_rows(ws)
+
+    all_rows = list(ws.iter_rows(values_only=True))
+    header_row_idx = _find_post_header_row_in_sheet(all_rows)
+    if header_row_idx is None:
+        if _is_legacy_flat_post_sheet_name(ws.title):
+            header_row_idx = 1
+        else:
+            header_row_idx = ws.max_row + 1
+            if header_row_idx == 1:
+                _init_theme_sheet_rows(ws)
+                header_row_idx = 4
+            else:
+                for col_i, col_name in enumerate(_post_sheet_header_row(), start=1):
+                    ws.cell(row=header_row_idx, column=col_i).value = col_name
+
+    headers = [str(ws.cell(row=header_row_idx, column=c).value or "").strip() for c in range(1, max(ws.max_column, 1) + 1)]
+    norm_headers = [re.sub(r'[\s　_\-:=]+', '', h.lower()) for h in headers]
+
+    def _has_col(target):
+        if target == "テーマ":
+            return any(n in ["テーマ", "テーマ名", "theme", "カテゴリ", "カテゴリー"] or ("テーマ" in n and "配色" not in n) for n in norm_headers)
+        if target in ["時間帯", "実行時間"]:
+            return any(any(k in n for k in ["時間帯", "実行時間", "投稿時間", "配信時間", "timeslot", "時間枠"]) and "完了" not in n and "最終" not in n for n in norm_headers)
+        if target == "曜日":
+            return any(any(k in n for k in ["曜日", "weekday", "weekdays"]) for n in norm_headers)
+        return target.lower() in norm_headers
+
+    next_col = max((i + 1 for i, h in enumerate(headers) if h), default=0) + 1
+    for col_name in required_cols:
+        if not _has_col(col_name):
+            ws.cell(row=header_row_idx, column=next_col).value = col_name
+            while len(headers) < next_col:
+                headers.append("")
+                norm_headers.append("")
+            headers[next_col - 1] = col_name
+            norm_headers[next_col - 1] = re.sub(r'[\s　_\-:=]+', '', col_name.lower())
+            next_col += 1
+    return header_row_idx, headers
+
+
+def read_theme_settings_from_xlsx(filepath):
+    """<アカウント名>.xlsx のテーマ別シート群（および旧「テーマ設定」シート）を読み込み、正規化キー->設定辞書を返す"""
+    themes = {}
+    if not filepath or not os.path.exists(filepath):
+        return themes
+    wb = None
+    try:
+        with open(filepath, "rb") as f_in:
+            import io
+            content_bytes = f_in.read()
+        wb = openpyxl.load_workbook(io.BytesIO(content_bytes), data_only=True)
+    except Exception:
+        try:
+            wb = openpyxl.load_workbook(filepath, data_only=True)
+        except Exception:
+            return themes
+    try:
+        # 1. 旧「テーマ設定」シートがあれば互換読込
+        for sname in wb.sheetnames:
+            if any(k in sname.lower() for k in ["テーマ設定", "themesetting", "themeconfig"]):
+                ws_t = wb[sname]
+                rows_t = list(ws_t.iter_rows(values_only=True))
+                if rows_t:
+                    headers_t = [str(h or "").strip() for h in rows_t[0]]
+                    for r_idx, row in enumerate(rows_t[1:], start=2):
+                        if not row or all(c is None or str(c).strip() == "" for c in row):
+                            continue
+                        row_dict = {}
+                        for h, val in zip(headers_t, row):
+                            row_dict[h] = "" if val is None else str(val).strip()
+                        t_name = str(row_dict.get("テーマ名") or row_dict.get("テーマ") or (row[0] if len(row) > 0 and row[0] is not None else "")).strip()
+                        if not t_name or t_name.lower() in ["none", "nan"]:
+                            continue
+                        t_slot = str(row_dict.get("実行時間") or row_dict.get("投稿時間帯") or row_dict.get("時間帯") or (row[1] if len(row) > 1 and row[1] is not None else "")).strip() or "0:00-0:00"
+                        t_wd = str(row_dict.get("曜日") or row_dict.get("対象曜日") or "毎日").strip() or "毎日"
+                        raw_iv = str(row_dict.get("ツイート間隔") or row_dict.get("ポスト間隔") or row_dict.get("投稿間隔") or row_dict.get("間隔") or "120〜360分").strip()
+                        mn_s, mx_s, disp_iv = parse_interval_range(raw_iv)
+                        raw_md = row_dict.get("投稿モード") or row_dict.get("モード") or "1"
+                        pm, pm_str = parse_post_mode(raw_md, default=1)
+                        t_stat = str(row_dict.get("有効/無効") or row_dict.get("有効無効") or row_dict.get("状態") or (row[3] if len(row) > 3 and row[3] is not None else "有効")).strip() or "有効"
+                        t_memo = str(row_dict.get("メモ") or row_dict.get("備考") or (row[4] if len(row) > 4 and row[4] is not None else "")).strip()
+                        enabled = t_stat not in ["無効", "停止", "OFF", "off", "0", "false"]
+                        themes[_normalize_theme_key(t_name)] = {
+                            "_row_idx": r_idx,
+                            "name": t_name,
+                            "sheet_name": t_name,
+                            "time_slot": t_slot,
+                            "weekdays": t_wd,
+                            "interval_str": disp_iv or "120〜360分",
+                            "min_interval_sec": mn_s if mn_s is not None else 7200,
+                            "max_interval_sec": mx_s if mx_s is not None else 21600,
+                            "post_mode": pm,
+                            "mode_str": pm_str,
+                            "topic": "",
+                            "status": "有効" if enabled else "無効",
+                            "enabled": enabled,
+                            "memo": t_memo,
+                        }
+                break
+
+        # 2. 各テーマシートタブ（非システムシート）を読み取り・統合（シートタブを優先）
+        for sname in wb.sheetnames:
+            if _is_system_sheet_name(sname, wb[sname]):
+                continue
+            ws = wb[sname]
+            rows = list(ws.iter_rows(values_only=True))
+            hdr_idx = _find_post_header_row_in_sheet(rows)
+            if _is_legacy_flat_post_sheet_name(sname):
+                # 旧「投稿リスト」シート内にテーマ列がある場合やテーマ設定がある場合は「投稿リスト」自体をテーマ名にしない
+                has_explicit_themes = bool(themes)
+                if hdr_idx and rows:
+                    h_cells = [str(h or "").strip() for h in rows[hdr_idx - 1]]
+                    t_c = next((i for i, h in enumerate(h_cells) if "テーマ" in h and "配色" not in h), None)
+                    if t_c is not None:
+                        for rr in rows[hdr_idx:]:
+                            if rr and t_c < len(rr) and rr[t_c] and str(rr[t_c]).strip():
+                                tn = str(rr[t_c]).strip()
+                                has_explicit_themes = True
+                                tk_n = _normalize_theme_key(tn)
+                                if tk_n not in themes:
+                                    themes[tk_n] = {
+                                        "name": tn, "sheet_name": sname, "time_slot": "0:00-0:00",
+                                        "weekdays": "毎日", "interval_str": "120〜360分",
+                                        "min_interval_sec": 7200, "max_interval_sec": 21600,
+                                        "post_mode": 1, "mode_str": "1: ランダム",
+                                        "topic": "", "status": "有効", "enabled": True, "memo": "",
+                                    }
+                if has_explicit_themes:
+                    continue
+
+            meta = read_sheet_theme_meta(rows, hdr_idx, sname)
+            themes[_normalize_theme_key(sname)] = meta
+
+        return themes
+    except Exception:
+        return themes
+    finally:
+        try:
+            if wb:
+                wb.close()
+        except Exception:
+            pass
+
+
+def upsert_theme_setting_in_xlsx(filepath, account_id, theme_name, time_slot="0:00-0:00", weekdays="毎日", interval="120〜360分", post_mode=1, status="有効", memo="", old_theme_name=None, **_kwargs):
+    """<アカウント名>.xlsx にテーマ別シートを追加/更新し、上部の実行時間・曜日・ポスト間隔・投稿モードを設定＆書式整形"""
+    clean_theme = str(theme_name or "").strip()
+    if not clean_theme:
+        return False
+    safe_title = _sanitize_excel_sheet_name(clean_theme)
+    wb = ensure_account_workbook(filepath, account_id)
+
+    ws = None
+    if old_theme_name:
+        old_ws = None
+        old_key = _normalize_theme_key(old_theme_name)
+        old_safe_key = _normalize_theme_key(_sanitize_excel_sheet_name(old_theme_name))
+        for sname in wb.sheetnames:
+            if _is_system_sheet_name(sname, wb[sname]) or _is_legacy_flat_post_sheet_name(sname):
+                continue
+            sk = _normalize_theme_key(sname)
+            if sk == old_key or sk == old_safe_key:
+                old_ws = wb[sname]
+                break
+        if old_ws is not None:
+            if _normalize_theme_key(old_ws.title) != _normalize_theme_key(safe_title):
+                existing_target = next((s for s in wb.sheetnames if _normalize_theme_key(s) == _normalize_theme_key(safe_title)), None)
+                if not existing_target:
+                    old_ws.title = safe_title
+                    ws = old_ws
+            else:
+                ws = old_ws
+
+    if ws is None:
+        for sname in wb.sheetnames:
+            if _is_system_sheet_name(sname, wb[sname]):
+                continue
+            if _normalize_theme_key(sname) in {_normalize_theme_key(clean_theme), _normalize_theme_key(safe_title)}:
+                ws = wb[sname]
+                break
+
+    if ws is None:
+        ws = _find_theme_sheet_in_wb(
+            wb,
+            theme_name=safe_title,
+            create_if_missing=True,
+            default_meta={"time_slot": time_slot, "weekdays": weekdays, "interval_str": interval, "post_mode": post_mode, "status": status, "memo": memo},
+        )
+
+    _write_sheet_theme_meta(ws, time_slot=time_slot, weekdays=weekdays, interval=interval, post_mode=post_mode, status=status, memo=memo)
+
+    # 旧「テーマ設定」シートが存在する既存ファイルのみ互換維持のため同期
+    for sname in wb.sheetnames:
+        if any(k in sname.lower() for k in ["テーマ設定", "themesetting", "themeconfig"]):
+            ws_t = wb[sname]
+            if ws_t.max_row == 0:
+                ws_t.append(["テーマ名", "実行時間", "曜日", "ポスト間隔", "投稿モード", "有効/無効", "メモ"])
+            headers_t = [str(ws_t.cell(row=1, column=c).value or "").strip() for c in range(1, max(ws_t.max_column, 5) + 1)]
+            col_name = next((i + 1 for i, h in enumerate(headers_t) if "テーマ" in h), 1)
+            col_slot = next((i + 1 for i, h in enumerate(headers_t) if "時間" in h), 2)
+            col_wd = next((i + 1 for i, h in enumerate(headers_t) if "曜日" in h), None)
+            if not col_wd:
+                col_wd = len(headers_t) + 1
+                ws_t.cell(row=1, column=col_wd).value = "曜日"
+            col_iv = next((i + 1 for i, h in enumerate(headers_t) if "間隔" in h), None)
+            if not col_iv:
+                col_iv = max(len(headers_t), col_wd) + 1
+                ws_t.cell(row=1, column=col_iv).value = "ポスト間隔"
+            col_stat = next((i + 1 for i, h in enumerate(headers_t) if "有効" in h or "状態" in h), 4)
+            col_memo = next((i + 1 for i, h in enumerate(headers_t) if "メモ" in h or "備考" in h), 5)
+
+            lookup_keys = {_normalize_theme_key(clean_theme)}
+            if old_theme_name:
+                lookup_keys.add(_normalize_theme_key(old_theme_name))
+            target_row = None
+            for r in range(2, ws_t.max_row + 1):
+                val = str(ws_t.cell(row=r, column=col_name).value or "").strip()
+                if _normalize_theme_key(val) in lookup_keys:
+                    target_row = r
+                    break
+            if target_row is None:
+                target_row = ws_t.max_row + 1
+            ws_t.cell(row=target_row, column=col_name).value = clean_theme
+            ws_t.cell(row=target_row, column=col_slot).value = (time_slot or "0:00-0:00").strip()
+            ws_t.cell(row=target_row, column=col_wd).value = (weekdays or "毎日").strip()
+            ws_t.cell(row=target_row, column=col_iv).value = (interval or "120〜360分").strip()
+            ws_t.cell(row=target_row, column=col_stat).value = "無効" if str(status).strip() in ["無効", "停止", "OFF", "off", "0", "false"] else "有効"
+            ws_t.cell(row=target_row, column=col_memo).value = (memo or "").strip()
+            break
+
+    wb.save(filepath)
+    wb.close()
+    get_account_images_dir(account_id, create=True, theme_name=clean_theme)
+    return True
+
+
+def delete_theme_setting_from_xlsx(filepath, theme_name):
+    if not filepath or not os.path.exists(filepath) or not theme_name:
+        return False
+    wb = openpyxl.load_workbook(filepath)
+    target_key = _normalize_theme_key(theme_name)
+    safe_key = _normalize_theme_key(_sanitize_excel_sheet_name(theme_name))
+    deleted = False
+
+    # シートタブを削除（システムシート以外、かつシートが1枚だけ残らないよう保護）
+    for sname in list(wb.sheetnames):
+        if _is_system_sheet_name(sname, wb[sname]) or _is_legacy_flat_post_sheet_name(sname):
+            continue
+        if _normalize_theme_key(sname) in {target_key, safe_key}:
+            if len(wb.sheetnames) > 1:
+                del wb[sname]
+                deleted = True
+
+    # 旧「テーマ設定」シートがあればそちらからも削除
+    for sname in wb.sheetnames:
+        if any(k in sname.lower() for k in ["テーマ設定", "themesetting", "themeconfig"]):
+            ws_t = wb[sname]
+            for r in range(ws_t.max_row, 1, -1):
+                val = str(ws_t.cell(row=r, column=1).value or "").strip()
+                if _normalize_theme_key(val) == target_key:
+                    ws_t.delete_rows(r, 1)
+                    deleted = True
+            break
+
+    if deleted:
+        wb.save(filepath)
+    wb.close()
+    return deleted
+
+
+def _resolve_post_sheet_col_map(ws, require_theme_col=False):
+    req = ["実行時間", "曜日"] + (["テーマ"] if require_theme_col else [])
+    header_row_idx, headers = _ensure_post_sheet_headers(ws, req)
+    col_map = {}
+    for idx, h in enumerate(headers, start=1):
+        norm_h = re.sub(r'[\s　_\-:=]+', '', str(h).strip().lower())
+        if norm_h in ["id", "uid"] and "id" not in col_map:
+            col_map["id"] = idx
+        elif (norm_h in ["テーマ", "テーマ名", "theme", "カテゴリ", "カテゴリー"] or ("テーマ" in norm_h and "配色" not in norm_h)) and "theme" not in col_map:
+            col_map["theme"] = idx
+        elif any(k in norm_h for k in ["ポスト文章", "投稿本文", "ツイート文章", "posttext", "投稿文章", "ポスト本文", "ポスト内容", "投稿内容", "本文"]) and "text" not in col_map:
+            col_map["text"] = idx
+        elif any(k in norm_h for k in ["コミュニティ", "トピック", "タグ", "topic"]) and not any(ex in norm_h for ex in ["適用", "使用", "選択", "実績"]) and "topic" not in col_map:
+            col_map["topic"] = idx
+        elif any(k in norm_h for k in ["画像", "image", "media"]) and "image" not in col_map:
+            col_map["image"] = idx
+        elif any(k in norm_h for k in ["時間帯", "実行時間", "投稿時間", "配信時間", "timeslot", "時間枠"]) and not any(ex in norm_h for ex in ["完了", "最終", "実行ログ", "posted"]) and "time_slot" not in col_map:
+            col_map["time_slot"] = idx
+        elif any(k in norm_h for k in ["曜日", "weekday", "weekdays"]) and "weekdays" not in col_map:
+            col_map["weekdays"] = idx
+        elif any(k in norm_h for k in ["ステータス", "status", "状態"]) and "status" not in col_map:
+            col_map["status"] = idx
+        elif any(k in norm_h for k in ["投稿完了", "完了日時", "finishtime"]) and "finish_time" not in col_map:
+            col_map["finish_time"] = idx
+        elif any(k in norm_h for k in ["エラー", "error"]) and "error" not in col_map:
+            col_map["error"] = idx
+    return header_row_idx, col_map
+
+
+def _find_next_empty_post_row(ws, hdr_idx, col_map):
+    """事前配色済み空行(120行等)の末尾に追加されないよう、データが入っていない最初の行を探す"""
+    text_col = col_map.get("text")
+    id_col = col_map.get("id")
+    last_used = hdr_idx
+    for r in range(hdr_idx + 1, ws.max_row + 1):
+        t_val = ws.cell(row=r, column=text_col).value if text_col else None
+        i_val = ws.cell(row=r, column=id_col).value if id_col else None
+        if (t_val is not None and str(t_val).strip() != "") or (i_val is not None and str(i_val).strip() != ""):
+            last_used = r
+    return last_used + 1
+
+
+def save_or_update_post_row_in_xlsx(filepath, account_id, post_data, row_idx=None, sheet_name=None):
+    """対象テーマシートの指定行を更新、または新規行として追加（テーマ変更時はシート間移動にも対応）"""
+    wb = ensure_account_workbook(filepath, account_id)
+    theme_nm = str(post_data.get("theme") or "").strip() or "基本"
+
+    target_ws = _find_theme_sheet_in_wb(wb, theme_name=theme_nm, create_if_missing=True)
+
+    # 別シートからテーマ変更して保存した場合は、元シートから該当行を削除して新規追加扱い
+    if row_idx is not None and sheet_name and sheet_name in wb.sheetnames and sheet_name != target_ws.title:
+        old_ws = wb[sheet_name]
+        old_hdr_idx = _find_post_header_row_in_sheet(list(old_ws.iter_rows(values_only=True))) or 1
+        if row_idx > old_hdr_idx and row_idx <= old_ws.max_row:
+            old_ws.delete_rows(row_idx, 1)
+            style_theme_worksheet(old_ws)
+        row_idx = None
+
+    hdr_idx, col_map = _resolve_post_sheet_col_map(target_ws, require_theme_col=_is_legacy_flat_post_sheet_name(target_ws.title))
+
+    if row_idx is None or row_idx <= hdr_idx or row_idx > target_ws.max_row:
+        target_row = _find_next_empty_post_row(target_ws, hdr_idx, col_map)
+        max_id = 0
+        if "id" in col_map:
+            for r in range(hdr_idx + 1, target_row):
+                try:
+                    v = int(str(target_ws.cell(row=r, column=col_map["id"]).value or "0").strip())
+                    if v > max_id:
+                        max_id = v
+                except Exception:
+                    pass
+        if "id" in col_map:
+            target_ws.cell(row=target_row, column=col_map["id"]).value = max_id + 1
+    else:
+        target_row = row_idx
+
+    mapping = [
+        ("theme", theme_nm),
+        ("text", post_data.get("text", "")),
+        ("topic", post_data.get("topic", "")),
+        ("image", post_data.get("image", "")),
+        ("time_slot", post_data.get("time_slot", "")),
+        ("weekdays", post_data.get("weekdays", "")),
+        ("status", post_data.get("status", "未投稿") or "未投稿"),
+    ]
+    for key, val in mapping:
+        if key in col_map:
+            target_ws.cell(row=target_row, column=col_map[key]).value = str(val if val is not None else "")
+    if post_data.get("status") == "未投稿":
+        if "finish_time" in col_map:
+            target_ws.cell(row=target_row, column=col_map["finish_time"]).value = ""
+        if "error" in col_map:
+            target_ws.cell(row=target_row, column=col_map["error"]).value = ""
+
+    style_theme_worksheet(target_ws)
+    saved_sheet_name = target_ws.title
+    wb.save(filepath)
+    wb.close()
+    return target_row, saved_sheet_name
+
+
+def delete_post_row_from_xlsx(filepath, row_idx, sheet_name=None):
+    if not filepath or not os.path.exists(filepath) or not row_idx or row_idx < 2:
+        return False
+    wb = openpyxl.load_workbook(filepath)
+    if sheet_name and sheet_name in wb.sheetnames:
+        ws = wb[sheet_name]
+    else:
+        ws = _find_post_sheet_in_wb(wb, create_if_missing=False)
+    if not ws:
+        wb.close()
+        return False
+    hdr_idx = _find_post_header_row_in_sheet(list(ws.iter_rows(values_only=True))) or 1
+    if row_idx <= hdr_idx or row_idx > ws.max_row:
+        wb.close()
+        return False
+    ws.delete_rows(row_idx, 1)
+    style_theme_worksheet(ws)
+    wb.save(filepath)
+    wb.close()
+    return True
+
+
+def resolve_post_theme_schedule(post_item, theme_map, global_settings, now_dt=None):
+    """
+    個別投稿に適用されるテーマ・トピック・実行時間・曜日・ポスト間隔・投稿モード・実行可否を統合解決する。
+    トピックは個別投稿行のみを使用し、ポスト間隔・投稿モードはシート上部テーマ設定を優先適用する。
+    """
+    if now_dt is None:
+        now_dt = datetime.now()
+    sheet_name = str(post_item.get("_sheet_name") or "").strip()
+    sheet_meta = post_item.get("_sheet_theme_meta") if isinstance(post_item.get("_sheet_theme_meta"), dict) else {}
+
+    row_theme = str(post_item.get("テーマ") or post_item.get("テーマ名") or post_item.get("theme") or "").strip()
+    if not row_theme and sheet_name and not _is_legacy_flat_post_sheet_name(sheet_name):
+        row_theme = sheet_name
+
+    row_slot = str(post_item.get("時間帯") or post_item.get("実行時間") or post_item.get("投稿時間帯") or "").strip()
+    row_weekdays = str(post_item.get("曜日") or post_item.get("対象曜日") or post_item.get("weekdays") or "").strip()
+    row_topic = ""
+    for k in ["コミュニティまたはトピック", "コミュニティ", "トピック", "トピックタグ", "タグ", "topic"]:
+        v = str(post_item.get(k) or "").strip()
+        if v and v.lower() not in ["none", "nan"] and not re.match(r'^\+?\d+(\.0+)?$', v):
+            row_topic = v
+            break
+
+    row_iv_raw = str(post_item.get("ツイート間隔") or post_item.get("ポスト間隔") or post_item.get("投稿間隔") or post_item.get("間隔") or "").strip()
+    row_min_s, row_max_s, row_iv_disp = parse_interval_range(row_iv_raw)
+
+    theme_info = None
+    if theme_map and row_theme:
+        theme_info = theme_map.get(_normalize_theme_key(row_theme))
+    if not theme_info and theme_map and sheet_name:
+        theme_info = theme_map.get(_normalize_theme_key(sheet_name))
+
+    theme_enabled = True
+    if theme_info is not None:
+        theme_enabled = bool(theme_info.get("enabled", True))
+    elif "enabled" in sheet_meta:
+        theme_enabled = bool(sheet_meta.get("enabled", True))
+
+    src_meta = theme_info or sheet_meta or {}
+    theme_slot = str(src_meta.get("time_slot") or "").strip()
+    theme_weekdays = str(src_meta.get("weekdays") or "").strip()
+    global_slot = str((global_settings or {}).get("time_slot") or "0:00-0:00").strip()
+
+    effective_slot = row_slot or theme_slot or global_slot or "0:00-0:00"
+    effective_weekdays = row_weekdays or theme_weekdays or "毎日"
+    effective_topic = row_topic
+
+    if row_min_s is not None:
+        eff_min_s, eff_max_s, eff_iv_str = row_min_s, row_max_s, row_iv_disp
+    elif src_meta.get("min_interval_sec") is not None:
+        eff_min_s = int(src_meta.get("min_interval_sec", 7200))
+        eff_max_s = int(src_meta.get("max_interval_sec", 21600))
+        eff_iv_str = str(src_meta.get("interval_str") or "120〜360分").strip()
+    elif isinstance(global_settings, dict) and "min_interval_sec" in global_settings:
+        eff_min_s = int(global_settings.get("min_interval_sec", 7200))
+        eff_max_s = int(global_settings.get("max_interval_sec", 21600))
+        eff_iv_str = str(global_settings.get("interval_str") or "120〜360分").strip()
+    else:
+        eff_min_s, eff_max_s, eff_iv_str = 7200, 21600, "120〜360分"
+
+    if src_meta.get("post_mode") is not None:
+        eff_mode, eff_mode_str = parse_post_mode(src_meta.get("post_mode"), default=1)
+    elif isinstance(global_settings, dict) and "post_mode" in global_settings:
+        eff_mode, eff_mode_str = parse_post_mode(global_settings.get("post_mode"), default=1)
+    else:
+        eff_mode, eff_mode_str = 1, "1: ランダム"
+
+    if not theme_enabled:
+        return {
+            "theme": row_theme,
+            "topic": effective_topic,
+            "time_slot": effective_slot,
+            "weekdays": effective_weekdays,
+            "interval_str": eff_iv_str,
+            "min_interval_sec": eff_min_s,
+            "max_interval_sec": eff_max_s,
+            "post_mode": eff_mode,
+            "mode_str": eff_mode_str,
+            "theme_enabled": False,
+            "is_eligible_now": False,
+            "block_reason": f"テーマ「{row_theme}」が無効",
+        }
+
+    in_weekdays = is_now_within_weekdays(now_dt, effective_weekdays)
+    if not in_weekdays:
+        return {
+            "theme": row_theme,
+            "topic": effective_topic,
+            "time_slot": effective_slot,
+            "weekdays": effective_weekdays,
+            "interval_str": eff_iv_str,
+            "min_interval_sec": eff_min_s,
+            "max_interval_sec": eff_max_s,
+            "post_mode": eff_mode,
+            "mode_str": eff_mode_str,
+            "theme_enabled": True,
+            "is_eligible_now": False,
+            "block_reason": f"対象曜日外({effective_weekdays})",
+        }
+
+    in_slot = is_now_within_time_slot(now_dt, effective_slot)
+    return {
+        "theme": row_theme,
+        "topic": effective_topic,
+        "time_slot": effective_slot,
+        "weekdays": effective_weekdays,
+        "interval_str": eff_iv_str,
+        "min_interval_sec": eff_min_s,
+        "max_interval_sec": eff_max_s,
+        "post_mode": eff_mode,
+        "mode_str": eff_mode_str,
+        "theme_enabled": True,
+        "is_eligible_now": in_slot,
+        "block_reason": "" if in_slot else f"指定時間外({effective_slot})",
+    }
+
 def ensure_daily_posts_sheet_exists(filepath):
     """
     <アカウント名>.xlsx に「日常ポスト」シートが存在しない場合、
@@ -4040,7 +6174,7 @@ def ensure_daily_posts_sheet_exists(filepath):
         return
     try:
         wb = openpyxl.load_workbook(filepath)
-        has_daily = any(any(k in s for k in ["日常", "あいさつ", "つぶやき", "daily", "Daily"]) for sname in wb.sheetnames for s in [sname])
+        has_daily = any(_is_daily_greeting_sheet(sname, wb[sname]) for sname in wb.sheetnames)
         if not has_daily:
             ws = wb.create_sheet(title="日常ポスト")
             headers = ["枠名", "時間帯", "ポスト文章", "コミュニティまたはトピック", "有効無効", "最終投稿日", "最終投稿日時"]
@@ -4173,13 +6307,7 @@ def ensure_daily_posts_sheet_exists(filepath):
             for txt in n_texts:
                 ws.append(["夜枠", "21:00-23:30", txt, "信太山新地, 大阪求人, 高収入バイト", "無効", "", ""])
 
-            ws.column_dimensions['A'].width = 12
-            ws.column_dimensions['B'].width = 15
-            ws.column_dimensions['C'].width = 65
-            ws.column_dimensions['D'].width = 36
-            ws.column_dimensions['E'].width = 12
-            ws.column_dimensions['F'].width = 14
-            ws.column_dimensions['G'].width = 22
+            style_daily_worksheet(ws)
             wb.save(filepath)
         wb.close()
     except Exception as e:
@@ -4282,7 +6410,7 @@ def get_eligible_daily_post(filepath, cooldown_days=30):
         wb = openpyxl.load_workbook(filepath, data_only=True)
         target_ws = None
         for sname in wb.sheetnames:
-            if any(k in sname for k in ["日常", "あいさつ", "つぶやき", "daily", "Daily"]):
+            if _is_daily_greeting_sheet(sname, wb[sname]):
                 target_ws = wb[sname]
                 break
         if not target_ws:
@@ -4766,108 +6894,225 @@ def _wrap_jp_text_pil(draw, text, font, max_width, max_lines=3):
     return lines
 
 
+def _account_designs_json_path():
+    return os.path.join(BASE_DIR, "account_designs.json")
+
+
+def _extract_design_from_legacy_sheet(ws):
+    extracted = {}
+    for row in ws.iter_rows(values_only=True):
+        if not row or len(row) < 2 or row[0] is None:
+            continue
+        k = str(row[0]).strip()
+        v = "" if row[1] is None else str(row[1]).strip()
+        if not k:
+            continue
+        if "ジャンル" in k and v:
+            extracted["genre"] = v
+        elif "ターゲット" in k and v:
+            extracted["target"] = v
+        elif "口調" in k and v:
+            extracted["tone"] = v
+        elif "悩み" in k and v:
+            extracted["pain"] = v
+        elif ("強み" in k or "ポイント" in k) and v:
+            extracted["benefits"] = v
+        elif ("誘導文" in k or "CTA" in k) and v:
+            extracted["cta"] = v
+        elif "URL" in k:
+            extracted["url"] = v
+        elif "トピック" in k and v:
+            extracted["topic"] = v
+        elif "スタイル" in k and v:
+            extracted["image_style"] = v
+        elif "配色" in k and v:
+            extracted["palette"] = v
+    return extracted
+
+
 def ensure_account_workbook(xlsx_path, account_id):
-    """<account_id>.xlsx が存在しない場合に標準4シート構成で自動作成して開く"""
+    """<account_id>.xlsx が存在しない場合に標準シート構成（基本(テーマ別シート)）で自動作成して開く。不要な『設定』『アカウント設計』『日常ポスト』シートは除去・移行する"""
     if os.path.exists(xlsx_path):
-        return openpyxl.load_workbook(xlsx_path)
+        wb = openpyxl.load_workbook(xlsx_path)
+        changed = False
+        design_sheets = [s for s in wb.sheetnames if "設計" in s]
+        if design_sheets and len(wb.sheetnames) > 1:
+            clean_id = sanitize_account_folder_name(account_id or os.path.splitext(os.path.basename(xlsx_path))[0])
+            migrated = _extract_design_from_legacy_sheet(wb[design_sheets[0]])
+            if migrated and clean_id:
+                try:
+                    jpath = _account_designs_json_path()
+                    store = {}
+                    if os.path.exists(jpath):
+                        with open(jpath, "r", encoding="utf-8") as fj:
+                            store = json.load(fj) or {}
+                    if clean_id not in store:
+                        store[clean_id] = migrated
+                        with open(jpath, "w", encoding="utf-8") as fj:
+                            json.dump(store, fj, ensure_ascii=False, indent=2)
+                except Exception:
+                    pass
+            for ds in design_sheets:
+                if len(wb.sheetnames) > 1 and ds in wb.sheetnames:
+                    del wb[ds]
+                    changed = True
+
+        # 旧「設定」シートがある場合：設定値(モード・間隔)を各テーマシートに引き継いだうえで「設定」シートを削除
+        setting_sheets = [
+            s for s in wb.sheetnames
+            if any(k in s.lower() for k in ["設定", "config", "setting", "基本設定"])
+            and not any(ex in s for ex in ["テーマ", "日常", "投稿", "post", "Post", "リスト"])
+        ]
+        legacy_set = {}
+        if setting_sheets:
+            try:
+                legacy_set = read_account_settings_from_post_file(xlsx_path)
+            except Exception:
+                legacy_set = {}
+
+        theme_sheets = [wb[s] for s in wb.sheetnames if not _is_system_sheet_name(s, wb[s])]
+        if not theme_sheets and setting_sheets:
+            ws_b = _find_theme_sheet_in_wb(wb, theme_name="基本", create_if_missing=True, default_meta={
+                "interval": legacy_set.get("interval_str", "120〜360分"),
+                "post_mode": legacy_set.get("post_mode", 1),
+            })
+            theme_sheets = [ws_b]
+            changed = True
+
+        for ws_t in theme_sheets:
+            rows_t = list(ws_t.iter_rows(values_only=True))
+            hdr_t = _find_post_header_row_in_sheet(rows_t)
+            if hdr_t and hdr_t >= 4 and rows_t:
+                for c_hdr_m in range(1, max(ws_t.max_column, 6) + 1):
+                    c_hdr_val = str(ws_t.cell(row=1, column=c_hdr_m).value or "").strip()
+                    if c_hdr_val == "ツイート間隔":
+                        ws_t.cell(row=1, column=c_hdr_m).value = "ポスト間隔"
+                        changed = True
+                row1_txt = " ".join(str(c or "") for c in (rows_t[0] or []))
+                if ("投稿モード" not in row1_txt and "モード" not in row1_txt) or ("間隔" not in row1_txt):
+                    cur_m = read_sheet_theme_meta(rows_t, hdr_t, ws_t.title)
+                    iv_mig = cur_m["interval_str"]
+                    if "間隔" not in row1_txt and legacy_set.get("interval_str"):
+                        iv_mig = legacy_set["interval_str"]
+                    pm_mig = cur_m["post_mode"]
+                    if ("モード" not in row1_txt) and ("post_mode" in legacy_set):
+                        pm_mig = legacy_set["post_mode"]
+                    _write_sheet_theme_meta(
+                        ws_t,
+                        time_slot=cur_m.get("time_slot", "0:00-0:00"),
+                        weekdays=cur_m.get("weekdays", "毎日"),
+                        interval=iv_mig,
+                        post_mode=pm_mig,
+                        status=cur_m.get("status", "有効"),
+                        memo=cur_m.get("memo", ""),
+                    )
+                    changed = True
+                elif ws_t.freeze_panes != f"A{hdr_t + 1}" or _is_standard_or_empty_fill(ws_t.cell(row=1, column=1)):
+                    style_theme_worksheet(ws_t)
+                    changed = True
+            else:
+                style_theme_worksheet(ws_t)
+
+        for ss in setting_sheets:
+            if len(wb.sheetnames) > 1 and ss in wb.sheetnames:
+                del wb[ss]
+                changed = True
+
+        daily_sheets = [s for s in wb.sheetnames if _is_daily_greeting_sheet(s, wb[s])]
+        if daily_sheets:
+            remaining_non_daily = [s for s in wb.sheetnames if s not in daily_sheets]
+            if not remaining_non_daily:
+                _find_theme_sheet_in_wb(wb, theme_name="基本", create_if_missing=True)
+            for ds_name in daily_sheets:
+                if len(wb.sheetnames) > 1 and ds_name in wb.sheetnames:
+                    del wb[ds_name]
+                    changed = True
+
+        if changed:
+            wb.save(xlsx_path)
+        return wb
+
     wb = openpyxl.Workbook()
-    ws_set = wb.active
-    ws_set.title = "設定"
-    ws_set.append(["ツイート間隔"])
-    ws_set.append(["※指定の範囲内から毎回ランダム"])
-    ws_set.append([120, "分", "〜", 360, "分"])
-    ws_set.append(["ツイート実行時間"])
-    ws_set.append(["(時:分〜時:分)"])
-    ws_set.append(["0:00", "〜", "0:00"])
-    ws_set.append(["モード"])
-    ws_set.append(["(0:上から順, 1:ランダム)"])
-    ws_set.append([1])
-    ws_set.append(["Chromeプロファイル保存パス"])
-    ws_set.append(["(空欄の場合は chrome_profiles/<アカウントID> が自動使用されます)"])
-    ws_set.append([f"chrome_profiles/{account_id}"])
-    ws_set.append(["コミュニティまたはトピック", "信太山新地"])
-
-    ws_posts = wb.create_sheet(title="投稿リスト")
-    ws_posts.append(["ID", "ポスト文章", "コミュニティまたはトピック", "画像ファイルパス", "ステータス", "投稿完了日時", "エラー内容"])
-
-    ws_daily = wb.create_sheet(title="日常ポスト")
-    ws_daily.append(["枠名", "時間帯", "ポスト文章", "有効無効", "最終投稿日", "最終投稿日時"])
-    ws_daily.append(["朝枠", "7:00-9:00", "{おはようございます☀️|良い朝ですね🌿} 今日もマイペースで頑張りましょう！", "有効", "", ""])
+    ws_theme = wb.active
+    ws_theme.title = "基本"
+    _init_theme_sheet_rows(
+        ws_theme,
+        time_slot="0:00-0:00",
+        weekdays="毎日",
+        interval="120〜360分",
+        post_mode=1,
+        status="有効",
+        memo="下のシートを追加・複製するとテーマごとに文章・実行時間・曜日・間隔・モードを分けられます",
+    )
 
     wb.save(xlsx_path)
     return wb
 
 
-def load_account_design_from_xlsx(xlsx_path, fallback_topic=""):
-    """<account_id>.xlsx の「アカウント設計」シートから設計項目を読み込む"""
+def load_account_design_from_xlsx(xlsx_path, fallback_topic="", account_id=""):
+    """アカウント設計プリセットを account_designs.json（互換のため旧シートも参照）から読み込む"""
     default_d = dict(_DESIGN_PRESETS_PY["飛田新地・風景×求人案内"])
     if fallback_topic:
         default_d["topic"] = fallback_topic
-    if not xlsx_path or not os.path.exists(xlsx_path):
-        return default_d
-    try:
-        wb = openpyxl.load_workbook(xlsx_path, data_only=True)
-        design_ws = None
-        for sname in wb.sheetnames:
-            if "設計" in sname:
-                design_ws = wb[sname]
-                break
-        if design_ws:
-            for row in design_ws.iter_rows(values_only=True):
-                if not row or len(row) < 2 or row[0] is None:
-                    continue
-                k = str(row[0]).strip()
-                v = "" if row[1] is None else str(row[1]).strip()
-                if not k:
-                    continue
-                if "ジャンル" in k and v:
-                    default_d["genre"] = v
-                elif "ターゲット" in k and v:
-                    default_d["target"] = v
-                elif "口調" in k and v:
-                    default_d["tone"] = v
-                elif "悩み" in k and v:
-                    default_d["pain"] = v
-                elif ("強み" in k or "ポイント" in k) and v:
-                    default_d["benefits"] = v
-                elif ("誘導文" in k or "CTA" in k) and v:
-                    default_d["cta"] = v
-                elif "URL" in k:
-                    default_d["url"] = v
-                elif "トピック" in k and v:
-                    default_d["topic"] = v
-                elif "スタイル" in k and v:
-                    default_d["image_style"] = v
-                elif "配色" in k and v:
-                    default_d["palette"] = v
-        wb.close()
-    except Exception:
-        pass
+
+    clean_id = sanitize_account_folder_name(account_id or (os.path.splitext(os.path.basename(xlsx_path))[0] if xlsx_path else ""))
+    jpath = _account_designs_json_path()
+    if clean_id and os.path.exists(jpath):
+        try:
+            with open(jpath, "r", encoding="utf-8") as fj:
+                store = json.load(fj) or {}
+            saved = store.get(clean_id)
+            if isinstance(saved, dict) and saved:
+                default_d.update({k: v for k, v in saved.items() if v is not None})
+                return default_d
+        except Exception:
+            pass
+
+    if xlsx_path and os.path.exists(xlsx_path):
+        try:
+            wb = openpyxl.load_workbook(xlsx_path, data_only=True)
+            for sname in wb.sheetnames:
+                if "設計" in sname:
+                    extracted = _extract_design_from_legacy_sheet(wb[sname])
+                    if extracted:
+                        default_d.update(extracted)
+                    break
+            wb.close()
+        except Exception:
+            pass
     return default_d
 
 
 def save_account_design_to_xlsx(xlsx_path, account_id, design_dict):
-    """<account_id>.xlsx の「アカウント設計」シートへ設計項目を保存する"""
-    wb = ensure_account_workbook(xlsx_path, account_id)
-    if "アカウント設計" in wb.sheetnames:
-        ws = wb["アカウント設計"]
-        if ws.max_row >= 1:
-            ws.delete_rows(1, ws.max_row)
-    else:
-        ws = wb.create_sheet(title="アカウント設計")
-    ws.append(["項目", "設定値"])
-    ws.append(["ジャンル", design_dict.get("genre", "")])
-    ws.append(["ターゲット", design_dict.get("target", "")])
-    ws.append(["口調", design_dict.get("tone", "丁寧・誠実")])
-    ws.append(["悩み", design_dict.get("pain", "")])
-    ws.append(["強みポイント", design_dict.get("benefits", "")])
-    ws.append(["誘導文CTA", design_dict.get("cta", "")])
-    ws.append(["誘導URL", design_dict.get("url", "")])
-    ws.append(["トピック", design_dict.get("topic", "")])
-    ws.append(["画像スタイル", design_dict.get("image_style", "自動おまかせ（設計に合わせて最適化）")])
-    ws.append(["配色テーマ", design_dict.get("palette", "提灯アンバー×黒")])
-    wb.save(xlsx_path)
-    wb.close()
+    """アカウント設計プリセットを account_designs.json に保存（Excelに『アカウント設計』シートは作成しない）"""
+    clean_id = sanitize_account_folder_name(account_id or (os.path.splitext(os.path.basename(xlsx_path))[0] if xlsx_path else ""))
+    jpath = _account_designs_json_path()
+    store = {}
+    if os.path.exists(jpath):
+        try:
+            with open(jpath, "r", encoding="utf-8") as fj:
+                store = json.load(fj) or {}
+        except Exception:
+            store = {}
+    if clean_id:
+        store[clean_id] = {
+            "genre": design_dict.get("genre", ""),
+            "target": design_dict.get("target", ""),
+            "tone": design_dict.get("tone", "丁寧・誠実"),
+            "pain": design_dict.get("pain", ""),
+            "benefits": design_dict.get("benefits", ""),
+            "cta": design_dict.get("cta", ""),
+            "url": design_dict.get("url", ""),
+            "topic": design_dict.get("topic", ""),
+            "image_style": design_dict.get("image_style", "自動おまかせ（設計に合わせて最適化）"),
+            "palette": design_dict.get("palette", "提灯アンバー×黒"),
+        }
+        with open(jpath, "w", encoding="utf-8") as fj:
+            json.dump(store, fj, ensure_ascii=False, indent=2)
+
+    if xlsx_path:
+        wb = ensure_account_workbook(xlsx_path, account_id)
+        wb.close()
 
 
 def _normalize_image_style_label_py(raw_style):
@@ -5684,18 +7929,21 @@ class ThreadsPosterGUI:
         self.current_account_name = None
         self.current_profile_dir = None
         self.account_config_path = find_account_file()
+        self.var_selected_main_account = tk.StringVar(value="")
         self.var_auto_loop = tk.BooleanVar(value=True)
         self.var_single_window_rotation = tk.BooleanVar(value=True) # 提案1: 1窓・順番交代ローテーション
         self.var_block_media = tk.BooleanVar(value=True)            # 提案2: 画像・動画通信遮断 (メモリ50-70%削減)
         self.var_stealth_patrol = tk.BooleanVar(value=True)         # 提案新機能1: 投稿前のステルス巡回
         self.var_auto_clean_profile = tk.BooleanVar(value=False)     # ログインセッション保持優先（誤消去防止のため初期値OFF）
         self.var_topic_ab_test = tk.BooleanVar(value=True)           # 提案新機能3: トピックA/Bテスト・自動ローテーション
-        self.var_daily_greeting = tk.BooleanVar(value=True)          # 🌅 朝・昼・夜の日常つぶやき・あいさつ枠自動挿入
 
+        self._watched_excel_mtimes = {}
+        self._excel_poll_pending_mtime = None
         self._setup_ui()
         self.log("[INFO] アプリケーションを起動しました。")
         self.log(f"[INFO] 実行ディレクトリ: {BASE_DIR}")
         self.load_excel_data()
+        self.root.after(2000, self._poll_excel_updates)
 
     def _setup_ui(self):
         header = tk.Frame(self.root, bg="#1a1a1a", pady=12, padx=16)
@@ -5741,6 +7989,9 @@ class ThreadsPosterGUI:
         toolbar2 = tk.Frame(self.root, bg="#121212", pady=2, padx=16)
         toolbar2.pack(fill="x")
 
+        btn_theme_editor = tk.Button(toolbar2, text="🎨 テーマ別 投稿＆画像編集", font=("Segoe UI", 9, "bold"), bg="#db2777", fg="#ffffff", padx=10, pady=4, relief="flat", cursor="hand2", command=self.open_theme_and_post_editor)
+        btn_theme_editor.pack(side="left", padx=3)
+
         btn_design_gen = tk.Button(toolbar2, text="✨ 設計・投稿＆画像自動生成", font=("Segoe UI", 9, "bold"), bg="#059669", fg="#ffffff", padx=10, pady=4, relief="flat", cursor="hand2", command=self.open_account_design_generator)
         btn_design_gen.pack(side="left", padx=3)
 
@@ -5749,9 +8000,6 @@ class ThreadsPosterGUI:
 
         btn_open_posts = tk.Button(toolbar2, text="📊 投稿Excelを開く", font=("Segoe UI", 9), bg="#262626", fg="#ffffff", padx=8, pady=4, relief="flat", cursor="hand2", command=self.open_posts_excel)
         btn_open_posts.pack(side="left", padx=3)
-
-        btn_open_daily = tk.Button(toolbar2, text="🌅 日常ポスト設定", font=("Segoe UI", 9, "bold"), bg="#15803d", fg="#ffffff", padx=8, pady=4, relief="flat", cursor="hand2", command=self.open_daily_posts_excel)
-        btn_open_daily.pack(side="left", padx=3)
 
         btn_open_excel = tk.Button(toolbar2, text="⚙️ アカウントExcel", font=("Segoe UI", 9), bg="#262626", fg="#ffffff", padx=8, pady=4, relief="flat", cursor="hand2", command=self.open_account_excel)
         btn_open_excel.pack(side="left", padx=3)
@@ -5780,9 +8028,28 @@ class ThreadsPosterGUI:
         btn_open_dir = tk.Button(toolbar3, text="📁 フォルダ", font=("Segoe UI", 9), bg="#262626", fg="#ffffff", padx=8, pady=4, relief="flat", cursor="hand2", command=self.open_base_dir)
         btn_open_dir.pack(side="left", padx=3)
 
+        toolbar4 = tk.Frame(self.root, bg="#121212", pady=2, padx=16)
+        toolbar4.pack(fill="x")
+
+        tk.Label(toolbar4, text="📦 PC間アカウント移行・バックアップ:", font=("Segoe UI", 8, "bold"), fg="#a1a1aa", bg="#121212").pack(side="left", padx=(0, 6))
+
+        btn_export_acc = tk.Button(toolbar4, text="📤 アカウント書き出し (.zip)", font=("Segoe UI", 9, "bold"), bg="#0369a1", fg="#ffffff", padx=10, pady=3, relief="flat", cursor="hand2", command=self.open_export_account_dialog)
+        btn_export_acc.pack(side="left", padx=3)
+
+        btn_import_acc = tk.Button(toolbar4, text="📥 アカウント取り込み (.zip)", font=("Segoe UI", 9, "bold"), bg="#7c3aed", fg="#ffffff", padx=10, pady=3, relief="flat", cursor="hand2", command=self.open_import_account_dialog)
+        btn_import_acc.pack(side="left", padx=3)
+
 
         self.info_frame = tk.Frame(self.root, bg="#18181b", padx=14, pady=8, highlightbackground="#27272a", highlightthickness=1)
         self.info_frame.pack(fill="x", padx=16, pady=4)
+
+        sel_bar = tk.Frame(self.info_frame, bg="#18181b")
+        sel_bar.pack(fill="x", pady=(0, 4))
+        tk.Label(sel_bar, text="🎯 操作・表示対象アカウント:", font=("Segoe UI", 9, "bold"), fg="#facc15", bg="#18181b").pack(side="left", padx=(0, 6))
+        self.cmb_main_account = ttk.Combobox(sel_bar, textvariable=self.var_selected_main_account, values=[], state="readonly", width=26)
+        self.cmb_main_account.pack(side="left", padx=(0, 6))
+        self.cmb_main_account.bind("<<ComboboxSelected>>", self._on_main_account_changed)
+        tk.Button(sel_bar, text="📌 このアカウントだけ有効化", font=("Segoe UI", 8, "bold"), bg="#1e3a8a", fg="#bfdbfe", padx=8, pady=2, relief="flat", cursor="hand2", command=self.activate_only_selected_account).pack(side="left")
 
         self.lbl_excel_path = tk.Label(self.info_frame, text="設定ファイル: 読み込み中...", font=("Segoe UI", 9, "bold"), fg="#e4e4e7", bg="#18181b", anchor="w")
         self.lbl_excel_path.pack(fill="x")
@@ -5877,20 +8144,6 @@ class ThreadsPosterGUI:
         )
         self.chk_topic_ab.pack(anchor="w", pady=(3, 0))
 
-        self.chk_daily_greeting = tk.Checkbutton(
-            self.info_frame,
-            text="🌅 【日常つぶやき・あいさつ枠】朝・昼・夕・夜の日常文を優先投稿（スピンタックス自動展開・動的日付差し込み・30日間クールダウン＆ランダム選出で完全凍結防止）",
-            variable=self.var_daily_greeting,
-            bg="#18181b",
-            fg="#fb923c",
-            activebackground="#18181b",
-            activeforeground="#fb923c",
-            selectcolor="#09090b",
-            font=("Segoe UI", 9, "bold"),
-            cursor="hand2"
-        )
-        self.chk_daily_greeting.pack(anchor="w", pady=(3, 0))
-
         log_frame = tk.Frame(self.root, bg="#121212", padx=16, pady=6)
         log_frame.pack(fill="both", expand=True)
 
@@ -5950,12 +8203,67 @@ class ThreadsPosterGUI:
             pass
 
 
-    def load_excel_data(self):
+    def _capture_excel_mtimes(self):
+        snapshot = {}
+        candidates = []
+        if getattr(self, "account_config_path", None):
+            candidates.append(self.account_config_path)
+        try:
+            for fn in os.listdir(BASE_DIR):
+                if fn.lower().endswith(".xlsx") and not fn.startswith("~$"):
+                    candidates.append(os.path.join(BASE_DIR, fn))
+        except Exception:
+            pass
+        for p in candidates:
+            try:
+                if p and os.path.exists(p):
+                    ap = os.path.abspath(p)
+                    st = os.stat(ap)
+                    snapshot[ap] = (round(st.st_mtime, 3), st.st_size)
+            except Exception:
+                pass
+        return snapshot
+
+    def _poll_excel_updates(self):
+        try:
+            current = self._capture_excel_mtimes()
+            if self.is_running:
+                self._watched_excel_mtimes = current
+                self._excel_poll_pending_mtime = None
+            elif current != self._watched_excel_mtimes:
+                # Excelの保存直後の書き込み完了を待つため、2秒間隔で値が安定してから再読み込み
+                if self._excel_poll_pending_mtime != current:
+                    self._excel_poll_pending_mtime = current
+                    self.root.after(600, self._poll_excel_updates)
+                    return
+                self._excel_poll_pending_mtime = None
+                self.log("[INFO] 📂 Excelファイルの更新（上書き保存）を検知しました！最新の内容を自動再読み込みします...")
+                self.load_excel_data()
+            else:
+                self._excel_poll_pending_mtime = None
+        except Exception:
+            pass
+        try:
+            self.root.after(2000, self._poll_excel_updates)
+        except Exception:
+            pass
+
+    def load_excel_data(self, silent=False):
+        try:
+            self._load_excel_data_impl(silent=silent)
+        finally:
+            try:
+                self._watched_excel_mtimes = self._capture_excel_mtimes()
+            except Exception:
+                pass
+
+    def _load_excel_data_impl(self, silent=False):
         if not os.path.exists(self.account_config_path):
             self.lbl_excel_path.config(text=f"⚠️ 設定ファイルが見つかりません: {os.path.basename(self.account_config_path)}", fg="#f87171")
             self.lbl_account_info.config(text="同フォルダに「アカウント情報.xlsx」を配置してください。")
             self.lbl_posts_info.config(text="―")
-            self.log(f"[WARN] '{self.account_config_path}' が見つかりません。")
+            if not silent:
+                self.log(f"[WARN] '{self.account_config_path}' が見つかりません。")
             return
 
         self.lbl_excel_path.config(text=f"📊 設定ファイル: {os.path.basename(self.account_config_path)} (読み込みOK)", fg="#34d399")
@@ -5963,11 +8271,12 @@ class ThreadsPosterGUI:
 
         # 【起動時全自動】アカウント情報.xlsx の全アカウントに対して5大強制ログアウト対策プロファイルを自動構築
         try:
-            bootstrapped = auto_bootstrap_countermeasure_profiles(accounts_data, log_func=self.log)
-            if bootstrapped > 0:
+            bootstrapped = auto_bootstrap_countermeasure_profiles(accounts_data, log_func=(None if silent else self.log))
+            if bootstrapped > 0 and not silent:
                 self.log(f"[SUCCESS] 🛡️ 起動時チェック: {bootstrapped}件のプロファイルに対策（端末指紋＋周辺Cookie永続化）を自動適用しました！")
         except Exception as _e_boot:
-            self.log(f"[WARN] 対策プロファイル自動構築エラー: {_e_boot}")
+            if not silent:
+                self.log(f"[WARN] 対策プロファイル自動構築エラー: {_e_boot}")
 
         valid_accounts = []
         disabled_accounts = []
@@ -5995,6 +8304,7 @@ class ThreadsPosterGUI:
                 valid_accounts.append(acc)
 
         if not valid_accounts:
+            self.cmb_main_account["values"] = []
             if disabled_accounts:
                 self.lbl_account_info.config(text=f"⚠️ {len(disabled_accounts)}件のアカウントが「無効」に設定されています", fg="#fbbf24")
                 self.lbl_posts_info.config(text="―")
@@ -6005,46 +8315,104 @@ class ThreadsPosterGUI:
                 self.log(f"[WARN] ⚠️ 『{os.path.basename(self.account_config_path)}』に有効なアカウントが検出されませんでした。ExcelでEnterキーを押してセル入力を確定し、上書き保存（Ctrl+S）してから「🔄 Excel再読込」を押してください。")
             return
 
-        first_acc = valid_accounts[0]
+        combo_items = []
+        for a in valid_accounts:
+            aid = str(a.get("アカウントID") or a.get("アカウント名") or "").strip().lstrip("@")
+            if aid:
+                combo_items.append(f"@{aid}")
+        self.cmb_main_account["values"] = combo_items
+
+        cur_sel_norm = str(self.var_selected_main_account.get() or "").strip().lstrip("@").lower()
+        first_acc = None
+        if cur_sel_norm:
+            for a in valid_accounts:
+                aid = str(a.get("アカウントID") or a.get("アカウント名") or "").strip().lstrip("@")
+                if aid.lower() == cur_sel_norm:
+                    first_acc = a
+                    break
+        if first_acc is None:
+            first_acc = valid_accounts[0]
+
         first_id = str(first_acc.get("アカウントID") or first_acc.get("アカウント名") or "").strip().lstrip("@")
-        first_prof = first_id
-        first_pw = str(first_acc.get("パスワード") or "").strip()
-        pw_info = "🔑 PW登録済" if first_pw else "⚠️ PW未登録"
-        dis_text = f" | ⚠️ 停止中: {len(disabled_accounts)}件 (@{', @'.join(disabled_accounts)})" if disabled_accounts else ""
-        self.lbl_account_info.config(
-            text=f"👤 有効: {len(valid_accounts)}件{dis_text} | メインID: @{first_id} ({pw_info}) | プロファイル: {first_prof}",
-            fg="#e4e4e7"
-        )
-        self.log(f"[INFO] アカウント情報読み込み完了: {len(valid_accounts)}件のアカウント設定を検出 (ID: @{first_id}, パスワード: {'設定済 (***)' if first_pw else '未設定'}, プロファイル: {first_prof})")
+        self.var_selected_main_account.set(f"@{first_id}")
 
         posts_file = self._find_posts_file(first_id)
+        custom_settings = read_account_settings_from_post_file(posts_file) if (posts_file and os.path.exists(posts_file)) else {}
+        _, _, first_prof, _ = _resolve_profile_dir_for_account(first_acc, custom_settings=custom_settings)
+
+        first_pw = str(first_acc.get("パスワード") or "").strip()
+        pw_info = "🔑 PW登録済" if first_pw else "⚠️ PW未登録"
+        other_active = [
+            f"@{str(a.get('アカウントID') or a.get('アカウント名') or '').strip().lstrip('@')}"
+            for a in valid_accounts
+            if str(a.get("アカウントID") or a.get("アカウント名") or "").strip().lstrip("@").lower() != first_id.lower()
+        ]
+        other_txt = f" | 他の有効アカウント({len(other_active)}件): {', '.join(other_active[:3])}" if other_active else ""
+        dis_text = f" | 停止中: {len(disabled_accounts)}件" if disabled_accounts else ""
+        self.lbl_account_info.config(
+            text=f"👤 表示中: @{first_id} ({pw_info}) | 実プロファイル: chrome_profiles/{first_prof}{other_txt}{dis_text}",
+            fg="#e4e4e7"
+        )
+        if not silent:
+            self.log(f"[INFO] アカウント情報読み込み完了: 有効 {len(valid_accounts)}件 | 選択中: @{first_id} (プロファイル: chrome_profiles/{first_prof})")
+            if first_prof.lower() != first_id.lower():
+                self.log(f"[WARN] ⚠️ @{first_id} のプロファイル参照先が 'chrome_profiles/{first_prof}' になっています（アカウント情報.xlsx「プロファイル名」または投稿Excel「設定」をご確認ください）。")
+
         if not posts_file or not os.path.exists(posts_file):
             self.lbl_posts_info.config(text=f"⚠️ 投稿ファイル '{first_id}.xlsx' が見つかりません", fg="#fbbf24")
-            self.log(f"[WARN] 投稿データファイル '{first_id}.xlsx' が見つかりません。")
+            if not silent:
+                self.log(f"[WARN] 投稿データファイル '{first_id}.xlsx' が見つかりません。")
             return
 
+        if posts_file and os.path.exists(posts_file):
+            try:
+                _wb_mig = ensure_account_workbook(posts_file, first_id)
+                _wb_mig.close()
+            except Exception:
+                pass
+
         posts = read_excel_records(posts_file)
+        theme_map = read_theme_settings_from_xlsx(posts_file)
+        for t_info in theme_map.values():
+            if t_info.get("name"):
+                get_account_images_dir(first_id, create=True, theme_name=t_info["name"])
+        for p_it in posts:
+            t_nm = self._extract_theme_name(p_it)
+            if t_nm:
+                get_account_images_dir(first_id, create=True, theme_name=t_nm)
+
         unposted = [p for p in posts if self._is_unposted_item(p)]
         completed = [p for p in posts if "完了" in str(p.get("ステータス", ""))]
 
-        custom_settings = read_account_settings_from_post_file(posts_file)
-        interval_txt = custom_settings.get("interval_str", "")
-        mode_val = custom_settings.get("post_mode", 1)
-        try:
-            mode_val = int(mode_val)
-        except Exception:
-            mode_val = 1
-        mode_txt = "ランダム" if mode_val == 1 else "上から順"
-        time_txt = custom_settings.get("time_slot", "0:00-0:00")
-        prof_txt = f"chrome_profiles/{first_id}"
+        theme_iv_list = [str(t.get("interval_str") or "").strip() for t in theme_map.values() if t.get("interval_str")]
+        if theme_iv_list:
+            uniq_iv = list(dict.fromkeys(theme_iv_list))
+            interval_txt = uniq_iv[0] if len(uniq_iv) == 1 else f"テーマ別 ({', '.join(uniq_iv[:2])})"
+        else:
+            interval_txt = custom_settings.get("interval_str", "")
 
+        theme_md_list = [str(t.get("mode_str") or "").strip() for t in theme_map.values() if t.get("mode_str")]
+        if theme_md_list:
+            uniq_md = list(dict.fromkeys(theme_md_list))
+            mode_txt = uniq_md[0] if len(uniq_md) == 1 else "テーマ別設定"
+        else:
+            mode_val = custom_settings.get("post_mode", 1)
+            try:
+                mode_val = int(mode_val)
+            except Exception:
+                mode_val = 1
+            mode_txt = "ランダム" if mode_val == 1 else "上から順"
+        prof_txt = f"chrome_profiles/{first_prof}"
+
+        theme_names_disp = [str(t.get("name") or "").strip() for t in theme_map.values() if str(t.get("name") or "").strip()]
+        theme_names_txt = ", ".join(theme_names_disp) if theme_names_disp else "基本"
         setting_parts = []
+        if theme_map:
+            setting_parts.append(f"テーマ: {theme_names_txt} ({len(theme_map)}種)")
         if interval_txt:
             setting_parts.append(f"間隔: {interval_txt}")
         if mode_txt:
             setting_parts.append(f"モード: {mode_txt}")
-        if time_txt and time_txt not in ["0:00-0:00", "0-24"]:
-            setting_parts.append(f"時間: {time_txt}")
         if prof_txt:
             setting_parts.append(f"プロファイル: {prof_txt}")
         setting_disp = (" | " + " / ".join(setting_parts)) if setting_parts else ""
@@ -6053,42 +8421,97 @@ class ThreadsPosterGUI:
             text=f"📝 投稿ファイル: {os.path.basename(posts_file)} (全 {len(posts)} 件 | 未投稿: {len(unposted)} 件 | 投稿完了: {len(completed)} 件){setting_disp}",
             fg="#38bdf8"
         )
-        self.log(f"[INFO] 投稿リスト '{os.path.basename(posts_file)}' 読み込み完了: 未投稿 {len(unposted)} 件")
-        if interval_txt or mode_txt:
-            self.log(f"[INFO] [{first_id}] {os.path.basename(posts_file)} から設定を適用: 間隔={interval_txt or 'デフォルト'}, モード={mode_txt}, プロファイル={prof_txt}")
+        if not silent:
+            self.log(f"[INFO] 投稿ファイル '{os.path.basename(posts_file)}' 読み込み完了: 未投稿 {len(unposted)} 件 / テーマシート({len(theme_map)}種): [{theme_names_txt}]")
+            if interval_txt or mode_txt:
+                self.log(f"[INFO] [{first_id}] {os.path.basename(posts_file)} から設定を適用: 間隔={interval_txt or 'デフォルト'}, モード={mode_txt}, プロファイル={prof_txt}")
 
-        for i, p_item in enumerate(unposted[:2], 1):
-            text_preview = self._extract_post_text(p_item)
-            short_txt = (text_preview[:35] + "...") if len(text_preview) > 35 else text_preview
-            raw_img = self._extract_raw_image(p_item)
-            resolved_img = resolve_image_path(raw_img, text_preview, account_name=first_id)
-            img_info = f"画像: {os.path.basename(resolved_img)}" if resolved_img else "画像なし"
-            self.log(f"[INFO] プレビュー#{i}: [ポスト文章] {short_txt} | [{img_info}]")
+            for i, p_item in enumerate(unposted[:2], 1):
+                text_preview = self._extract_post_text(p_item)
+                short_txt = (text_preview[:35] + "...") if len(text_preview) > 35 else text_preview
+                p_theme = self._extract_theme_name(p_item)
+                raw_img = self._extract_raw_image(p_item)
+                resolved_img = resolve_image_path(raw_img, text_preview, account_name=first_id, theme_name=p_theme)
+                img_info = f"画像: {os.path.basename(resolved_img)}" if resolved_img else "画像なし"
+                theme_info = f" | テーマ: {p_theme}" if p_theme else ""
+                self.log(f"[INFO] プレビュー#{i}: [ポスト文章] {short_txt}{theme_info} | [{img_info}]")
+
+    def _on_main_account_changed(self, event=None):
+        self.load_excel_data()
+
+    def _get_selected_account_record(self, active_accounts=None):
+        if active_accounts is None:
+            all_accounts = read_excel_records(self.account_config_path) if os.path.exists(self.account_config_path) else []
+            active_accounts = []
+            for acc in all_accounts:
+                acc_id = str(acc.get("アカウントID") or acc.get("アカウント名") or acc.get("アカウント") or "").strip()
+                if not acc_id or acc_id.lower() == "nan":
+                    continue
+                status_val = str(acc.get("有効/無効") or acc.get("有効無効") or acc.get("ステータス") or "").strip()
+                if status_val not in ["無効", "停止", "OFF", "off", "0", "false", "停止 (要電話番号認証)"]:
+                    active_accounts.append(acc)
+            if not active_accounts:
+                active_accounts = [
+                    acc for acc in all_accounts
+                    if str(acc.get("アカウントID") or acc.get("アカウント名") or "").strip() != ""
+                ]
+        if not active_accounts:
+            return None
+        cur_sel_norm = str(self.var_selected_main_account.get() or "").strip().lstrip("@").lower()
+        if cur_sel_norm:
+            for acc in active_accounts:
+                aid = str(acc.get("アカウントID") or acc.get("アカウント名") or "").strip().lstrip("@").lower()
+                if aid == cur_sel_norm:
+                    return acc
+        return active_accounts[0]
+
+    def activate_only_selected_account(self):
+        """選択中のアカウントだけを『有効』にし、他のアカウントを『無効』にする"""
+        if not os.path.exists(self.account_config_path):
+            messagebox.showwarning("警告", "アカウント情報.xlsxが見つかりません。")
+            return
+        sel = self._get_selected_account_record()
+        if not sel:
+            messagebox.showwarning("警告", "対象のアカウントが見つかりません。")
+            return
+        clean_id = str(sel.get("アカウントID") or sel.get("アカウント名") or "").strip().lstrip("@")
+        if not messagebox.askyesno(
+            "選択アカウントのみ有効化",
+            f"「アカウント情報.xlsx」上で @{clean_id} のみを『有効』にし、他のアカウントをすべて『無効』にしますか？\n\n"
+            "（※行データは削除されません。別PC移行後に取り込んだアカウントだけ動かしたい場合に便利です）"
+        ):
+            return
+        _disable_other_accounts_in_excel(self.account_config_path, [clean_id], log_func=self.log)
+        self.var_selected_main_account.set(f"@{clean_id}")
+        self.load_excel_data()
 
     def _find_posts_file(self, account_id):
         clean_id = str(account_id or "").strip().lstrip("@")
         candidates = [
             os.path.join(BASE_DIR, f"{clean_id}.xlsx"),
+            os.path.join(BASE_DIR, f"@{clean_id}.xlsx"),
             os.path.join(os.getcwd(), f"{clean_id}.xlsx"),
         ]
         for c in candidates:
             if os.path.exists(c):
                 return c
+        try:
+            for fn in os.listdir(BASE_DIR):
+                if fn.lower().endswith(".xlsx") and not fn.startswith("~$") and clean_id.lower() in fn.lower():
+                    if not any(k in fn for k in ["アカウント情報", "account_info", "アカウント"]):
+                        return os.path.join(BASE_DIR, fn)
+        except Exception:
+            pass
         fallback_main = os.path.join(BASE_DIR, "threads_main_account.xlsx")
         if os.path.exists(fallback_main):
             try:
                 import shutil
                 target_dest = os.path.join(BASE_DIR, f"{clean_id}.xlsx")
                 shutil.copyfile(fallback_main, target_dest)
+                _sync_posts_excel_profile_path(target_dest, clean_id, log_func=self.log)
                 return target_dest
             except Exception:
                 return fallback_main
-        try:
-            for f in os.listdir(BASE_DIR):
-                if f.endswith(".xlsx") and not ("アカウント情報" in f or "account_info" in f):
-                    return os.path.join(BASE_DIR, f)
-        except Exception:
-            pass
         return candidates[0]
 
     def test_session_id_action(self):
@@ -6097,13 +8520,10 @@ class ThreadsPosterGUI:
             messagebox.showerror("エラー", f"'{self.account_config_path}' が見つかりません。")
             return
         
-        all_accounts = read_excel_records(self.account_config_path)
-        active_accounts = [acc for acc in all_accounts if str(acc.get("アカウントID") or acc.get("アカウント名") or "").strip() != ""]
-        if not active_accounts:
+        first_acc = self._get_selected_account_record()
+        if not first_acc:
             messagebox.showwarning("警告", "アカウント情報.xlsx にアカウントが見つかりません。")
             return
-
-        first_acc = active_accounts[0]
         curr_id = str(first_acc.get("アカウントID") or first_acc.get("アカウント名") or "").strip()
         raw_token = str(first_acc.get("auth_token") or first_acc.get("Authトークン_sessionid") or first_acc.get("sessionid") or "").strip()
         
@@ -6184,6 +8604,36 @@ class ThreadsPosterGUI:
                         return val
         return ""
 
+    def _extract_theme_name(self, post_item):
+        if not isinstance(post_item, dict):
+            return ""
+        for k in ["テーマ", "テーマ名", "theme", "カテゴリ", "カテゴリー"]:
+            if k in post_item and post_item[k] is not None:
+                val = str(post_item[k]).strip()
+                if val and val.lower() not in ["none", "nan"]:
+                    return val
+        return ""
+
+    def _extract_time_slot(self, post_item):
+        if not isinstance(post_item, dict):
+            return ""
+        for k in ["実行時間", "時間帯", "投稿時間帯", "配信時間帯", "時間枠", "time_slot"]:
+            if k in post_item and post_item[k] is not None:
+                val = str(post_item[k]).strip()
+                if val and val.lower() not in ["none", "nan"]:
+                    return val
+        return ""
+
+    def _extract_weekdays(self, post_item):
+        if not isinstance(post_item, dict):
+            return ""
+        for k in ["曜日", "対象曜日", "weekdays", "weekday"]:
+            if k in post_item and post_item[k] is not None:
+                val = str(post_item[k]).strip()
+                if val and val.lower() not in ["none", "nan"]:
+                    return val
+        return ""
+
 
     def _is_unposted_item(self, post_item):
         st = str(post_item.get("ステータス", "")).strip()
@@ -6226,11 +8676,295 @@ class ThreadsPosterGUI:
         except Exception as e:
             messagebox.showerror("エラー", f"プロファイル同期エラー: {e}")
 
+    def open_export_account_dialog(self):
+        """アカウントごとにセッション・プロファイル・設定・投稿Excel・画像を1つのZIPに書き出し"""
+        if not os.path.exists(self.account_config_path):
+            messagebox.showwarning("警告", "アカウント情報.xlsxが見つかりません。")
+            return
+
+        all_accounts = read_excel_records(self.account_config_path)
+        valid_records = [
+            acc for acc in all_accounts
+            if str(acc.get("アカウントID") or acc.get("アカウント名") or acc.get("アカウント") or "").strip() not in ("", "nan", "None")
+        ]
+        if not valid_records:
+            messagebox.showwarning("警告", "書き出し可能なアカウントがアカウント情報.xlsxに見つかりません。")
+            return
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title("📤 アカウントごとに書き出し（PC間移行用パッケージ）")
+        dialog.geometry("680x560")
+        dialog.minsize(560, 480)
+        dialog.resizable(True, True)
+        dialog.configure(bg="#18181b")
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        hdr = tk.Frame(dialog, bg="#09090b", padx=16, pady=12)
+        hdr.pack(side="top", fill="x")
+        tk.Label(hdr, text="📤 アカウント書き出し（セッション・設定・投稿Excel・画像）", font=("Segoe UI", 11, "bold"), fg="#ffffff", bg="#09090b").pack(anchor="w")
+        tk.Label(hdr, text="別PCへ移行したいアカウントを選択すると、ログイン済みCookieを含むZIPを作成します", font=("Segoe UI", 8), fg="#94a3b8", bg="#09090b").pack(anchor="w", pady=(2, 0))
+
+        # 下部アクションバー＆オプションを先に side="bottom" で固定配置（リストが画面を押し出さないようにする）
+        btm = tk.Frame(dialog, bg="#09090b", padx=16, pady=12)
+        btm.pack(side="bottom", fill="x")
+
+        opt_frame = tk.Frame(dialog, bg="#18181b", padx=16, pady=6)
+        opt_frame.pack(side="bottom", fill="x")
+
+        list_frame = tk.Frame(dialog, bg="#18181b", padx=16, pady=8)
+        list_frame.pack(side="top", fill="both", expand=True)
+
+        tk.Label(list_frame, text="書き出すアカウントを選択（チェックを入れたアカウントごとにZIPを作成）:", font=("Segoe UI", 9, "bold"), fg="#e4e4e7", bg="#18181b").pack(anchor="w", pady=(0, 6))
+
+        canvas = tk.Canvas(list_frame, height=180, bg="#0f172a", highlightthickness=1, highlightbackground="#334155")
+        scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=canvas.yview)
+        inner_list = tk.Frame(canvas, bg="#0f172a", padx=8, pady=6)
+        inner_list.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas_win = canvas.create_window((0, 0), window=inner_list, anchor="nw")
+        canvas.bind("<Configure>", lambda e: canvas.itemconfigure(canvas_win, width=max(e.width - 4, 420)))
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        def _on_mousewheel(event):
+            try:
+                canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+            except Exception:
+                pass
+        canvas.bind("<MouseWheel>", _on_mousewheel)
+        inner_list.bind("<MouseWheel>", _on_mousewheel)
+
+        acc_vars = []
+        for idx, acc in enumerate(valid_records):
+            raw_id, clean_id, prof_name, prof_dir = _resolve_profile_dir_for_account(acc)
+            p_file = self._find_posts_file(clean_id)
+            has_ps = os.path.exists(os.path.join(prof_dir, "portable_session.json")) or os.path.exists(os.path.join(prof_dir, "cookies.json"))
+            has_tok = len(str(acc.get("auth_token") or acc.get("sessionid") or "").strip()) > 15
+            sess_badge = "✅ セッション保存済" if (has_ps or has_tok) else "⚠️ セッション未保存（推奨: 自動抽出ON）"
+            posts_badge = f"📊 {os.path.basename(p_file)}" if (p_file and os.path.exists(p_file)) else "📊 投稿Excelなし"
+
+            var_chk = tk.BooleanVar(value=(idx == 0))
+            acc_vars.append((var_chk, acc))
+            row_f = tk.Frame(inner_list, bg="#0f172a", pady=3)
+            row_f.pack(fill="x", anchor="w")
+            chk = tk.Checkbutton(
+                row_f,
+                text=f"@{clean_id}   [{sess_badge}]   [{posts_badge}]",
+                variable=var_chk,
+                bg="#0f172a", fg="#e2e8f0", selectcolor="#1e293b",
+                activebackground="#0f172a", activeforeground="#ffffff",
+                font=("Segoe UI", 9), cursor="hand2"
+            )
+            chk.pack(anchor="w")
+            chk.bind("<MouseWheel>", _on_mousewheel)
+
+        btn_sel_row = tk.Frame(opt_frame, bg="#18181b")
+        btn_sel_row.pack(fill="x", pady=(0, 6))
+        tk.Button(btn_sel_row, text="全選択", bg="#27272a", fg="#ffffff", font=("Segoe UI", 8), padx=8, pady=2, relief="flat", cursor="hand2", command=lambda: [v.set(True) for v, _ in acc_vars]).pack(side="left", padx=(0, 6))
+        tk.Button(btn_sel_row, text="全解除", bg="#27272a", fg="#ffffff", font=("Segoe UI", 8), padx=8, pady=2, relief="flat", cursor="hand2", command=lambda: [v.set(False) for v, _ in acc_vars]).pack(side="left")
+
+        var_extract_live = tk.BooleanVar(value=True)
+        tk.Checkbutton(
+            opt_frame,
+            text="🔐 書き出し前にChromeプロファイルから最新Cookie/セッションを自動抽出する（portable_session未作成時）",
+            variable=var_extract_live,
+            bg="#18181b", fg="#38bdf8", selectcolor="#09090b",
+            activebackground="#18181b", activeforeground="#38bdf8",
+            font=("Segoe UI", 8, "bold"), cursor="hand2",
+            wraplength=620, justify="left"
+        ).pack(anchor="w")
+
+        def _do_export():
+            selected = [acc for v, acc in acc_vars if v.get()]
+            if not selected:
+                messagebox.showwarning("未選択", "書き出すアカウントを1つ以上選択してください。", parent=dialog)
+                return
+
+            date_tag = datetime.now().strftime("%Y%m%d_%H%M")
+            save_targets = []
+            if len(selected) == 1:
+                _, clean_id, _, _ = _resolve_profile_dir_for_account(selected[0])
+                default_name = f"ThreadsAccount_{clean_id}_{date_tag}.zip"
+                dest_zip = filedialog.asksaveasfilename(
+                    title="アカウント書き出し先を選択",
+                    initialdir=BASE_DIR,
+                    initialfile=default_name,
+                    defaultextension=".zip",
+                    filetypes=[("ZIP Archive", "*.zip")],
+                    parent=dialog
+                )
+                if not dest_zip:
+                    return
+                save_targets.append((selected[0], dest_zip))
+            else:
+                dest_dir = filedialog.askdirectory(
+                    title=f"{len(selected)}アカウント分のZIP保存先フォルダを選択",
+                    initialdir=BASE_DIR,
+                    parent=dialog
+                )
+                if not dest_dir:
+                    return
+                for acc in selected:
+                    _, clean_id, _, _ = _resolve_profile_dir_for_account(acc)
+                    save_targets.append((acc, os.path.join(dest_dir, f"ThreadsAccount_{clean_id}_{date_tag}.zip")))
+
+            extract_needed = var_extract_live.get()
+            dialog.destroy()
+
+            def _export_worker():
+                exported_msgs = []
+                for acc, zpath in save_targets:
+                    raw_id, clean_id, prof_name, prof_dir = _resolve_profile_dir_for_account(acc)
+                    pfile = self._find_posts_file(clean_id)
+                    p_json = os.path.join(prof_dir, "portable_session.json")
+                    has_ps_now = os.path.exists(p_json) and os.path.getsize(p_json) > 10
+                    if extract_needed and not has_ps_now and os.path.exists(prof_dir):
+                        try:
+                            from playwright.sync_api import sync_playwright
+                            self.log(f"[*] [@{clean_id}] Chromeプロファイルから最新セッションCookieを抽出中...")
+                            with sync_playwright() as p:
+                                ctx = safe_launch_persistent_context(p, prof_dir, headless=True, log_func=self.log)
+                                try:
+                                    pg = ctx.pages[0] if ctx.pages else ctx.new_page()
+                                    pg.goto("https://www.threads.net/", wait_until="domcontentloaded", timeout=20000)
+                                    time.sleep(1.5)
+                                except Exception:
+                                    pass
+                                save_portable_session_file(ctx, prof_dir, raw_id, log_func=self.log)
+                                save_context_cookies_to_excel(ctx, self.account_config_path, raw_id, log_func=self.log)
+                                try:
+                                    ctx.close()
+                                except Exception:
+                                    pass
+                        except Exception as ex_ext:
+                            self.log(f"[WARN] [@{clean_id}] セッション事前抽出スキップ: {ex_ext}")
+
+                    ok, info = export_account_package(acc, zpath, base_dir=BASE_DIR, posts_file=pfile, log_func=self.log)
+                    if ok:
+                        kb = max(1, int(info["zip_size"] / 1024))
+                        sess_txt = f"セッション済(Cookie:{info['cookie_count']}件)" if info["has_session"] else "セッション未取得"
+                        msg = f"@{clean_id}: {os.path.basename(zpath)} ({kb}KB / {sess_txt} / 投稿Excel:{'有' if info['posts_included'] else '無'} / 画像:{info['image_count']}件)"
+                        exported_msgs.append(msg)
+                        self.log(f"[SUCCESS] 📤 アカウント書き出し完了 -> {msg}")
+                    else:
+                        self.log(f"[ERROR] 📤 @{clean_id} 書き出し失敗: {info.get('error')}")
+
+                if exported_msgs:
+                    summary = "\n".join(exported_msgs)
+                    self.root.after(0, lambda: messagebox.showinfo(
+                        "アカウント書き出し完了",
+                        f"以下のアカウントをZIPに書き出しました！\n別PCでは「📥 アカウント取り込み」から読み込んでください。\n\n{summary}"
+                    ))
+
+            threading.Thread(target=_export_worker, daemon=True).start()
+
+        tk.Button(btm, text="📤 選択アカウントを書き出し (.zip)", font=("Segoe UI", 10, "bold"), bg="#0369a1", fg="#ffffff", padx=14, pady=6, relief="flat", cursor="hand2", command=_do_export).pack(side="left")
+        tk.Button(btm, text="キャンセル", font=("Segoe UI", 9), bg="#27272a", fg="#ffffff", padx=12, pady=6, relief="flat", cursor="hand2", command=dialog.destroy).pack(side="right")
+
+    def open_import_account_dialog(self):
+        """書き出したアカウントパッケージ(.zip)を取り込み、別PCへセッション・設定・投稿Excel・画像を復元"""
+        zip_paths = filedialog.askopenfilenames(
+            title="取り込むアカウント書き出しファイル (.zip) を選択（複数可）",
+            initialdir=BASE_DIR,
+            filetypes=[("Account Package ZIP", "*.zip"), ("All Files", "*.*")]
+        )
+        if not zip_paths:
+            return
+
+        previews = []
+        invalid_files = []
+        for zp in zip_paths:
+            man = inspect_account_package(zp)
+            if not man:
+                invalid_files.append(os.path.basename(zp))
+            else:
+                previews.append((zp, man))
+
+        if invalid_files and not previews:
+            messagebox.showerror("エラー", f"アカウント書き出しZIPではないファイルが選択されました:\n" + "\n".join(invalid_files))
+            return
+
+        preview_lines = []
+        has_existing_posts = False
+        for _, man in previews:
+            cid = man.get("clean_id") or man.get("account_id")
+            pf = man.get("posts_filename") or ""
+            if pf and os.path.exists(os.path.join(BASE_DIR, pf)):
+                has_existing_posts = True
+            sess_txt = "セッション有(PC間再バインド対応)" if man.get("has_portable_session") else "セッションなし"
+            preview_lines.append(f"• @{cid} （{sess_txt} / 投稿Excel: {pf or 'なし'}）")
+
+        confirm_msg = "以下のアカウントを取り込みますか？\n\n" + "\n".join(preview_lines)
+        confirm_msg += "\n\n※ アカウント情報.xlsx に設定が自動追加（既存IDは更新）され、ログインセッションも自動復元されます。"
+        if not messagebox.askyesno("アカウント取り込み確認", confirm_msg):
+            return
+
+        overwrite_posts = True
+        if has_existing_posts:
+            overwrite_posts = messagebox.askyesno(
+                "既存の投稿Excelの上書き確認",
+                "同じ名前の投稿Excelファイル（例: <アカウントID>.xlsx）が既にこのフォルダにあります。\n\n投稿ExcelもZIP内のデータで上書きしますか？\n（「いいえ」を選ぶと現在の投稿Excelを残したまま、アカウント設定とログインセッションだけ取り込みます）"
+            )
+
+        results = []
+        imported_cids = []
+        for zp, _ in previews:
+            ok, info = import_account_package(
+                zp,
+                base_dir=BASE_DIR,
+                account_config_path=self.account_config_path,
+                overwrite_posts=overwrite_posts,
+                log_func=self.log
+            )
+            if ok:
+                cid = info.get("clean_id")
+                if cid:
+                    imported_cids.append(cid)
+                sess_label = "セッション復元準備OK" if info.get("has_portable_session") else "セッションなし"
+                posts_label = info.get("posts_restored") or ("維持/なし")
+                line = f"@{cid}: {sess_label} / 投稿Excel: {posts_label} / 画像: {info.get('images_restored', 0)}件"
+                results.append(line)
+                self.log(f"[SUCCESS] 📥 アカウント取り込み完了 -> {line}")
+            else:
+                self.log(f"[ERROR] 📥 取り込み失敗 ({os.path.basename(zp)}): {info.get('error')}")
+
+        if imported_cids:
+            self.var_selected_main_account.set(f"@{imported_cids[-1]}")
+            try:
+                all_after = read_excel_records(self.account_config_path)
+                imported_lower = {c.lower() for c in imported_cids}
+                other_enabled = []
+                for a in all_after:
+                    aid = str(a.get("アカウントID") or a.get("アカウント名") or "").strip().lstrip("@")
+                    st = str(a.get("有効/無効") or a.get("有効無効") or a.get("ステータス") or "").strip()
+                    if aid and aid.lower() not in imported_lower and st not in ["無効", "停止", "OFF", "off", "0", "false", "停止 (要電話番号認証)"]:
+                        other_enabled.append(aid)
+                if other_enabled:
+                    keep_disp = ", ".join([f"@{c}" for c in imported_cids])
+                    other_disp = ", ".join([f"@{o}" for o in other_enabled[:5]]) + (" 等" if len(other_enabled) > 5 else "")
+                    if messagebox.askyesno(
+                        "他アカウントの無効化確認",
+                        f"「アカウント情報.xlsx」に他の既存アカウント（{other_disp}）が『有効』として残っています。\n\n"
+                        f"今回取り込んだアカウント（{keep_disp}）だけを起動・投稿対象にするため、他のアカウントを『無効』にしますか？\n"
+                        "（※「はい」を選ぶと別アカウントのプロファイルが誤って起動するのを防げます）"
+                    ):
+                        _disable_other_accounts_in_excel(self.account_config_path, imported_cids, log_func=self.log)
+            except Exception:
+                pass
+
+        self.load_excel_data()
+        if results:
+            messagebox.showinfo(
+                "アカウント取り込み完了",
+                "アカウントの取り込みが完了しました！\nそのまま「⚡ セッションテスト」または「▶ 自動投稿を開始」を実行できます。\n\n" + "\n".join(results)
+            )
+
     def open_bulk_post_manager(self):
-        """【EXE対応】アカウント選択、既存ツイートの全件削除、新規100件一括登録GUIダイアログ"""
+        """【EXE対応】アカウント・テーマ選択、既存ツイートの全件削除、新規100件一括登録GUIダイアログ"""
         all_accounts = read_excel_records(self.account_config_path)
         valid_accounts = [
-            str(acc.get("アカウントID") or acc.get("アカウント名") or "").strip()
+            str(acc.get("アカウントID") or acc.get("アカウント名") or "").strip().lstrip("@")
             for acc in all_accounts
             if str(acc.get("アカウントID") or acc.get("アカウント名") or "").strip() != ""
         ]
@@ -6238,27 +8972,53 @@ class ThreadsPosterGUI:
             messagebox.showwarning("警告", "アカウント情報.xlsx に有効なアカウントが見つかりません。")
             return
 
+        sel_rec = self._get_selected_account_record()
+        default_acc = str(sel_rec.get("アカウントID") or sel_rec.get("アカウント名") or "").strip().lstrip("@") if sel_rec else valid_accounts[0]
+        if default_acc not in valid_accounts:
+            default_acc = valid_accounts[0]
+
         dialog = tk.Toplevel(self.root)
-        dialog.title("【EXE投稿管理】アカウント別 既存ツイート削除 & 100件一括追加")
-        dialog.geometry("760x700")
+        dialog.title("【EXE投稿管理】アカウント・テーマ別 投稿一括追加 & 削除")
+        dialog.geometry("820x740")
+        dialog.minsize(680, 580)
+        dialog.resizable(True, True)
         dialog.configure(bg="#18181b")
         dialog.transient(self.root)
         dialog.grab_set()
 
         hdr = tk.Frame(dialog, bg="#09090b", padx=16, pady=12)
-        hdr.pack(fill="x")
-        tk.Label(hdr, text="📋 投稿一括管理 & 100件一括登録 (EXE)", font=("Segoe UI", 12, "bold"), fg="#ffffff", bg="#09090b").pack(side="left")
+        hdr.pack(side="top", fill="x")
+        tk.Label(hdr, text="📋 投稿一括管理 & テーマ別100件一括登録", font=("Segoe UI", 12, "bold"), fg="#ffffff", bg="#09090b").pack(side="left")
+
+        btm_bar = tk.Frame(dialog, bg="#09090b", padx=16, pady=10)
+        btm_bar.pack(side="bottom", fill="x")
+
+        opt_frame = tk.Frame(dialog, bg="#18181b", padx=16, pady=6)
+        opt_frame.pack(side="bottom", fill="x")
+
+        opt_frame2 = tk.Frame(dialog, bg="#18181b", padx=16, pady=4)
+        opt_frame2.pack(side="bottom", fill="x")
 
         sel_frame = tk.Frame(dialog, bg="#18181b", padx=16, pady=8)
-        sel_frame.pack(fill="x")
+        sel_frame.pack(side="top", fill="x")
         tk.Label(sel_frame, text="対象アカウント:", font=("Segoe UI", 9, "bold"), fg="#a1a1aa", bg="#18181b").pack(side="left")
 
-        var_selected_acc = tk.StringVar(value=valid_accounts[0])
+        var_selected_acc = tk.StringVar(value=default_acc)
         cmb_acc = ttk.Combobox(sel_frame, textvariable=var_selected_acc, values=valid_accounts, state="readonly", width=18)
         cmb_acc.pack(side="left", padx=8)
 
         lbl_post_count = tk.Label(sel_frame, text="読込中...", font=("Segoe UI", 9), fg="#38bdf8", bg="#18181b")
         lbl_post_count.pack(side="left", padx=8)
+
+        act_frame = tk.Frame(dialog, bg="#18181b", padx=16, pady=4)
+        act_frame.pack(side="top", fill="x")
+
+        var_theme_val = tk.StringVar(value="基本")
+        var_slot_val = tk.StringVar(value="")
+        var_weekdays_val = tk.StringVar(value="")
+        var_interval_val = tk.StringVar(value="120〜360分")
+        var_mode_val = tk.StringVar(value="1: ランダム")
+        cmb_theme = ttk.Combobox(opt_frame2, textvariable=var_theme_val, values=["基本"], width=12)
 
         def refresh_count(*args):
             acc_id = var_selected_acc.get().strip()
@@ -6266,15 +9026,15 @@ class ThreadsPosterGUI:
             if p_file and os.path.exists(p_file):
                 records = read_excel_records(p_file)
                 unposted = len([r for r in records if self._is_unposted_item(r)])
-                lbl_post_count.config(text=f"登録数: {len(records)} 件 (未投稿: {unposted} 件)")
+                t_map = read_theme_settings_from_xlsx(p_file)
+                t_names = [t["name"] for t in t_map.values()] or ["基本"]
+                cmb_theme["values"] = t_names
+                if var_theme_val.get().strip() not in t_names:
+                    var_theme_val.set(t_names[0])
+                lbl_post_count.config(text=f"登録数: {len(records)} 件 (未投稿: {unposted} 件 / テーマ: {len(t_map)}種)")
             else:
-                lbl_post_count.config(text="ファイル未検出")
-
-        var_selected_acc.trace_add("write", refresh_count)
-        refresh_count()
-
-        act_frame = tk.Frame(dialog, bg="#18181b", padx=16, pady=4)
-        act_frame.pack(fill="x")
+                lbl_post_count.config(text="ファイル未検出（保存時に自動作成）")
+                cmb_theme["values"] = ["基本"]
 
         def delete_all_posts():
             acc_id = var_selected_acc.get().strip()
@@ -6282,26 +9042,28 @@ class ThreadsPosterGUI:
             if not p_file or not os.path.exists(p_file):
                 messagebox.showwarning("エラー", f"'{acc_id}.xlsx' が見つかりません。")
                 return
-            if not messagebox.askyesno("全件削除の確認", f"@{acc_id} の登録済みポストを全件削除しますか？\n\n（※設定シートおよび日常ポストシートは安全に保持されます）"):
+            if not messagebox.askyesno("全件削除の確認", f"@{acc_id} の全テーマシート内の投稿データを全件削除しますか？\n\n（※各シート上部の実行時間/曜日/間隔/モード設定・色は安全に保持されます）"):
                 return
             try:
-                import openpyxl
                 wb = openpyxl.load_workbook(p_file)
-                post_sheet = None
+                changed_any = False
                 for sname in wb.sheetnames:
-                    if any(k in sname for k in ["投稿", "ポスト", "post"]):
-                        post_sheet = wb[sname]
-                        break
-                if post_sheet:
-                    max_r = post_sheet.max_row
-                    if max_r > 1:
-                        post_sheet.delete_rows(2, max_r - 1)
+                    if _is_system_sheet_name(sname, wb[sname]):
+                        continue
+                    ws_t = wb[sname]
+                    hdr_idx = _find_post_header_row_in_sheet(list(ws_t.iter_rows(values_only=True))) or 1
+                    max_r = ws_t.max_row
+                    if max_r > hdr_idx:
+                        ws_t.delete_rows(hdr_idx + 1, max_r - hdr_idx)
+                        style_theme_worksheet(ws_t)
+                        changed_any = True
+                if changed_any:
                     wb.save(p_file)
-                    wb.close()
-                    refresh_count()
-                    self.load_excel_data()
-                    self.log(f"[WARN] 🗑️ @{acc_id} の既存ツイートを全件削除しました。")
-                    messagebox.showinfo("完了", f"@{acc_id} のツイートを全件削除しました。")
+                wb.close()
+                refresh_count()
+                self.load_excel_data()
+                self.log(f"[WARN] 🗑️ @{acc_id} の既存ツイートを全テーマシートから全件削除しました。")
+                messagebox.showinfo("完了", f"@{acc_id} のツイートを全件削除しました。")
             except Exception as ex:
                 messagebox.showerror("エラー", f"削除失敗: {ex}")
 
@@ -6340,7 +9102,7 @@ class ThreadsPosterGUI:
         btn_sample.pack(side="right")
 
         mid_frame = tk.Frame(dialog, bg="#18181b", padx=16, pady=6)
-        mid_frame.pack(fill="both", expand=True)
+        mid_frame.pack(side="top", fill="both", expand=True)
         lbl_info = tk.Label(mid_frame, text="投稿文章貼り付け (空行または改行区切りで1ポストずつ自動認識・100件以上対応):", font=("Segoe UI", 9, "bold"), fg="#e4e4e7", bg="#18181b")
         lbl_info.pack(anchor="w", pady=(0, 4))
 
@@ -6355,7 +9117,6 @@ class ThreadsPosterGUI:
             if not raw:
                 lbl_detect.config(text="検出件数: 0 件")
                 return []
-            import re
             pattern = chr(10) + r"\s*" + chr(10)
             parts = [p.strip() for p in re.split(pattern, raw) if p.strip()]
             if len(parts) <= 1 and chr(10) in raw:
@@ -6366,25 +9127,36 @@ class ThreadsPosterGUI:
             return parts
         txt_box.bind("<KeyRelease>", update_item_count)
 
-        opt_frame = tk.Frame(dialog, bg="#18181b", padx=16, pady=8)
-        opt_frame.pack(fill="x")
+        tk.Label(opt_frame2, text="テーマ(新規可):", font=("Segoe UI", 9, "bold"), fg="#f472b6", bg="#18181b").pack(side="left")
+        cmb_theme.pack(side="left", padx=(4, 6))
+        tk.Label(opt_frame2, text="実行時間:", font=("Segoe UI", 9), fg="#a1a1aa", bg="#18181b").pack(side="left")
+        entry_slot = tk.Entry(opt_frame2, textvariable=var_slot_val, bg="#27272a", fg="#ffffff", font=("Segoe UI", 9), width=10, relief="flat")
+        entry_slot.pack(side="left", padx=(3, 6))
+        tk.Label(opt_frame2, text="曜日:", font=("Segoe UI", 9), fg="#a1a1aa", bg="#18181b").pack(side="left")
+        entry_wd = tk.Entry(opt_frame2, textvariable=var_weekdays_val, bg="#27272a", fg="#ffffff", font=("Segoe UI", 9), width=8, relief="flat")
+        entry_wd.pack(side="left", padx=(3, 6))
+        tk.Label(opt_frame2, text="間隔:", font=("Segoe UI", 9), fg="#a1a1aa", bg="#18181b").pack(side="left")
+        entry_iv = tk.Entry(opt_frame2, textvariable=var_interval_val, bg="#27272a", fg="#ffffff", font=("Segoe UI", 9), width=10, relief="flat")
+        entry_iv.pack(side="left", padx=(3, 6))
+        tk.Label(opt_frame2, text="モード:", font=("Segoe UI", 9), fg="#a1a1aa", bg="#18181b").pack(side="left")
+        ttk.Combobox(opt_frame2, textvariable=var_mode_val, values=["1: ランダム", "0: 上から順"], state="readonly", width=11).pack(side="left", padx=(3, 0))
 
-        tk.Label(opt_frame, text="トピック:", font=("Segoe UI", 9), fg="#a1a1aa", bg="#18181b").pack(side="left")
+        tk.Label(opt_frame, text="トピック(ポスト毎指定):", font=("Segoe UI", 9), fg="#a1a1aa", bg="#18181b").pack(side="left")
         entry_topic = tk.Entry(opt_frame, bg="#27272a", fg="#ffffff", font=("Segoe UI", 9), width=14, relief="flat")
         entry_topic.insert(0, "信太山新地")
         entry_topic.pack(side="left", padx=(4, 12))
 
         tk.Label(opt_frame, text="画像添付:", font=("Segoe UI", 9), fg="#a1a1aa", bg="#18181b").pack(side="left")
-        var_img_opt = tk.StringVar(value="alternate")
-        cmb_img = ttk.Combobox(opt_frame, textvariable=var_img_opt, values=["alternate", "image.png", "image2.png", "none"], state="readonly", width=12)
+        var_img_opt = tk.StringVar(value="テーマフォルダ自動ローテ")
+        cmb_img = ttk.Combobox(opt_frame, textvariable=var_img_opt, values=["テーマフォルダ自動ローテ", "alternate", "image.png", "image2.png", "none"], state="readonly", width=22)
         cmb_img.pack(side="left", padx=(4, 12))
 
-        var_replace_existing = tk.BooleanVar(value=True)
-        chk_repl = tk.Checkbutton(opt_frame, text="既存ツイートを削除して完全入れ替え", variable=var_replace_existing, bg="#18181b", fg="#fb7185", selectcolor="#09090b", font=("Segoe UI", 9), cursor="hand2")
+        var_replace_existing = tk.BooleanVar(value=False)
+        chk_repl = tk.Checkbutton(opt_frame, text="選択テーマシートの既存投稿を入れ替え", variable=var_replace_existing, bg="#18181b", fg="#fb7185", selectcolor="#09090b", font=("Segoe UI", 9), cursor="hand2")
         chk_repl.pack(side="left")
 
-        btm_bar = tk.Frame(dialog, bg="#09090b", padx=16, pady=10)
-        btm_bar.pack(fill="x")
+        var_selected_acc.trace_add("write", refresh_count)
+        refresh_count()
 
         def save_and_apply():
             items = update_item_count()
@@ -6393,57 +9165,98 @@ class ThreadsPosterGUI:
                 return
             acc_id = var_selected_acc.get().strip()
             p_file = self._find_posts_file(acc_id)
-            if not p_file or not os.path.exists(p_file):
-                messagebox.showerror("エラー", f"'{acc_id}.xlsx' が見つかりません。")
-                return
+            if not p_file:
+                p_file = os.path.join(BASE_DIR, f"{acc_id}.xlsx")
             try:
-                import openpyxl
-                wb = openpyxl.load_workbook(p_file)
-                post_sheet = None
-                for sname in wb.sheetnames:
-                    if any(k in sname for k in ["投稿", "ポスト", "post"]):
-                        post_sheet = wb[sname]
-                        break
-                if not post_sheet:
-                    post_sheet = wb.create_sheet(title="投稿リスト")
-                    post_sheet.append(["ID", "ポスト文章", "コミュニティまたはトピック", "画像ファイルパス", "ステータス", "投稿完了日時", "エラー内容"])
+                theme_name = var_theme_val.get().strip() or "基本"
+                slot_val = var_slot_val.get().strip()
+                wd_val = var_weekdays_val.get().strip()
+                iv_val = var_interval_val.get().strip() or "120〜360分"
+                mode_val = var_mode_val.get().strip() or "1: ランダム"
+                topic_val = entry_topic.get().strip()
+
+                existing_themes = read_theme_settings_from_xlsx(p_file) if os.path.exists(p_file) else {}
+                if _normalize_theme_key(theme_name) not in existing_themes:
+                    upsert_theme_setting_in_xlsx(
+                        p_file, acc_id, theme_name,
+                        time_slot=(slot_val or "0:00-0:00"),
+                        weekdays=(wd_val or "毎日"),
+                        interval=iv_val,
+                        post_mode=mode_val,
+                        status="有効", memo="一括登録から追加"
+                    )
+                else:
+                    get_account_images_dir(acc_id, create=True, theme_name=theme_name)
+
+                wb = ensure_account_workbook(p_file, acc_id)
+                post_sheet = _find_theme_sheet_in_wb(wb, theme_name=theme_name, create_if_missing=True)
+                hdr_idx, col_map = _resolve_post_sheet_col_map(post_sheet, require_theme_col=_is_legacy_flat_post_sheet_name(post_sheet.title))
 
                 if var_replace_existing.get():
                     max_r = post_sheet.max_row
-                    if max_r > 1:
-                        post_sheet.delete_rows(2, max_r - 1)
+                    if max_r > hdr_idx:
+                        post_sheet.delete_rows(hdr_idx + 1, max_r - hdr_idx)
                     start_id = 1
                 else:
-                    start_id = post_sheet.max_row
+                    next_empty = _find_next_empty_post_row(post_sheet, hdr_idx, col_map)
+                    max_id = 0
+                    if "id" in col_map:
+                        for rr in range(hdr_idx + 1, next_empty):
+                            try:
+                                iv = int(str(post_sheet.cell(row=rr, column=col_map["id"]).value or "0").strip())
+                                if iv > max_id:
+                                    max_id = iv
+                            except Exception:
+                                pass
+                    start_id = max(max_id + 1, next_empty - hdr_idx)
 
-                topic_val = entry_topic.get().strip() or "信太山新地"
+                theme_dir = get_account_images_dir(acc_id, create=True, theme_name=theme_name)
+                theme_imgs = []
+                if os.path.isdir(theme_dir):
+                    theme_imgs = sorted([
+                        fn for fn in os.listdir(theme_dir)
+                        if fn.lower().endswith((".png", ".jpg", ".jpeg", ".webp", ".gif")) and os.path.isfile(os.path.join(theme_dir, fn))
+                    ])
+
                 img_rule = var_img_opt.get()
-
-                for idx, text_item in enumerate(items, start=start_id):
-                    if img_rule == "alternate":
+                next_write_row = 1 if var_replace_existing.get() else _find_next_empty_post_row(post_sheet, hdr_idx, col_map)
+                if var_replace_existing.get():
+                    next_write_row = hdr_idx + 1
+                for offset, text_item in enumerate(items):
+                    idx = start_id + offset
+                    if img_rule == "テーマフォルダ自動ローテ":
+                        img_val = theme_imgs[offset % len(theme_imgs)] if theme_imgs else ""
+                    elif img_rule == "alternate":
                         img_val = "image.png" if idx % 2 == 1 else "image2.png"
-                    elif img_rule == "image.png":
-                        img_val = "image.png"
-                    elif img_rule == "image2.png":
-                        img_val = "image2.png"
+                    elif img_rule in ["image.png", "image2.png"]:
+                        img_val = img_rule
                     else:
                         img_val = ""
 
-                    post_sheet.append([
-                        idx,
-                        text_item,
-                        topic_val,
-                        img_val,
-                        "未投稿",
-                        "",
-                        ""
-                    ])
+                    new_row = next_write_row + offset
+                    if "id" in col_map:
+                        post_sheet.cell(row=new_row, column=col_map["id"]).value = idx
+                    if "theme" in col_map:
+                        post_sheet.cell(row=new_row, column=col_map["theme"]).value = theme_name
+                    if "text" in col_map:
+                        post_sheet.cell(row=new_row, column=col_map["text"]).value = text_item
+                    if "topic" in col_map:
+                        post_sheet.cell(row=new_row, column=col_map["topic"]).value = topic_val
+                    if "image" in col_map:
+                        post_sheet.cell(row=new_row, column=col_map["image"]).value = img_val
+                    if "time_slot" in col_map:
+                        post_sheet.cell(row=new_row, column=col_map["time_slot"]).value = slot_val
+                    if "weekdays" in col_map:
+                        post_sheet.cell(row=new_row, column=col_map["weekdays"]).value = wd_val
+                    if "status" in col_map:
+                        post_sheet.cell(row=new_row, column=col_map["status"]).value = "未投稿"
 
+                style_theme_worksheet(post_sheet)
                 wb.save(p_file)
                 wb.close()
                 self.load_excel_data()
-                self.log(f"[SUCCESS] 🚀 @{acc_id} のExcelに新規 {len(items)} 件のポストを一括登録しました！")
-                messagebox.showinfo("保存完了", f"@{acc_id} のExcelに {len(items)} 件のポストを正常に登録しました！\n\nアプリ画面の設定・待機ポストに即時反映されています。")
+                self.log(f"[SUCCESS] 🚀 @{acc_id} [シート:{post_sheet.title}] に新規 {len(items)} 件のポストを一括登録しました！")
+                messagebox.showinfo("保存完了", f"@{acc_id}（テーマシート: {post_sheet.title}）に {len(items)} 件のポストを登録しました！\n画像保存先フォルダ: images/{acc_id}/{sanitize_theme_folder_name(theme_name)}/")
                 dialog.destroy()
             except Exception as e:
                 messagebox.showerror("保存エラー", f"Excelの書き込みに失敗しました: {e}")
@@ -6464,18 +9277,25 @@ class ThreadsPosterGUI:
             messagebox.showwarning("警告", "アカウント情報.xlsx に有効なアカウントが見つかりません。")
             return
 
+        sel_rec = self._get_selected_account_record()
+        default_acc = str(sel_rec.get("アカウントID") or sel_rec.get("アカウント名") or "").strip().lstrip("@") if sel_rec else valid_accounts[0]
+        if default_acc not in valid_accounts:
+            default_acc = valid_accounts[0]
+
         dialog = tk.Toplevel(self.root)
-        dialog.title("✨ アカウント設計 × 投稿文＆Pillow画像 一括自動生成（完全無料・API不要）")
-        dialog.geometry("1040x780")
+        dialog.title("✨ アカウント設計 × テーマ別投稿文＆Pillow画像 一括自動生成（完全無料・API不要）")
+        dialog.geometry("1060x780")
+        dialog.minsize(820, 620)
+        dialog.resizable(True, True)
         dialog.configure(bg="#18181b")
         dialog.transient(self.root)
         dialog.grab_set()
 
         hdr = tk.Frame(dialog, bg="#09090b", padx=16, pady=10)
-        hdr.pack(fill="x")
+        hdr.pack(side="top", fill="x")
         tk.Label(
             hdr,
-            text="✨ アカウント設計 → 投稿文章＋PNG画像 一括自動生成",
+            text="✨ アカウント設計 → テーマ別投稿文章＋PNG画像 一括自動生成",
             font=("Segoe UI", 12, "bold"),
             fg="#ffffff",
             bg="#09090b",
@@ -6489,17 +9309,38 @@ class ThreadsPosterGUI:
         ).pack(side="right")
 
         top_bar = tk.Frame(dialog, bg="#18181b", padx=16, pady=8)
-        top_bar.pack(fill="x")
+        top_bar.pack(side="top", fill="x")
 
         tk.Label(top_bar, text="対象アカウント:", font=("Segoe UI", 9, "bold"), fg="#d4d4d8", bg="#18181b").pack(side="left")
-        var_acc = tk.StringVar(value=valid_accounts[0])
-        cmb_acc = ttk.Combobox(top_bar, textvariable=var_acc, values=valid_accounts, state="readonly", width=18)
-        cmb_acc.pack(side="left", padx=(6, 12))
+        var_acc = tk.StringVar(value=default_acc)
+        cmb_acc = ttk.Combobox(top_bar, textvariable=var_acc, values=valid_accounts, state="readonly", width=14)
+        cmb_acc.pack(side="left", padx=(4, 8))
+
+        tk.Label(top_bar, text="保存シート(テーマ):", font=("Segoe UI", 9, "bold"), fg="#f472b6", bg="#18181b").pack(side="left")
+        var_gen_theme = tk.StringVar(value="基本")
+        cmb_gen_theme = ttk.Combobox(top_bar, textvariable=var_gen_theme, values=["基本"], width=10)
+        cmb_gen_theme.pack(side="left", padx=(4, 6))
+
+        tk.Label(top_bar, text="実行時間:", font=("Segoe UI", 9), fg="#a1a1aa", bg="#18181b").pack(side="left")
+        var_gen_slot = tk.StringVar(value="0:00-0:00")
+        tk.Entry(top_bar, textvariable=var_gen_slot, bg="#27272a", fg="#ffffff", font=("Segoe UI", 9), width=10, relief="flat").pack(side="left", padx=(3, 6))
+
+        tk.Label(top_bar, text="曜日:", font=("Segoe UI", 9), fg="#a1a1aa", bg="#18181b").pack(side="left")
+        var_gen_weekdays = tk.StringVar(value="毎日")
+        tk.Entry(top_bar, textvariable=var_gen_weekdays, bg="#27272a", fg="#ffffff", font=("Segoe UI", 9), width=7, relief="flat").pack(side="left", padx=(3, 6))
+
+        tk.Label(top_bar, text="間隔:", font=("Segoe UI", 9), fg="#a1a1aa", bg="#18181b").pack(side="left")
+        var_gen_interval = tk.StringVar(value="120〜360分")
+        tk.Entry(top_bar, textvariable=var_gen_interval, bg="#27272a", fg="#ffffff", font=("Segoe UI", 9), width=9, relief="flat").pack(side="left", padx=(3, 6))
+
+        tk.Label(top_bar, text="モード:", font=("Segoe UI", 9), fg="#a1a1aa", bg="#18181b").pack(side="left")
+        var_gen_mode = tk.StringVar(value="1: ランダム")
+        ttk.Combobox(top_bar, textvariable=var_gen_mode, values=["1: ランダム", "0: 上から順"], state="readonly", width=10).pack(side="left", padx=(3, 6))
 
         tk.Label(top_bar, text="プリセット:", font=("Segoe UI", 9), fg="#a1a1aa", bg="#18181b").pack(side="left")
         var_preset = tk.StringVar(value="飛田新地・風景×求人案内")
-        cmb_preset = ttk.Combobox(top_bar, textvariable=var_preset, values=list(_DESIGN_PRESETS_PY.keys()), state="readonly", width=24)
-        cmb_preset.pack(side="left", padx=(6, 6))
+        cmb_preset = ttk.Combobox(top_bar, textvariable=var_preset, values=list(_DESIGN_PRESETS_PY.keys()), state="readonly", width=16)
+        cmb_preset.pack(side="left", padx=(4, 4))
 
         body = tk.Frame(dialog, bg="#18181b", padx=16, pady=4)
         body.pack(fill="both", expand=True)
@@ -6528,7 +9369,7 @@ class ThreadsPosterGUI:
             return ent
 
         ent_genre = _mk_entry(form_frame, "ジャンル・発信テーマ:")
-        ent_topic = _mk_entry(form_frame, "トピック（Excel設定用）:")
+        ent_topic = _mk_entry(form_frame, "トピック（生成ポスト行のコミュニティ/トピック列へ設定）:")
         ent_target = _mk_entry(form_frame, "ターゲット層:")
 
         f_tone = tk.Frame(form_frame, bg="#18181b", pady=3)
@@ -6782,12 +9623,37 @@ class ThreadsPosterGUI:
         def on_account_selected(*_args):
             acc_id = var_acc.get().strip()
             acc_xlsx = os.path.join(BASE_DIR, f"{acc_id}.xlsx")
-            fb_topic = read_account_settings_from_post_file(acc_xlsx).get("topic", "") if os.path.exists(acc_xlsx) else ""
-            loaded = load_account_design_from_xlsx(acc_xlsx, fallback_topic=fb_topic)
+            loaded = load_account_design_from_xlsx(acc_xlsx, account_id=acc_id)
             _fill_design(loaded)
-            var_bg_dir.set(get_account_images_dir(acc_id, create=True))
+            t_map = read_theme_settings_from_xlsx(acc_xlsx) if os.path.exists(acc_xlsx) else {}
+            t_names = [t["name"] for t in t_map.values()] or ["基本"]
+            cmb_gen_theme["values"] = t_names
+            if var_gen_theme.get().strip() not in t_names:
+                var_gen_theme.set(t_names[0])
+            cur_t_info = t_map.get(_normalize_theme_key(var_gen_theme.get()))
+            if cur_t_info:
+                var_gen_slot.set(cur_t_info.get("time_slot") or "0:00-0:00")
+                var_gen_weekdays.set(cur_t_info.get("weekdays") or "毎日")
+                var_gen_interval.set(cur_t_info.get("interval_str") or "120〜360分")
+                var_gen_mode.set(cur_t_info.get("mode_str") or "1: ランダム")
+            var_bg_dir.set(get_account_images_dir(acc_id, create=True, theme_name=var_gen_theme.get().strip()))
             refresh_bg_info()
             update_live_preview()
+
+        def on_theme_selected(*_args):
+            acc_id = var_acc.get().strip()
+            t_name = var_gen_theme.get().strip()
+            acc_xlsx = os.path.join(BASE_DIR, f"{acc_id}.xlsx")
+            t_map = read_theme_settings_from_xlsx(acc_xlsx) if os.path.exists(acc_xlsx) else {}
+            t_info = t_map.get(_normalize_theme_key(t_name))
+            if t_info:
+                var_gen_slot.set(t_info.get("time_slot") or "0:00-0:00")
+                var_gen_weekdays.set(t_info.get("weekdays") or "毎日")
+                var_gen_interval.set(t_info.get("interval_str") or "120〜360分")
+                var_gen_mode.set(t_info.get("mode_str") or "1: ランダム")
+            if t_name:
+                var_bg_dir.set(get_account_images_dir(acc_id, create=True, theme_name=t_name))
+                refresh_bg_info()
 
         def apply_preset_clicked():
             p_name = var_preset.get()
@@ -6797,6 +9663,7 @@ class ThreadsPosterGUI:
 
         tk.Button(top_bar, text="読込", bg="#27272a", fg="#ffffff", font=("Segoe UI", 8, "bold"), padx=10, pady=3, relief="flat", cursor="hand2", command=apply_preset_clicked).pack(side="left")
         cmb_acc.bind("<<ComboboxSelected>>", on_account_selected)
+        cmb_gen_theme.bind("<<ComboboxSelected>>", on_theme_selected)
         cmb_preset.bind("<<ComboboxSelected>>", lambda _e: apply_preset_clicked())
 
         def _offer_manual_pillow_cmd(err_detail):
@@ -6821,13 +9688,18 @@ class ThreadsPosterGUI:
             acc_xlsx = os.path.join(BASE_DIR, f"{acc_id}.xlsx")
             try:
                 save_account_design_to_xlsx(acc_xlsx, acc_id, _collect_design())
-                self.log(f"[SUCCESS] 💾 @{acc_id} のアカウント設計を {os.path.basename(acc_xlsx)}（アカウント設計シート）に保存しました！")
-                messagebox.showinfo("設計保存完了", f"@{acc_id} のアカウント設計を\n{os.path.basename(acc_xlsx)} に保存しました！\n\n次回からはアカウントを選ぶだけで自動読み込みされます。")
+                self.log(f"[SUCCESS] 💾 @{acc_id} のアカウント設計プリセットを保存しました！（account_designs.json）")
+                messagebox.showinfo("設計保存完了", f"@{acc_id} のアカウント設計プリセットを保存しました！\n\n（※Excelに『アカウント設計』シートは作らず、次回からアプリで自動読み込みされます）")
             except Exception as ex:
                 messagebox.showerror("保存エラー", f"設計保存に失敗しました:\n{ex}")
 
         def run_batch_generate():
             acc_id = var_acc.get().strip()
+            theme_name = var_gen_theme.get().strip() or "基本"
+            slot_val = var_gen_slot.get().strip() or "0:00-0:00"
+            wd_val = var_gen_weekdays.get().strip() or "毎日"
+            iv_val = var_gen_interval.get().strip() or "120〜360分"
+            mode_val = var_gen_mode.get().strip() or "1: ランダム"
             d = _collect_design()
             cnt = int(var_count.get() or "10")
             do_imgs = var_gen_imgs.get()
@@ -6839,7 +9711,8 @@ class ThreadsPosterGUI:
             bg_list = _find_bg_photos(var_bg_dir.get().strip())
             scrim_val = _get_scrim_val()
             acc_xlsx = os.path.join(BASE_DIR, f"{acc_id}.xlsx")
-            acc_img_dir = get_account_images_dir(acc_id, create=True)
+            acc_img_dir = get_account_images_dir(acc_id, create=True, theme_name=theme_name)
+            clean_theme_dir_name = sanitize_theme_folder_name(theme_name)
 
             if do_imgs and not bg_list and var_img_style.get() == "背景写真＋自動文字入れ":
                 proceed = messagebox.askyesno(
@@ -6868,30 +9741,37 @@ class ThreadsPosterGUI:
                             return
 
                     save_account_design_to_xlsx(acc_xlsx, acc_id, d)
+                    upsert_theme_setting_in_xlsx(acc_xlsx, acc_id, theme_name, time_slot=slot_val, weekdays=wd_val, interval=iv_val, post_mode=mode_val, status="有効")
                     specs = generate_posts_from_design(d, count=cnt, enable_spintax=do_spintax, has_photos=bool(bg_list))
 
                     wb = ensure_account_workbook(acc_xlsx, acc_id)
-                    post_sheet = None
-                    for sname in wb.sheetnames:
-                        if any(k in sname for k in ["投稿", "ポスト", "post"]):
-                            post_sheet = wb[sname]
-                            break
-                    if not post_sheet:
-                        post_sheet = wb.create_sheet(title="投稿リスト")
-                        post_sheet.append(["ID", "ポスト文章", "コミュニティまたはトピック", "画像ファイルパス", "ステータス", "投稿完了日時", "エラー内容"])
+                    post_sheet = _find_theme_sheet_in_wb(wb, theme_name=theme_name, create_if_missing=True)
+                    hdr_idx, col_map = _resolve_post_sheet_col_map(post_sheet, require_theme_col=_is_legacy_flat_post_sheet_name(post_sheet.title))
 
                     if do_replace:
-                        if post_sheet.max_row > 1:
-                            post_sheet.delete_rows(2, post_sheet.max_row - 1)
+                        if post_sheet.max_row > hdr_idx:
+                            post_sheet.delete_rows(hdr_idx + 1, post_sheet.max_row - hdr_idx)
                         start_id = 1
+                        write_start_row = hdr_idx + 1
                     else:
-                        start_id = post_sheet.max_row
+                        next_empty = _find_next_empty_post_row(post_sheet, hdr_idx, col_map)
+                        max_id = 0
+                        if "id" in col_map:
+                            for rr in range(hdr_idx + 1, next_empty):
+                                try:
+                                    iv = int(str(post_sheet.cell(row=rr, column=col_map["id"]).value or "0").strip())
+                                    if iv > max_id:
+                                        max_id = iv
+                                except Exception:
+                                    pass
+                        start_id = max(max_id + 1, next_empty - hdr_idx)
+                        write_start_row = next_empty
 
                     for idx_p, sp in enumerate(specs):
                         row_id = start_id + idx_p
                         img_name = ""
                         if do_imgs and Image:
-                            img_name = sp["filename"]
+                            img_name = f"gen_{row_id:03d}.png"
                             out_png = os.path.join(acc_img_dir, img_name)
                             bg_p = bg_list[idx_p % len(bg_list)] if bg_list else None
                             hl = hl_override if (idx_p == 0 and hl_override) else sp["headline"]
@@ -6900,7 +9780,7 @@ class ThreadsPosterGUI:
                                 style=sp["style"],
                                 aspect_ratio=aspect,
                                 palette_name=palette_n,
-                                scrim_opacity=scrim_val,
+                                scrim_opacity=_get_scrim_val(),
                                 topic=sp["topic"],
                                 headline=hl,
                                 subhead=sp["subhead"],
@@ -6913,34 +9793,43 @@ class ThreadsPosterGUI:
                                 pain=sp.get("pain", ""),
                             )
 
-                        post_sheet.append([
-                            row_id,
-                            sp["text"],
-                            sp["topic"],
-                            img_name,
-                            "未投稿",
-                            "",
-                            "",
-                        ])
+                        new_r = write_start_row + idx_p
+                        if "id" in col_map:
+                            post_sheet.cell(row=new_r, column=col_map["id"]).value = row_id
+                        if "theme" in col_map:
+                            post_sheet.cell(row=new_r, column=col_map["theme"]).value = theme_name
+                        if "text" in col_map:
+                            post_sheet.cell(row=new_r, column=col_map["text"]).value = sp["text"]
+                        if "topic" in col_map:
+                            post_sheet.cell(row=new_r, column=col_map["topic"]).value = sp["topic"]
+                        if "image" in col_map:
+                            post_sheet.cell(row=new_r, column=col_map["image"]).value = img_name
+                        if "time_slot" in col_map:
+                            post_sheet.cell(row=new_r, column=col_map["time_slot"]).value = ""
+                        if "weekdays" in col_map:
+                            post_sheet.cell(row=new_r, column=col_map["weekdays"]).value = ""
+                        if "status" in col_map:
+                            post_sheet.cell(row=new_r, column=col_map["status"]).value = "未投稿"
 
+                    style_theme_worksheet(post_sheet)
                     wb.save(acc_xlsx)
                     wb.close()
                     elapsed = time.time() - t0
 
                     def _on_done():
                         self.load_excel_data()
-                        self.log(f"[SUCCESS] 🚀 @{acc_id}: 設計から投稿 {cnt} 件{'＋PNG画像 ' + str(cnt) + '枚' if do_imgs else ''} を {elapsed:.2f}秒 で生成＆Excel直接保存しました！")
-                        msg = f"@{acc_id} の一括生成が完了しました！（{elapsed:.2f}秒）\n\n・Excel保存: {os.path.basename(acc_xlsx)}（{cnt}件）"
+                        self.log(f"[SUCCESS] 🚀 @{acc_id} [シート:{post_sheet.title}]: 設計から投稿 {cnt} 件{'＋PNG画像 ' + str(cnt) + '枚' if do_imgs else ''} を {elapsed:.2f}秒 で生成＆Excel直接保存しました！")
+                        msg = f"@{acc_id}（シート: {post_sheet.title}）の一括生成が完了しました！（{elapsed:.2f}秒）\n\n・Excel保存: {os.path.basename(acc_xlsx)}（{cnt}件 / 実行時間: {slot_val} / 曜日: {wd_val}）"
                         if do_imgs:
-                            msg += f"\n・画像保存: images/{acc_id}/gen_001.png 〜 gen_{cnt:03d}.png"
-                        msg += "\n\n「imagesフォルダを開く」で仕上がりを確認しますか？"
+                            msg += f"\n・画像保存: images/{acc_id}/{clean_theme_dir_name}/"
+                        msg += "\n\n「テーマ画像フォルダを開く」で仕上がりを確認しますか？"
                         if do_imgs and messagebox.askyesno("生成完了", msg):
                             try:
                                 os.startfile(acc_img_dir)
                             except Exception:
                                 pass
                         elif not do_imgs:
-                            messagebox.showinfo("生成完了", msg.split("\n\n「images")[0])
+                            messagebox.showinfo("生成完了", msg.split("\n\n「テーマ")[0])
                         btn_run.config(state="normal", text="🚀 ワンクリックで一括生成 → Excel＆images保存")
 
                     self.root.after(0, _on_done)
@@ -6954,8 +9843,8 @@ class ThreadsPosterGUI:
 
         # Bottom Action Bar
         btm = tk.Frame(dialog, bg="#09090b", padx=16, pady=10)
-        btm.pack(fill="x")
-        tk.Button(btm, text="💾 設計をExcelに保存", bg="#0284c7", fg="#ffffff", font=("Segoe UI", 9, "bold"), padx=12, pady=6, relief="flat", cursor="hand2", command=save_design_only).pack(side="left")
+        btm.pack(side="bottom", fill="x")
+        tk.Button(btm, text="💾 設計プリセットを保存", bg="#0284c7", fg="#ffffff", font=("Segoe UI", 9, "bold"), padx=12, pady=6, relief="flat", cursor="hand2", command=save_design_only).pack(side="left")
         tk.Button(btm, text="🔍 プレビュー更新", bg="#27272a", fg="#ffffff", font=("Segoe UI", 9), padx=12, pady=6, relief="flat", cursor="hand2", command=update_live_preview).pack(side="left", padx=8)
         tk.Button(btm, text="閉じる", bg="#27272a", fg="#a1a1aa", font=("Segoe UI", 9), padx=12, pady=6, relief="flat", cursor="hand2", command=dialog.destroy).pack(side="right", padx=(8, 0))
         btn_run = tk.Button(btm, text="🚀 ワンクリックで一括生成 → Excel＆images保存", bg="#10b981", fg="#ffffff", font=("Segoe UI", 10, "bold"), padx=16, pady=6, relief="flat", cursor="hand2", command=run_batch_generate)
@@ -6973,11 +9862,609 @@ class ThreadsPosterGUI:
             threading.Thread(target=_bg_install_pil, daemon=True).start()
 
 
+    def open_theme_and_post_editor(self):
+        """アカウントごとにテーマ・時間帯・投稿文章・個別画像を編集する統合GUIエディター"""
+        all_accounts = read_excel_records(self.account_config_path) if os.path.exists(self.account_config_path) else []
+        valid_accounts = [
+            str(acc.get("アカウントID") or acc.get("アカウント名") or "").strip().lstrip("@")
+            for acc in all_accounts
+            if str(acc.get("アカウントID") or acc.get("アカウント名") or "").strip() not in ("", "nan", "None")
+        ]
+        if not valid_accounts:
+            messagebox.showwarning("警告", "アカウント情報.xlsx にアカウントが見つかりません。")
+            return
+
+        sel_rec = self._get_selected_account_record()
+        default_acc = str(sel_rec.get("アカウントID") or sel_rec.get("アカウント名") or "").strip().lstrip("@") if sel_rec else valid_accounts[0]
+        if default_acc not in valid_accounts:
+            default_acc = valid_accounts[0]
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title("🎨 アカウント別 テーマ・時間帯・投稿＆個別画像エディター")
+        dialog.geometry("1160x760")
+        dialog.minsize(920, 600)
+        dialog.resizable(True, True)
+        dialog.configure(bg="#18181b")
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        hdr = tk.Frame(dialog, bg="#09090b", padx=16, pady=10)
+        hdr.pack(side="top", fill="x")
+        tk.Label(hdr, text="🎨 アカウント別 テーマ設定 & 個別投稿・画像エディター", font=("Segoe UI", 12, "bold"), fg="#ffffff", bg="#09090b").pack(side="left")
+
+        acc_bar = tk.Frame(dialog, bg="#18181b", padx=16, pady=6)
+        acc_bar.pack(side="top", fill="x")
+        tk.Label(acc_bar, text="編集対象アカウント:", font=("Segoe UI", 9, "bold"), fg="#facc15", bg="#18181b").pack(side="left")
+        var_acc = tk.StringVar(value=default_acc)
+        cmb_acc = ttk.Combobox(acc_bar, textvariable=var_acc, values=valid_accounts, state="readonly", width=22)
+        cmb_acc.pack(side="left", padx=(6, 10))
+
+        lbl_acc_file = tk.Label(acc_bar, text="", font=("Segoe UI", 9), fg="#38bdf8", bg="#18181b")
+        lbl_acc_file.pack(side="left", padx=6)
+
+        btm_bar = tk.Frame(dialog, bg="#09090b", padx=16, pady=10)
+        btm_bar.pack(side="bottom", fill="x")
+        lbl_btm_status = tk.Label(btm_bar, text="💡 画像は images/<アカウント名>/<テーマ名>/ に保存されます（imegesフォルダからの読込も対応）", font=("Segoe UI", 9), fg="#94a3b8", bg="#09090b")
+        lbl_btm_status.pack(side="left")
+        tk.Button(btm_bar, text="閉じる", bg="#27272a", fg="#ffffff", font=("Segoe UI", 9, "bold"), padx=16, pady=5, relief="flat", cursor="hand2", command=dialog.destroy).pack(side="right")
+
+        body = tk.Frame(dialog, bg="#18181b", padx=16, pady=6)
+        body.pack(side="top", fill="both", expand=True)
+        body.columnconfigure(0, weight=4)
+        body.columnconfigure(1, weight=7)
+        body.rowconfigure(0, weight=1)
+
+        # ========== Left Pane: テーマ管理 ==========
+        left_pane = tk.Frame(body, bg="#09090b", padx=10, pady=10, highlightbackground="#27272a", highlightthickness=1)
+        left_pane.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+
+        tk.Label(left_pane, text="1️⃣ 下のシート（テーマ）管理（時間・曜日・間隔・モード）", font=("Segoe UI", 10, "bold"), fg="#f472b6", bg="#09090b").pack(anchor="w", pady=(0, 6))
+
+        theme_tree_wrap = tk.Frame(left_pane, bg="#09090b")
+        theme_tree_wrap.pack(fill="both", expand=True)
+        theme_cols = ("name", "slot", "weekdays", "interval", "mode", "status", "stats")
+        theme_tree = ttk.Treeview(theme_tree_wrap, columns=theme_cols, show="headings", height=7)
+        theme_tree.heading("name", text="シート(テーマ)")
+        theme_tree.heading("slot", text="実行時間")
+        theme_tree.heading("weekdays", text="曜日")
+        theme_tree.heading("interval", text="間隔")
+        theme_tree.heading("mode", text="モード")
+        theme_tree.heading("status", text="状態")
+        theme_tree.heading("stats", text="投稿/画像")
+        theme_tree.column("name", width=74)
+        theme_tree.column("slot", width=68)
+        theme_tree.column("weekdays", width=48)
+        theme_tree.column("interval", width=72)
+        theme_tree.column("mode", width=74)
+        theme_tree.column("status", width=40)
+        theme_tree.column("stats", width=56)
+        t_scroll = ttk.Scrollbar(theme_tree_wrap, orient="vertical", command=theme_tree.yview)
+        theme_tree.configure(yscrollcommand=t_scroll.set)
+        theme_tree.pack(side="left", fill="both", expand=True)
+        t_scroll.pack(side="right", fill="y")
+
+        t_form = tk.Frame(left_pane, bg="#18181b", padx=8, pady=8)
+        t_form.pack(fill="x", pady=(8, 0))
+
+        state = {
+            "selected_theme_old": None,
+            "selected_post_row_idx": None,
+            "selected_post_sheet_name": None,
+            "posts_cache": [],
+            "themes_cache": {},
+            "post_iid_map": {},
+        }
+
+        var_t_name = tk.StringVar()
+        var_t_slot = tk.StringVar(value="0:00-0:00")
+        var_t_weekdays = tk.StringVar(value="毎日")
+        var_t_interval = tk.StringVar(value="120〜360分")
+        var_t_mode = tk.StringVar(value="1: ランダム")
+        var_t_status = tk.StringVar(value="有効")
+        var_t_memo = tk.StringVar()
+
+        r_tf1 = tk.Frame(t_form, bg="#18181b")
+        r_tf1.pack(fill="x", pady=2)
+        tk.Label(r_tf1, text="テーマ名:", width=11, anchor="w", font=("Segoe UI", 8, "bold"), fg="#d4d4d8", bg="#18181b").pack(side="left")
+        tk.Entry(r_tf1, textvariable=var_t_name, bg="#09090b", fg="#ffffff", insertbackground="#ffffff", font=("Segoe UI", 9), relief="solid", bd=1).pack(side="left", fill="x", expand=True)
+
+        r_tf2 = tk.Frame(t_form, bg="#18181b")
+        r_tf2.pack(fill="x", pady=2)
+        tk.Label(r_tf2, text="実行時間:", width=11, anchor="w", font=("Segoe UI", 8, "bold"), fg="#d4d4d8", bg="#18181b").pack(side="left")
+        tk.Entry(r_tf2, textvariable=var_t_slot, bg="#09090b", fg="#ffffff", insertbackground="#ffffff", font=("Segoe UI", 9), width=14, relief="solid", bd=1).pack(side="left", fill="x", expand=True)
+
+        r_tf2p = tk.Frame(t_form, bg="#18181b")
+        r_tf2p.pack(fill="x", pady=2)
+        tk.Label(r_tf2p, text="時間例:", width=11, anchor="w", font=("Segoe UI", 8), fg="#94a3b8", bg="#18181b").pack(side="left")
+        for lbl_p, slot_p in [("朝 7-10", "7:00-10:00"), ("昼 12-14", "12:00-14:00"), ("夜 19-23", "19:00-23:30"), ("終日", "0:00-0:00")]:
+            tk.Button(r_tf2p, text=lbl_p, bg="#27272a", fg="#e2e8f0", font=("Segoe UI", 8), padx=5, pady=1, relief="flat", cursor="hand2", command=lambda s=slot_p: var_t_slot.set(s)).pack(side="left", padx=2)
+
+        r_tf2w = tk.Frame(t_form, bg="#18181b")
+        r_tf2w.pack(fill="x", pady=2)
+        tk.Label(r_tf2w, text="対象曜日:", width=11, anchor="w", font=("Segoe UI", 8, "bold"), fg="#d4d4d8", bg="#18181b").pack(side="left")
+        tk.Entry(r_tf2w, textvariable=var_t_weekdays, bg="#09090b", fg="#ffffff", insertbackground="#ffffff", font=("Segoe UI", 9), width=14, relief="solid", bd=1).pack(side="left", fill="x", expand=True)
+
+        r_tf2wp = tk.Frame(t_form, bg="#18181b")
+        r_tf2wp.pack(fill="x", pady=2)
+        tk.Label(r_tf2wp, text="曜日例:", width=11, anchor="w", font=("Segoe UI", 8), fg="#94a3b8", bg="#18181b").pack(side="left")
+        for lbl_w, val_w in [("毎日", "毎日"), ("平日(月〜金)", "月〜金"), ("土日", "土日"), ("月水金", "月,水,金"), ("火木土", "火,木,土")]:
+            tk.Button(r_tf2wp, text=lbl_w, bg="#27272a", fg="#e2e8f0", font=("Segoe UI", 8), padx=4, pady=1, relief="flat", cursor="hand2", command=lambda w=val_w: var_t_weekdays.set(w)).pack(side="left", padx=2)
+
+        r_tf3 = tk.Frame(t_form, bg="#18181b")
+        r_tf3.pack(fill="x", pady=2)
+        tk.Label(r_tf3, text="ポスト間隔:", width=11, anchor="w", font=("Segoe UI", 8, "bold"), fg="#d4d4d8", bg="#18181b").pack(side="left")
+        tk.Entry(r_tf3, textvariable=var_t_interval, bg="#09090b", fg="#ffffff", insertbackground="#ffffff", font=("Segoe UI", 9), relief="solid", bd=1).pack(side="left", fill="x", expand=True)
+
+        r_tf3p = tk.Frame(t_form, bg="#18181b")
+        r_tf3p.pack(fill="x", pady=2)
+        tk.Label(r_tf3p, text="間隔例:", width=11, anchor="w", font=("Segoe UI", 8), fg="#94a3b8", bg="#18181b").pack(side="left")
+        for lbl_i, val_i in [("30〜60分", "30〜60分"), ("60〜120分", "60〜120分"), ("90〜240分", "90〜240分"), ("120〜360分", "120〜360分")]:
+            tk.Button(r_tf3p, text=lbl_i, bg="#27272a", fg="#e2e8f0", font=("Segoe UI", 8), padx=4, pady=1, relief="flat", cursor="hand2", command=lambda iv=val_i: var_t_interval.set(iv)).pack(side="left", padx=2)
+
+        r_tf3m = tk.Frame(t_form, bg="#18181b")
+        r_tf3m.pack(fill="x", pady=2)
+        tk.Label(r_tf3m, text="投稿モード:", width=11, anchor="w", font=("Segoe UI", 8, "bold"), fg="#d4d4d8", bg="#18181b").pack(side="left")
+        ttk.Combobox(r_tf3m, textvariable=var_t_mode, values=["1: ランダム", "0: 上から順"], state="readonly", width=16).pack(side="left", fill="x", expand=True)
+
+        r_tf4 = tk.Frame(t_form, bg="#18181b")
+        r_tf4.pack(fill="x", pady=2)
+        tk.Label(r_tf4, text="状態/メモ:", width=11, anchor="w", font=("Segoe UI", 8, "bold"), fg="#d4d4d8", bg="#18181b").pack(side="left")
+        ttk.Combobox(r_tf4, textvariable=var_t_status, values=["有効", "無効"], state="readonly", width=7).pack(side="left", padx=(0, 6))
+        tk.Entry(r_tf4, textvariable=var_t_memo, bg="#09090b", fg="#ffffff", insertbackground="#ffffff", font=("Segoe UI", 9), relief="solid", bd=1).pack(side="left", fill="x", expand=True)
+
+        t_btns1 = tk.Frame(left_pane, bg="#09090b", pady=6)
+        t_btns1.pack(fill="x")
+        t_btns2 = tk.Frame(left_pane, bg="#09090b", pady=2)
+        t_btns2.pack(fill="x")
+
+        # ========== Right Pane: 投稿＆個別画像エディター ==========
+        right_pane = tk.Frame(body, bg="#09090b", padx=10, pady=10, highlightbackground="#27272a", highlightthickness=1)
+        right_pane.grid(row=0, column=1, sticky="nsew")
+
+        r_top = tk.Frame(right_pane, bg="#09090b")
+        r_top.pack(fill="x", pady=(0, 6))
+        tk.Label(r_top, text="2️⃣ シート別 ポスト一覧 & 個別画像指定", font=("Segoe UI", 10, "bold"), fg="#38bdf8", bg="#09090b").pack(side="left")
+
+        var_filter_theme = tk.StringVar(value="すべて")
+        var_only_unposted = tk.BooleanVar(value=False)
+        cmb_filter_theme = ttk.Combobox(r_top, textvariable=var_filter_theme, values=["すべて"], state="readonly", width=16)
+        cmb_filter_theme.pack(side="right", padx=(4, 0))
+        tk.Label(r_top, text="テーマ絞込:", font=("Segoe UI", 8), fg="#a1a1aa", bg="#09090b").pack(side="right")
+        tk.Checkbutton(r_top, text="未投稿のみ", variable=var_only_unposted, bg="#09090b", fg="#d4d4d8", selectcolor="#18181b", font=("Segoe UI", 8), command=lambda: render_post_tree()).pack(side="right", padx=8)
+
+        post_tree_wrap = tk.Frame(right_pane, bg="#09090b")
+        post_tree_wrap.pack(fill="both", expand=True)
+        p_cols = ("id", "theme", "slot", "weekdays", "text", "image", "topic", "status")
+        post_tree = ttk.Treeview(post_tree_wrap, columns=p_cols, show="headings", height=9)
+        post_tree.heading("id", text="ID")
+        post_tree.heading("theme", text="シート/テーマ")
+        post_tree.heading("slot", text="実行時間")
+        post_tree.heading("weekdays", text="曜日")
+        post_tree.heading("text", text="ポスト文章")
+        post_tree.heading("image", text="指定画像")
+        post_tree.heading("topic", text="トピック")
+        post_tree.heading("status", text="状態")
+        post_tree.column("id", width=34, anchor="center")
+        post_tree.column("theme", width=78)
+        post_tree.column("slot", width=76)
+        post_tree.column("weekdays", width=62)
+        post_tree.column("text", width=180)
+        post_tree.column("image", width=100)
+        post_tree.column("topic", width=72)
+        post_tree.column("status", width=54, anchor="center")
+        p_scroll = ttk.Scrollbar(post_tree_wrap, orient="vertical", command=post_tree.yview)
+        post_tree.configure(yscrollcommand=p_scroll.set)
+        post_tree.pack(side="left", fill="both", expand=True)
+        p_scroll.pack(side="right", fill="y")
+
+        p_form = tk.Frame(right_pane, bg="#18181b", padx=10, pady=8)
+        p_form.pack(fill="x", pady=(8, 0))
+
+        var_p_theme = tk.StringVar(value="基本")
+        var_p_slot = tk.StringVar()
+        var_p_weekdays = tk.StringVar()
+        var_p_topic = tk.StringVar()
+        var_p_status = tk.StringVar(value="未投稿")
+        var_p_image = tk.StringVar()
+
+        pf_r1 = tk.Frame(p_form, bg="#18181b")
+        pf_r1.pack(fill="x", pady=2)
+        tk.Label(pf_r1, text="シート:", font=("Segoe UI", 8, "bold"), fg="#f472b6", bg="#18181b").pack(side="left")
+        cmb_p_theme = ttk.Combobox(pf_r1, textvariable=var_p_theme, values=["基本"], width=12)
+        cmb_p_theme.pack(side="left", padx=(4, 6))
+        tk.Label(pf_r1, text="時間:", font=("Segoe UI", 8), fg="#a1a1aa", bg="#18181b").pack(side="left")
+        tk.Entry(pf_r1, textvariable=var_p_slot, bg="#09090b", fg="#ffffff", insertbackground="#ffffff", font=("Segoe UI", 9), width=10, relief="solid", bd=1).pack(side="left", padx=(3, 6))
+        tk.Label(pf_r1, text="曜日:", font=("Segoe UI", 8), fg="#a1a1aa", bg="#18181b").pack(side="left")
+        tk.Entry(pf_r1, textvariable=var_p_weekdays, bg="#09090b", fg="#ffffff", insertbackground="#ffffff", font=("Segoe UI", 9), width=9, relief="solid", bd=1).pack(side="left", padx=(3, 6))
+        tk.Label(pf_r1, text="トピック:", font=("Segoe UI", 8), fg="#a1a1aa", bg="#18181b").pack(side="left")
+        tk.Entry(pf_r1, textvariable=var_p_topic, bg="#09090b", fg="#ffffff", insertbackground="#ffffff", font=("Segoe UI", 9), width=11, relief="solid", bd=1).pack(side="left", padx=(3, 6))
+        tk.Label(pf_r1, text="状態:", font=("Segoe UI", 8), fg="#a1a1aa", bg="#18181b").pack(side="left")
+        ttk.Combobox(pf_r1, textvariable=var_p_status, values=["未投稿", "投稿完了", "エラー"], state="readonly", width=7).pack(side="left", padx=(3, 0))
+
+        pf_r2 = tk.Frame(p_form, bg="#18181b")
+        pf_r2.pack(fill="x", pady=3)
+        tk.Label(pf_r2, text="画像ファイル:", font=("Segoe UI", 8, "bold"), fg="#34d399", bg="#18181b").pack(side="left")
+        tk.Entry(pf_r2, textvariable=var_p_image, bg="#09090b", fg="#ffffff", insertbackground="#ffffff", font=("Consolas", 9), width=22, relief="solid", bd=1).pack(side="left", fill="x", expand=True, padx=(4, 6))
+
+        lbl_img_resolve = tk.Label(p_form, text="画像未指定（テキストのみ投稿）", font=("Segoe UI", 8), fg="#94a3b8", bg="#18181b", anchor="w")
+        lbl_img_resolve.pack(fill="x", pady=(0, 3))
+
+        pf_r3 = tk.Frame(p_form, bg="#18181b")
+        pf_r3.pack(fill="x", pady=2)
+        tk.Label(pf_r3, text="ポスト文章:", font=("Segoe UI", 8, "bold"), fg="#e4e4e7", bg="#18181b").pack(anchor="w")
+        txt_p_body = scrolledtext.ScrolledText(p_form, height=5, wrap="word", bg="#09090b", fg="#ffffff", insertbackground="#ffffff", font=("Segoe UI", 9), relief="solid", bd=1)
+        txt_p_body.pack(fill="x", pady=(2, 4))
+
+        pf_r4 = tk.Frame(p_form, bg="#18181b")
+        pf_r4.pack(fill="x", pady=2)
+
+        def _cur_acc_and_xlsx():
+            acc_id = var_acc.get().strip()
+            p_file = self._find_posts_file(acc_id)
+            if not p_file:
+                p_file = os.path.join(BASE_DIR, f"{acc_id}.xlsx")
+            return acc_id, p_file
+
+        def update_img_resolve_label(*_args):
+            acc_id, _ = _cur_acc_and_xlsx()
+            raw_img = var_p_image.get().strip()
+            t_nm = var_p_theme.get().strip()
+            if not raw_img:
+                lbl_img_resolve.config(text="画像未指定（テキストのみ投稿）", fg="#94a3b8")
+                return
+            resolved = resolve_image_path(raw_img, "", account_name=acc_id, theme_name=t_nm)
+            if resolved:
+                try:
+                    rel = os.path.relpath(resolved, BASE_DIR).replace("\\", "/")
+                except Exception:
+                    rel = resolved
+                lbl_img_resolve.config(text=f"✅ 画像検出OK: {rel}", fg="#34d399")
+            else:
+                target_sub = f"images/{sanitize_account_folder_name(acc_id)}/{sanitize_theme_folder_name(t_nm) or ''}".rstrip("/")
+                lbl_img_resolve.config(text=f"⚠️ 未検出: {target_sub}/ 内に「{raw_img}」を配置してください", fg="#fbbf24")
+
+        var_p_image.trace_add("write", update_img_resolve_label)
+        var_p_theme.trace_add("write", update_img_resolve_label)
+
+        def _count_theme_images(acc_id, theme_name):
+            dirs_to_check = []
+            c_acc = sanitize_account_folder_name(acc_id)
+            c_thm = sanitize_theme_folder_name(theme_name)
+            if c_acc and c_thm:
+                dirs_to_check.append(os.path.join(BASE_DIR, "images", c_acc, c_thm))
+                dirs_to_check.append(os.path.join(BASE_DIR, "imeges", c_acc, c_thm))
+            names = set()
+            for d in dirs_to_check:
+                if os.path.isdir(d):
+                    try:
+                        for fn in os.listdir(d):
+                            if fn.lower().endswith((".png", ".jpg", ".jpeg", ".webp", ".gif")):
+                                names.add(fn)
+                    except Exception:
+                        pass
+            return sorted(names)
+
+        def render_post_tree():
+            for iid in post_tree.get_children():
+                post_tree.delete(iid)
+            state["post_iid_map"] = {}
+            flt_t = var_filter_theme.get().strip()
+            only_unp = var_only_unposted.get()
+            for idx_item, p_it in enumerate(state["posts_cache"]):
+                p_theme = self._extract_theme_name(p_it)
+                if flt_t and flt_t != "すべて" and _normalize_theme_key(p_theme) != _normalize_theme_key(flt_t):
+                    continue
+                if only_unp and not self._is_unposted_item(p_it):
+                    continue
+                row_idx = p_it.get("_row_idx")
+                sh_name = str(p_it.get("_sheet_name") or "").strip()
+                iid = f"p_{idx_item}"
+                state["post_iid_map"][iid] = (sh_name, row_idx)
+                pid = p_it.get("ID") or p_it.get("id") or (row_idx - 1 if row_idx else "")
+                slot_s = self._extract_time_slot(p_it) or "(シート継承)"
+                wd_s = self._extract_weekdays(p_it) or "(シート継承)"
+                txt_s = self._extract_post_text(p_it).replace("\n", " ")
+                if len(txt_s) > 36:
+                    txt_s = txt_s[:36] + "…"
+                img_s = self._extract_raw_image(p_it) or "なし"
+                top_s = self._extract_topic_or_community(p_it) or "なし"
+                st_s = str(p_it.get("ステータス") or "未投稿").strip()
+                post_tree.insert("", "end", iid=iid, values=(pid, p_theme or "(未設定)", slot_s, wd_s, txt_s, img_s, top_s, st_s))
+
+        def load_account_view(*_args):
+            acc_id, p_file = _cur_acc_and_xlsx()
+            if not os.path.exists(p_file):
+                wb = ensure_account_workbook(p_file, acc_id)
+                wb.close()
+            get_account_images_dir(acc_id, create=True)
+            lbl_acc_file.config(text=f"📄 {os.path.basename(p_file)}  |  📁 images/{sanitize_account_folder_name(acc_id)}/<テーマ名>/")
+
+            t_map = read_theme_settings_from_xlsx(p_file)
+            posts = read_excel_records(p_file)
+            state["themes_cache"] = t_map
+            state["posts_cache"] = posts
+            state["selected_theme_old"] = None
+            state["selected_post_row_idx"] = None
+            state["selected_post_sheet_name"] = None
+
+            for iid in theme_tree.get_children():
+                theme_tree.delete(iid)
+
+            theme_names = []
+            for key, t_info in t_map.items():
+                tn = t_info["name"]
+                theme_names.append(tn)
+                get_account_images_dir(acc_id, create=True, theme_name=tn)
+                p_cnt = sum(1 for p_it in posts if _normalize_theme_key(self._extract_theme_name(p_it)) == key)
+                img_cnt = len(_count_theme_images(acc_id, tn))
+                theme_tree.insert("", "end", iid=key, values=(tn, t_info["time_slot"], t_info.get("weekdays", "毎日"), t_info.get("interval_str", "120〜360分"), t_info.get("mode_str", "1: ランダム"), t_info["status"], f"{p_cnt}件 / {img_cnt}枚"))
+
+            # 投稿シートにあるがテーマ設定に未登録のテーマ名も選択肢に含める
+            for p_it in posts:
+                pt = self._extract_theme_name(p_it)
+                if pt and pt not in theme_names:
+                    theme_names.append(pt)
+                    get_account_images_dir(acc_id, create=True, theme_name=pt)
+
+            cmb_filter_theme["values"] = ["すべて"] + theme_names
+            if var_filter_theme.get() not in ["すべて"] + theme_names:
+                var_filter_theme.set("すべて")
+            cmb_p_theme["values"] = theme_names or ["基本"]
+            if not var_p_theme.get().strip() or var_p_theme.get() not in (theme_names or ["基本"]):
+                var_p_theme.set((theme_names or ["基本"])[0])
+
+            render_post_tree()
+            update_img_resolve_label()
+
+        def on_theme_tree_select(_e=None):
+            sel = theme_tree.selection()
+            if not sel:
+                return
+            t_info = state["themes_cache"].get(sel[0])
+            if not t_info:
+                return
+            state["selected_theme_old"] = t_info["name"]
+            var_t_name.set(t_info["name"])
+            var_t_slot.set(t_info["time_slot"])
+            var_t_weekdays.set(t_info.get("weekdays", "毎日"))
+            var_t_interval.set(t_info.get("interval_str", "120〜360分"))
+            var_t_mode.set(t_info.get("mode_str", "1: ランダム"))
+            var_t_status.set(t_info["status"])
+            var_t_memo.set(t_info["memo"])
+            var_filter_theme.set(t_info["name"])
+            var_p_theme.set(t_info["name"])
+            render_post_tree()
+
+        def on_post_tree_select(_e=None):
+            sel = post_tree.selection()
+            if not sel:
+                return
+            sh_nm, row_idx = state["post_iid_map"].get(sel[0], ("", None))
+            if row_idx is None:
+                return
+            target = next(
+                (p_it for p_it in state["posts_cache"] if p_it.get("_row_idx") == row_idx and str(p_it.get("_sheet_name") or "").strip() == sh_nm),
+                None,
+            )
+            if not target:
+                return
+            state["selected_post_row_idx"] = row_idx
+            state["selected_post_sheet_name"] = sh_nm
+            var_p_theme.set(self._extract_theme_name(target) or "基本")
+            var_p_slot.set(self._extract_time_slot(target))
+            var_p_weekdays.set(self._extract_weekdays(target))
+            var_p_topic.set(self._extract_topic_or_community(target))
+            var_p_image.set(self._extract_raw_image(target))
+            st_raw = str(target.get("ステータス") or "未投稿").strip()
+            var_p_status.set(st_raw if st_raw in ["未投稿", "投稿完了", "エラー"] else "未投稿")
+            txt_p_body.delete("1.0", "end")
+            txt_p_body.insert("1.0", self._extract_post_text(target))
+            update_img_resolve_label()
+
+        def save_theme_clicked():
+            acc_id, p_file = _cur_acc_and_xlsx()
+            tn = var_t_name.get().strip()
+            if not tn:
+                messagebox.showwarning("入力エラー", "テーマ（シート）名を入力してください。")
+                return
+            old_nm = state.get("selected_theme_old")
+            upsert_theme_setting_in_xlsx(
+                p_file, acc_id, tn,
+                time_slot=var_t_slot.get().strip() or "0:00-0:00",
+                weekdays=var_t_weekdays.get().strip() or "毎日",
+                interval=var_t_interval.get().strip() or "120〜360分",
+                post_mode=var_t_mode.get().strip() or "1: ランダム",
+                status=var_t_status.get(),
+                memo=var_t_memo.get().strip(),
+                old_theme_name=old_nm if (old_nm and old_nm in [t["name"] for t in state["themes_cache"].values()]) else None,
+            )
+            state["selected_theme_old"] = tn
+            load_account_view()
+            self.load_excel_data()
+            lbl_btm_status.config(text=f"✅ @{acc_id} のシート「{tn}」を保存し、images/{sanitize_account_folder_name(acc_id)}/{sanitize_theme_folder_name(tn)}/ を作成しました", fg="#34d399")
+
+        def delete_theme_clicked():
+            acc_id, p_file = _cur_acc_and_xlsx()
+            tn = var_t_name.get().strip()
+            if not tn:
+                return
+            if not messagebox.askyesno("テーマシート削除", f"テーマシート「{tn}」をExcelから削除しますか？\n（※画像ファイル自体は消えません。シート内の投稿データも削除されます）"):
+                return
+            delete_theme_setting_from_xlsx(p_file, tn)
+            var_t_name.set("")
+            state["selected_theme_old"] = None
+            load_account_view()
+            self.load_excel_data()
+
+        def open_theme_img_folder_clicked():
+            acc_id, _ = _cur_acc_and_xlsx()
+            tn = var_t_name.get().strip() or var_p_theme.get().strip() or None
+            target_dir = get_account_images_dir(acc_id, create=True, theme_name=tn)
+            try:
+                os.startfile(target_dir)
+            except Exception as ex:
+                messagebox.showerror("エラー", f"フォルダを開けませんでした: {ex}")
+
+        def pick_and_copy_image_for_post():
+            acc_id, _ = _cur_acc_and_xlsx()
+            t_nm = var_p_theme.get().strip() or "基本"
+            if not var_p_theme.get().strip():
+                var_p_theme.set("基本")
+            src = filedialog.askopenfilename(
+                title=f"この投稿に指定する画像を選択 (images/{acc_id}/{sanitize_theme_folder_name(t_nm)}/ にコピー)",
+                filetypes=[("Image Files", "*.png;*.jpg;*.jpeg;*.webp;*.gif"), ("All Files", "*.*")],
+                parent=dialog
+            )
+            if not src:
+                return
+            dest_dir = get_account_images_dir(acc_id, create=True, theme_name=t_nm)
+            base_fn = os.path.basename(src)
+            dest_path = os.path.join(dest_dir, base_fn)
+            if os.path.abspath(src) != os.path.abspath(dest_path):
+                if os.path.exists(dest_path) and os.path.getsize(src) != os.path.getsize(dest_path):
+                    stem, ext = os.path.splitext(base_fn)
+                    dest_path = os.path.join(dest_dir, f"{stem}_{int(time.time()) % 10000}{ext}")
+                import shutil
+                shutil.copy2(src, dest_path)
+            var_p_image.set(os.path.basename(dest_path))
+            update_img_resolve_label()
+            lbl_btm_status.config(text=f"🖼️ 画像をテーマフォルダへ格納しました: images/{sanitize_account_folder_name(acc_id)}/{sanitize_theme_folder_name(t_nm)}/{os.path.basename(dest_path)}", fg="#34d399")
+
+        def choose_existing_theme_image():
+            acc_id, _ = _cur_acc_and_xlsx()
+            t_nm = var_p_theme.get().strip() or "基本"
+            imgs = _count_theme_images(acc_id, t_nm)
+            if not imgs:
+                messagebox.showinfo("画像がありません", f"テーマ「{t_nm}」の画像フォルダに画像がまだありません。\n「🖼️ 画像を選んで格納」から追加するか、フォルダに画像を入れてください。")
+                return
+            pick_win = tk.Toplevel(dialog)
+            pick_win.title(f"テーマ「{t_nm}」の画像一覧")
+            pick_win.geometry("420x360")
+            pick_win.configure(bg="#18181b")
+            pick_win.transient(dialog)
+            pick_win.grab_set()
+            tk.Label(pick_win, text=f"images/{sanitize_account_folder_name(acc_id)}/{sanitize_theme_folder_name(t_nm)}/ 内の画像:", font=("Segoe UI", 9, "bold"), fg="#e4e4e7", bg="#18181b", padx=12, pady=8).pack(anchor="w")
+            lb = tk.Listbox(pick_win, bg="#09090b", fg="#ffffff", font=("Consolas", 10), selectbackground="#2563eb")
+            lb.pack(fill="both", expand=True, padx=12, pady=4)
+            for fn in imgs:
+                lb.insert("end", fn)
+
+            def _apply_pick():
+                s = lb.curselection()
+                if s:
+                    var_p_image.set(lb.get(s[0]))
+                    update_img_resolve_label()
+                pick_win.destroy()
+
+            lb.bind("<Double-Button-1>", lambda _e: _apply_pick())
+            btn_f = tk.Frame(pick_win, bg="#09090b", padx=12, pady=8)
+            btn_f.pack(side="bottom", fill="x")
+            tk.Button(btn_f, text="この画像を指定", bg="#10b981", fg="#ffffff", font=("Segoe UI", 9, "bold"), padx=12, pady=4, relief="flat", command=_apply_pick).pack(side="right")
+            tk.Button(btn_f, text="キャンセル", bg="#27272a", fg="#ffffff", font=("Segoe UI", 9), padx=10, pady=4, relief="flat", command=pick_win.destroy).pack(side="right", padx=6)
+
+        def clear_post_form():
+            state["selected_post_row_idx"] = None
+            state["selected_post_sheet_name"] = None
+            post_tree.selection_remove(post_tree.selection())
+            var_p_slot.set("")
+            var_p_weekdays.set("")
+            var_p_topic.set("")
+            var_p_image.set("")
+            var_p_status.set("未投稿")
+            txt_p_body.delete("1.0", "end")
+            update_img_resolve_label()
+
+        def save_post_clicked(as_new=False):
+            acc_id, p_file = _cur_acc_and_xlsx()
+            body_txt = txt_p_body.get("1.0", "end").strip()
+            if not body_txt:
+                messagebox.showwarning("入力エラー", "ポスト文章を入力してください。")
+                return
+            t_nm = var_p_theme.get().strip() or "基本"
+            existing_themes = read_theme_settings_from_xlsx(p_file)
+            if _normalize_theme_key(t_nm) not in existing_themes:
+                upsert_theme_setting_in_xlsx(
+                    p_file, acc_id, t_nm,
+                    time_slot=(var_p_slot.get().strip() or "0:00-0:00"),
+                    weekdays=(var_p_weekdays.get().strip() or "毎日"),
+                    interval="120〜360分", status="有効"
+                )
+            else:
+                get_account_images_dir(acc_id, create=True, theme_name=t_nm)
+
+            row_target = None if as_new else state.get("selected_post_row_idx")
+            sheet_target = None if as_new else state.get("selected_post_sheet_name")
+            if not as_new and row_target is None:
+                messagebox.showwarning("未選択", "更新する投稿を一覧から選択するか、「➕ 新規ポストとして追加」を押してください。")
+                return
+            post_payload = {
+                "theme": t_nm,
+                "text": body_txt,
+                "topic": var_p_topic.get().strip(),
+                "image": var_p_image.get().strip(),
+                "time_slot": var_p_slot.get().strip(),
+                "weekdays": var_p_weekdays.get().strip(),
+                "status": var_p_status.get() or "未投稿",
+            }
+            saved_row, saved_sheet = save_or_update_post_row_in_xlsx(p_file, acc_id, post_payload, row_idx=row_target, sheet_name=sheet_target)
+            load_account_view()
+            self.load_excel_data()
+            matched_iid = next((k for k, v in state["post_iid_map"].items() if v == (saved_sheet, saved_row)), None)
+            if matched_iid and matched_iid in post_tree.get_children():
+                post_tree.selection_set(matched_iid)
+                state["selected_post_row_idx"] = saved_row
+                state["selected_post_sheet_name"] = saved_sheet
+            lbl_btm_status.config(text=f"💾 @{acc_id} の投稿 (シート:{saved_sheet} 行{saved_row}) を保存しました", fg="#34d399")
+
+        def delete_post_clicked():
+            acc_id, p_file = _cur_acc_and_xlsx()
+            row_idx = state.get("selected_post_row_idx")
+            sh_nm = state.get("selected_post_sheet_name")
+            if not row_idx:
+                messagebox.showwarning("未選択", "削除する投稿を一覧から選択してください。")
+                return
+            if not messagebox.askyesno("削除確認", f"選択中の投稿 (シート:{sh_nm or '-'} 行 {row_idx}) を削除しますか？"):
+                return
+            delete_post_row_from_xlsx(p_file, row_idx, sheet_name=sh_nm)
+            clear_post_form()
+            load_account_view()
+            self.load_excel_data()
+            lbl_btm_status.config(text=f"🗑️ @{acc_id} の投稿 (シート:{sh_nm or '-'} 行{row_idx}) を削除しました", fg="#fbbf24")
+
+        def reset_selected_post_status():
+            var_p_status.set("未投稿")
+            save_post_clicked(as_new=False)
+
+        tk.Button(t_btns1, text="➕ シート(テーマ)追加 / 更新", bg="#db2777", fg="#ffffff", font=("Segoe UI", 9, "bold"), padx=10, pady=4, relief="flat", cursor="hand2", command=save_theme_clicked).pack(side="left", padx=(0, 6))
+        tk.Button(t_btns1, text="🗑️ シート削除", bg="#7f1d1d", fg="#fca5a5", font=("Segoe UI", 9), padx=8, pady=4, relief="flat", cursor="hand2", command=delete_theme_clicked).pack(side="left")
+        tk.Button(t_btns2, text="📂 このテーマの画像フォルダを開く", bg="#0f766e", fg="#ccfbf1", font=("Segoe UI", 9, "bold"), padx=10, pady=4, relief="flat", cursor="hand2", command=open_theme_img_folder_clicked).pack(side="left")
+        tk.Button(t_btns2, text="🆕 新規シート入力", bg="#27272a", fg="#e4e4e7", font=("Segoe UI", 8), padx=8, pady=4, relief="flat", cursor="hand2", command=lambda: (state.__setitem__("selected_theme_old", None), var_t_name.set(""), var_t_slot.set("0:00-0:00"), var_t_weekdays.set("毎日"), var_t_interval.set("120〜360分"), var_t_mode.set("1: ランダム"), var_t_memo.set(""))).pack(side="right")
+
+        tk.Button(pf_r2, text="🖼️ 画像を選んで格納", bg="#059669", fg="#ffffff", font=("Segoe UI", 8, "bold"), padx=8, pady=3, relief="flat", cursor="hand2", command=pick_and_copy_image_for_post).pack(side="left", padx=2)
+        tk.Button(pf_r2, text="📁 フォルダから選択", bg="#2563eb", fg="#ffffff", font=("Segoe UI", 8, "bold"), padx=8, pady=3, relief="flat", cursor="hand2", command=choose_existing_theme_image).pack(side="left", padx=2)
+        tk.Button(pf_r2, text="✖ 解除", bg="#27272a", fg="#fca5a5", font=("Segoe UI", 8), padx=6, pady=3, relief="flat", cursor="hand2", command=lambda: var_p_image.set("")).pack(side="left", padx=2)
+
+        tk.Button(pf_r4, text="➕ 新規ポストとして追加", bg="#10b981", fg="#ffffff", font=("Segoe UI", 9, "bold"), padx=10, pady=5, relief="flat", cursor="hand2", command=lambda: save_post_clicked(as_new=True)).pack(side="left", padx=(0, 6))
+        tk.Button(pf_r4, text="💾 選択ポストを更新保存", bg="#0284c7", fg="#ffffff", font=("Segoe UI", 9, "bold"), padx=10, pady=5, relief="flat", cursor="hand2", command=lambda: save_post_clicked(as_new=False)).pack(side="left", padx=(0, 6))
+        tk.Button(pf_r4, text="🔁 未投稿に戻す", bg="#4f46e5", fg="#ffffff", font=("Segoe UI", 8, "bold"), padx=8, pady=5, relief="flat", cursor="hand2", command=reset_selected_post_status).pack(side="left", padx=(0, 6))
+        tk.Button(pf_r4, text="🗑️ 削除", bg="#7f1d1d", fg="#fca5a5", font=("Segoe UI", 9), padx=8, pady=5, relief="flat", cursor="hand2", command=delete_post_clicked).pack(side="left")
+        tk.Button(pf_r4, text="🧹 新規入力クリア", bg="#27272a", fg="#e4e4e7", font=("Segoe UI", 8), padx=8, pady=5, relief="flat", cursor="hand2", command=clear_post_form).pack(side="right")
+
+        tk.Button(acc_bar, text="🔄 再読込", bg="#27272a", fg="#ffffff", font=("Segoe UI", 8, "bold"), padx=8, pady=3, relief="flat", cursor="hand2", command=load_account_view).pack(side="right", padx=3)
+        tk.Button(acc_bar, text="📊 このアカウントのExcelを開く", bg="#262626", fg="#ffffff", font=("Segoe UI", 8), padx=8, pady=3, relief="flat", cursor="hand2", command=lambda: os.startfile(_cur_acc_and_xlsx()[1])).pack(side="right", padx=3)
+        tk.Button(acc_bar, text="🖼️ images/<アカウント>を開く", bg="#0f766e", fg="#ccfbf1", font=("Segoe UI", 8), padx=8, pady=3, relief="flat", cursor="hand2", command=lambda: os.startfile(get_account_images_dir(var_acc.get().strip(), create=True))).pack(side="right", padx=3)
+
+        cmb_acc.bind("<<ComboboxSelected>>", load_account_view)
+        cmb_filter_theme.bind("<<ComboboxSelected>>", lambda _e: render_post_tree())
+        theme_tree.bind("<<TreeviewSelect>>", on_theme_tree_select)
+        post_tree.bind("<<TreeviewSelect>>", on_post_tree_select)
+
+        load_account_view()
+
     def open_posts_excel(self):
-        all_accounts = read_excel_records(self.account_config_path)
-        valid_accounts = [acc for acc in all_accounts if str(acc.get("アカウントID") or acc.get("アカウント名") or "").strip() != ""]
-        first_id = str(valid_accounts[0].get("アカウントID") or valid_accounts[0].get("アカウント名") or "").strip() if valid_accounts else ""
-        posts_file = self._find_posts_file(first_id)
+        sel = self._get_selected_account_record()
+        first_id = str(sel.get("アカウントID") or sel.get("アカウント名") or "").strip() if sel else ""
+        posts_file = self._find_posts_file(first_id) if first_id else None
         if posts_file and os.path.exists(posts_file):
             ensure_daily_posts_sheet_exists(posts_file)
             os.startfile(posts_file)
@@ -6986,31 +10473,13 @@ class ThreadsPosterGUI:
         else:
             messagebox.showwarning("警告", "投稿エクセルファイルが見つかりません。")
 
-    def open_daily_posts_excel(self):
-        all_accounts = read_excel_records(self.account_config_path)
-        valid_accounts = [acc for acc in all_accounts if str(acc.get("アカウントID") or acc.get("アカウント名") or "").strip() != ""]
-        first_id = str(valid_accounts[0].get("アカウントID") or valid_accounts[0].get("アカウント名") or "").strip() if valid_accounts else ""
-        posts_file = self._find_posts_file(first_id)
-        if posts_file and os.path.exists(posts_file):
-            ensure_daily_posts_sheet_exists(posts_file)
-            try:
-                os.startfile(posts_file)
-                self.log(f"[INFO] 🌅 日常ポスト設定シート（{os.path.basename(posts_file)} 内の「日常ポスト」シート）を開きました。時間帯や文章をご自由に編集してください。")
-            except Exception as e:
-                self.log(f"[WARN] エクセルを開けませんでした: {e}")
-        elif os.path.exists(self.account_config_path):
-            os.startfile(self.account_config_path)
-        else:
-            messagebox.showwarning("警告", "投稿エクセルファイルが見つかりません。")
-
     def reset_all_posts_to_unposted(self):
         try:
-            all_accounts = read_excel_records(self.account_config_path)
-            valid_accounts = [acc for acc in all_accounts if str(acc.get("アカウントID") or acc.get("アカウント名") or "").strip() != ""]
-            if not valid_accounts:
+            sel = self._get_selected_account_record()
+            if not sel:
                 messagebox.showwarning("警告", "アカウント情報.xlsx にアカウントが見つかりません。")
                 return
-            first_id = str(valid_accounts[0].get("アカウントID") or valid_accounts[0].get("アカウント名") or "").strip()
+            first_id = str(sel.get("アカウントID") or sel.get("アカウント名") or "").strip()
             posts_file = self._find_posts_file(first_id)
             if not posts_file or not os.path.exists(posts_file):
                 messagebox.showwarning("警告", f"投稿ファイル '{posts_file}' が見つかりません。")
@@ -7118,11 +10587,8 @@ class ThreadsPosterGUI:
         for acc in valid_accounts:
             acc_name = str(acc.get("アカウントID") or acc.get("アカウント名") or "").strip()
             pf = self._find_posts_file(acc_name)
-            custom_settings = read_account_settings_from_post_file(pf) if pf else {}
-            clean_acc_id = acc_name.lstrip("@").strip()
-            p_sub = custom_settings.get("profile_dir", "")
-            if not p_sub or any(k in p_sub for k in ["コミュニティ", "トピック", "モード", "間隔", "ツイート", "ポスト"]): p_sub = f"chrome_profiles/{clean_acc_id}"
-            p_dir = os.path.join(BASE_DIR, p_sub)
+            custom_settings = read_account_settings_from_post_file(pf) if (pf and os.path.exists(pf)) else {}
+            _, _, _, p_dir = _resolve_profile_dir_for_account(acc, custom_settings=custom_settings)
             clean_account_profile(acc_name, p_dir, reason="手動リクエストによる全初期化", log_func=self.log, full_reset=True)
             cleaned_count += 1
 
@@ -7142,16 +10608,12 @@ class ThreadsPosterGUI:
         from tkinter import simpledialog
 
         default_name = ""
-        if os.path.exists(self.account_config_path):
-            try:
-                accs = read_excel_records(self.account_config_path)
-                for a in accs:
-                    aid = str(a.get("プロファイル名") or a.get("アカウントID") or a.get("アカウント名") or "").strip().lstrip("@")
-                    if aid:
-                        default_name = aid
-                        break
-            except Exception:
-                pass
+        sel_acc = self._get_selected_account_record()
+        if sel_acc:
+            sel_cid = str(sel_acc.get("アカウントID") or sel_acc.get("アカウント名") or "").strip().lstrip("@")
+            sel_pf = self._find_posts_file(sel_cid)
+            sel_cs = read_account_settings_from_post_file(sel_pf) if (sel_pf and os.path.exists(sel_pf)) else {}
+            _, _, default_name, _ = _resolve_profile_dir_for_account(sel_acc, custom_settings=sel_cs)
 
         prof_input = simpledialog.askstring(
             "Chrome カスタムプロファイル起動ツール",
@@ -7225,16 +10687,15 @@ class ThreadsPosterGUI:
         def _worker():
             try:
                 from playwright.sync_api import sync_playwright
-                all_accounts = read_excel_records(self.account_config_path)
-                active_accounts = [acc for acc in all_accounts if str(acc.get("アカウントID") or acc.get("アカウント名") or "").strip() != ""]
-                if not active_accounts:
+                first_acc = self._get_selected_account_record()
+                if not first_acc:
                     self.log("[WARN] アカウント情報.xlsx に有効なアカウントがありません。")
                     return
-                first_acc = active_accounts[0]
                 account_name = str(first_acc.get("アカウントID") or first_acc.get("アカウント名") or "").strip()
-                
                 clean_acc_id = account_name.lstrip("@").strip()
-                profile_dir = os.path.join(BASE_DIR, f"chrome_profiles/{clean_acc_id}")
+                pf_login = self._find_posts_file(clean_acc_id)
+                cs_login = read_account_settings_from_post_file(pf_login) if (pf_login and os.path.exists(pf_login)) else {}
+                _, clean_acc_id, _, profile_dir = _resolve_profile_dir_for_account(first_acc, custom_settings=cs_login)
                 os.makedirs(profile_dir, exist_ok=True)
 
                 with sync_playwright() as p:
@@ -7361,19 +10822,14 @@ class ThreadsPosterGUI:
             messagebox.showerror("エラー", f"'{self.account_config_path}' が見つかりません。")
             return
 
-        all_accounts = read_excel_records(self.account_config_path)
-        valid_accounts = [
-            acc for acc in all_accounts
-            if str(acc.get("アカウントID") or acc.get("アカウント名") or "").strip() != ""
-        ]
-        if not valid_accounts:
+        target_acc = self._get_selected_account_record()
+        if not target_acc:
             messagebox.showwarning("警告", "アカウント情報.xlsx に有効なアカウントが見つかりません。")
             return
 
-        target_acc = valid_accounts[0]
-        target_acc_name = str(target_acc.get("アカウントID") or target_acc.get("アカウント名") or "").strip().lstrip("@")
-        prof_name = target_acc_name
-        prof_dir = os.path.join(BASE_DIR, f"chrome_profiles/{prof_name}")
+        pf_edit = self._find_posts_file(str(target_acc.get("アカウントID") or target_acc.get("アカウント名") or "").strip().lstrip("@"))
+        cs_edit = read_account_settings_from_post_file(pf_edit) if (pf_edit and os.path.exists(pf_edit)) else {}
+        _, target_acc_name, prof_name, prof_dir = _resolve_profile_dir_for_account(target_acc, custom_settings=cs_edit)
         os.makedirs(prof_dir, exist_ok=True)
 
         self.log(f"[INFO] 👤 @{target_acc_name} のプロフィール編集用ブラウザを起動しています...")
@@ -7476,16 +10932,21 @@ class ThreadsPosterGUI:
         # 起動直前に最新のExcelデータ（ID・パスワード）を自動再読込
         self.load_excel_data()
 
+        disabled_tokens = {"無効", "停止", "OFF", "off", "0", "false", "停止 (要電話番号認証)"}
         accounts = read_excel_records(self.account_config_path)
-        active = [a for a in accounts if str(a.get("アカウントID") or "").strip()]
+        active = [
+            a for a in accounts
+            if str(a.get("アカウントID") or a.get("アカウント名") or "").strip()
+            and str(a.get("有効/無効") or a.get("有効無効") or a.get("ステータス") or "").strip() not in disabled_tokens
+        ]
         if not active:
             messagebox.showwarning(
                 "アカウント未検出",
-                f"『{os.path.basename(self.account_config_path)}』に有効なアカウントが読み込めませんでした。\n\n"
+                f"『{os.path.basename(self.account_config_path)}』に『有効』なアカウントが読み込めませんでした。\n\n"
                 "【確認事項】\n"
-                "1. Excelで入力中のセルを確定（Enterキーを押す）\n"
-                "2. Excelファイルを上書き保存（Ctrl+S）\n"
-                "3. 1行目に「アカウントID」「パスワード」が入力されているか\n\n"
+                "1. 「有効/無効」列が「有効」になっているか\n"
+                "2. Excelで入力中のセルを確定（Enterキーを押す）して上書き保存（Ctrl+S）したか\n"
+                "3. 「アカウントID」が入力されているか\n\n"
                 "ご確認のうえ、再度お試しください。"
             )
             return
@@ -7526,14 +10987,29 @@ class ThreadsPosterGUI:
                 self.root.after(0, lambda err=ie: messagebox.showerror("エラー", f"Playwrightが見つかりません:\n{err}\n\nコマンドプロンプトで pip install playwright を実行してください。"))
                 return
 
+            disabled_tokens = {"無効", "停止", "OFF", "off", "0", "false", "停止 (要電話番号認証)"}
             all_accounts = read_excel_records(self.account_config_path)
             active_accounts = [
                 acc for acc in all_accounts
                 if str(acc.get("アカウントID") or acc.get("アカウント名") or "").strip() != ""
+                and str(acc.get("有効/無効") or acc.get("有効無効") or acc.get("ステータス") or "").strip() not in disabled_tokens
             ]
 
+            sel_norm = str(self.var_selected_main_account.get() or "").strip().lstrip("@").lower()
+            if sel_norm and len(active_accounts) > 1:
+                prioritized = [
+                    acc for acc in active_accounts
+                    if str(acc.get("アカウントID") or acc.get("アカウント名") or "").strip().lstrip("@").lower() == sel_norm
+                ]
+                others = [
+                    acc for acc in active_accounts
+                    if str(acc.get("アカウントID") or acc.get("アカウント名") or "").strip().lstrip("@").lower() != sel_norm
+                ]
+                if prioritized:
+                    active_accounts = prioritized + others
+
             if not active_accounts:
-                self.log("[WARN] アカウント情報.xlsx に有効なアカウントがありません。")
+                self.log("[WARN] アカウント情報.xlsx に『有効』なアカウントがありません。")
                 return
 
             with sync_playwright() as p:
@@ -7553,7 +11029,7 @@ class ThreadsPosterGUI:
             self.root.after(0, lambda: self.btn_start.config(state="normal"))
             self.root.after(0, lambda: self.btn_stop.config(state="disabled"))
             self.root.after(0, lambda: self.status_lbl.config(text="● 待機中", fg="#10b981"))
-            self.root.after(0, self.load_excel_data)
+            self.root.after(0, lambda: self.load_excel_data(silent=True))
 
     def _run_single_window_rotation_loop(self, active_accounts, p):
         """
@@ -7576,11 +11052,10 @@ class ThreadsPosterGUI:
             self.log("[INFO] 🧹 【新機能2: 自動プロファイル初期化】有効: Meta画面警告や連続エラー検知時にCookie/指紋を自動完全リセット")
         if self.var_topic_ab_test.get():
             self.log("[INFO] 🎯 【新機能3: トピックA/Bテスト】有効: 複数トピック候補を投稿ごとに自動均等ローテーション")
-        if self.var_daily_greeting.get():
-            self.log("[INFO] 🌅 【日常つぶやき・あいさつ枠】有効: 朝・昼・夕・夜枠の最優先投稿（スピンタックス自動展開・動的日付置換・30日クールダウン＆ランダム選出）")
+        self.log("[INFO] 🔀 【テーマ別独立スケジュール】有効: 複数テーマの実行時間が重なっても、他テーマの待機時間を待たず即座に順次ポストします")
         self.log("=" * 65)
 
-        # アカウント状態キューの初期化
+        # アカウント状態キューの初期化（テーマ別に独立した next_run_time を保持）
         account_states = []
         for acc in active_accounts:
             acc_name = str(acc.get("アカウントID") or acc.get("アカウント名") or "").strip()
@@ -7589,54 +11064,68 @@ class ThreadsPosterGUI:
                 "account": acc,
                 "name": acc_name,
                 "posts_file": pf,
-                "next_run_time": datetime.now(), # 初回は即座に実行可能
+                "next_run_time": datetime.now(), # 後方互換用
+                "theme_next_run_times": {},      # テーマ別次回実行予定時刻（未登録テーマは即時実行）
                 "cycle_num": 1,
                 "consecutive_errors": 0,
                 "topic_rotation_counter": 0,
             })
 
+        try:
+            last_acc_cfg_mtime = os.path.getmtime(self.account_config_path) if (self.account_config_path and os.path.exists(self.account_config_path)) else 0
+        except Exception:
+            last_acc_cfg_mtime = 0
+        last_wait_log_key = None
+
         while self.is_running:
             now = datetime.now()
 
-            # 0. 🌅 【日常つぶやき・あいさつ枠】の最優先判定
-            # 通常のプロモ投稿間隔とは完全に独立し、指定時間帯（朝・昼・夜など）に合致した日常ポストを最優先で投稿
-            if self.var_daily_greeting.get():
-                daily_executed = False
-                for a_state in account_states:
-                    pf = a_state["posts_file"]
-                    if not pf or not os.path.exists(pf):
-                        continue
-                    # 【BAN対策1】前回失敗・実行後のクールダウン待機チェック（連続再試行スピンを完全防止）
-                    daily_cooldown_until = a_state.get("daily_cooldown_until", datetime.min)
-                    if now < daily_cooldown_until:
-                        continue
-
-                    daily_data = get_eligible_daily_post(pf)
-                    if daily_data:
-                        acc_name = a_state["name"]
-                        self.log("=" * 60)
-                        self.log(f"[INFO] 🌅 【日常つぶやき枠】@{acc_name} の「{daily_data['slot_name']} ({daily_data['time_slot']})」を検知しました！通常プロモ投稿に優先して日常ポストを実行します。")
-                        self.root.after(0, lambda an=acc_name, sn=daily_data['slot_name']: self.status_lbl.config(text=f"● 日常投稿中: @{an} [{sn}]", fg="#fb923c"))
-                        ok = self._execute_daily_greeting_post(a_state, daily_data, p)
-                        if ok:
-                            self.log(f"[INFO] 🌿 @{acc_name} の日常ポスト完了。ブラウザを完全終了しメモリを解放しました。")
-                            # 【BAN対策2】日常ポスト成功後、次回の通常プロモ投稿時刻を45〜90分後に延期（同一アカウントでの連投BANを完全回避）
-                            safe_promo_delay = random.randint(2700, 5400)
-                            a_state["next_run_time"] = datetime.now() + timedelta(seconds=safe_promo_delay)
-                            a_state["daily_cooldown_until"] = datetime.now() + timedelta(minutes=60)
-                            rem_m = safe_promo_delay // 60
-                            self.log(f"[INFO] 🛡️ 連投BAN防止: @{acc_name} の次回の通常プロモ投稿を【{rem_m}分後】に設定しました（日常ポスト直後の連投を遮断）。")
-                        else:
-                            # 【BAN対策3】失敗時の無限リトライ防止（20分間のクールダウンを設定し429強制ログアウトを回避）
-                            a_state["daily_cooldown_until"] = datetime.now() + timedelta(minutes=20)
-                            self.log(f"[WARN] 🛡️ 連続再試行BAN防止: @{acc_name} の日常ポスト失敗を検知。20分間の待機クールダウンを設定しました。")
-
-                        self.root.after(0, self.load_excel_data)
-                        daily_executed = True
-                        break
-                if daily_executed:
-                    time.sleep(5)
-                    continue
+            # アカウント情報.xlsx が自動投稿中に更新・保存された場合も自動反映
+            try:
+                if self.account_config_path and os.path.exists(self.account_config_path):
+                    cur_acc_cfg_mtime = os.path.getmtime(self.account_config_path)
+                    if cur_acc_cfg_mtime != last_acc_cfg_mtime:
+                        last_acc_cfg_mtime = cur_acc_cfg_mtime
+                        disabled_tokens_live = {"無効", "停止", "OFF", "off", "0", "false", "停止 (要電話番号認証)"}
+                        latest_accs = read_excel_records(self.account_config_path)
+                        latest_active = [
+                            acc for acc in latest_accs
+                            if str(acc.get("アカウントID") or acc.get("アカウント名") or "").strip() != ""
+                            and str(acc.get("有効/無効") or acc.get("有効無効") or acc.get("ステータス") or "").strip() not in disabled_tokens_live
+                        ]
+                        existing_by_key = {
+                            str(s["name"]).strip().lstrip("@").lower(): s
+                            for s in account_states
+                        }
+                        new_states = []
+                        for acc in latest_active:
+                            acc_name = str(acc.get("アカウントID") or acc.get("アカウント名") or "").strip()
+                            k = acc_name.lstrip("@").lower()
+                            pf = self._find_posts_file(acc_name)
+                            if k in existing_by_key:
+                                st_obj = existing_by_key[k]
+                                st_obj["account"] = acc
+                                st_obj["name"] = acc_name
+                                st_obj["posts_file"] = pf
+                                st_obj.setdefault("theme_next_run_times", {})
+                                new_states.append(st_obj)
+                            else:
+                                new_states.append({
+                                    "account": acc,
+                                    "name": acc_name,
+                                    "posts_file": pf,
+                                    "next_run_time": datetime.now(),
+                                    "theme_next_run_times": {},
+                                    "cycle_num": 1,
+                                    "consecutive_errors": 0,
+                                    "topic_rotation_counter": 0,
+                                })
+                        if new_states:
+                            account_states = new_states
+                            self.log(f"[INFO] 📂 アカウント情報.xlsx の更新を検知し、稼働中リストへ自動反映しました（有効: {len(account_states)}件）。")
+                            self.root.after(0, lambda: self.load_excel_data(silent=True))
+            except Exception:
+                pass
 
             # 1. 各アカウントの未投稿ポスト存在確認＆自動ループ周回処理
             active_account_count = 0
@@ -7659,9 +11148,11 @@ class ThreadsPosterGUI:
                 self.log("[SUCCESS] 🎉 全アカウントの未投稿ポストがすべて完了しました！")
                 break
 
-            # 2. 現在実行時間帯に合致し、かつ予定時刻 (next_run_time <= now) に到達しているアカウントを抽出
-            eligible_accounts = []
-            for a_state in account_states:
+            # 2. 現在実行時間帯に合致する投稿をテーマ単位で抽出し、各テーマ独立タイマー (theme_next_run_time <= now) を判定
+            eligible_tasks = []
+            ready_now_or_later_tasks = []
+            waiting_timeslot_count = 0
+            for acc_order, a_state in enumerate(account_states):
                 pf = a_state["posts_file"]
                 if not pf or not os.path.exists(pf):
                     continue
@@ -7671,55 +11162,96 @@ class ThreadsPosterGUI:
                     continue
 
                 settings = read_account_settings_from_post_file(pf)
-                time_slot = settings.get("time_slot", "0:00-0:00")
-                if not is_within_target_hours(time_slot, now.hour):
+                theme_map = read_theme_settings_from_xlsx(pf)
+                eligible_themes_for_acc = {}
+                for p_it in unp:
+                    ps = resolve_post_theme_schedule(p_it, theme_map, settings, now_dt=now)
+                    if ps["is_eligible_now"]:
+                        t_key = ps["theme"] or "基本"
+                        eligible_themes_for_acc.setdefault(t_key, []).append(p_it)
+
+                if not eligible_themes_for_acc:
+                    waiting_timeslot_count += 1
                     continue
 
-                if a_state["next_run_time"] <= now:
-                    eligible_accounts.append(a_state)
+                t_timers = a_state.setdefault("theme_next_run_times", {})
+                for th_idx, t_key in enumerate(eligible_themes_for_acc.keys()):
+                    t_next = t_timers.get(t_key)
+                    if t_next is None:
+                        t_next = now
+                        t_timers[t_key] = t_next
+                    ready_now_or_later_tasks.append((t_next, acc_order, th_idx, a_state, t_key))
+                    if t_next <= now:
+                        eligible_tasks.append((t_next, acc_order, th_idx, a_state, t_key))
 
-            # 3. 待機時間が到達したアカウントがある場合
-            if eligible_accounts:
-                # 待機時間が来たアカウントを優先（最も待機時間が経過している順）
-                eligible_accounts.sort(key=lambda a: a["next_run_time"])
-                target_state = eligible_accounts[0]
+            # 3. 待機時間が到達した（または初回・別テーマで時間重複して即実行可能な）タスクがある場合
+            if eligible_tasks:
+                # 最も予定時刻が早く到来している（長く待っている）アカウント＋テーマを優先実行
+                eligible_tasks.sort(key=lambda item: (item[0], item[1], item[2]))
+                _, _, _, target_state, chosen_theme = eligible_tasks[0]
                 acc_name = target_state["name"]
 
-                rem_queue = len(eligible_accounts) - 1
+                rem_queue = len(eligible_tasks) - 1
                 self.log("-" * 55)
-                self.log(f"[INFO] 🪟 【1窓ローテーション】@{acc_name} の実行番が来ました（他待機中: {rem_queue} アカウント）。ブラウザを1窓のみ起動します。")
-                self.root.after(0, lambda an=acc_name: self.status_lbl.config(text=f"● 実行中: @{an} (1窓のみ起動中)", fg="#38bdf8"))
+                self.log(f"[INFO] 🪟 【1窓ローテーション】@{acc_name} [テーマ: {chosen_theme}] の実行番が来ました（他即実行待機: {rem_queue} 件）。ブラウザを1窓のみ起動します。")
+                self.root.after(0, lambda an=acc_name, th=chosen_theme: self.status_lbl.config(text=f"● 実行中: @{an} [{th}] (1窓のみ起動中)", fg="#38bdf8"))
 
-                # 1アカウント分だけブラウザを起動 ➔ 1件投稿 ➔ ブラウザ完全終了
-                wait_sec = self._execute_single_post(target_state, p)
+                # 1アカウント・1テーマ分だけブラウザを起動 ➔ 1件投稿 ➔ ブラウザ完全終了
+                wait_sec = self._execute_single_post(target_state, p, target_theme=chosen_theme)
+                last_wait_log_key = None
 
-                # 次回予定時刻を設定（指定の待機秒数後）
-                target_state["next_run_time"] = datetime.now() + timedelta(seconds=wait_sec)
+                # 次回予定時刻は「今回実行したテーマのみ」に記録（他の重複テーマを待たせない）
+                next_theme_dt = datetime.now() + timedelta(seconds=wait_sec)
+                target_state.setdefault("theme_next_run_times", {})[chosen_theme] = next_theme_dt
+                target_state["next_run_time"] = next_theme_dt
                 rem_min = wait_sec // 60
-                self.log(f"[INFO] 🌿 @{acc_name} の処理完了。ブラウザを完全終了しメモリを解放しました。次回実行予定: {target_state['next_run_time'].strftime('%H:%M:%S')} (約{rem_min}分後)")
-                self.root.after(0, self.load_excel_data)
+                iv_disp = target_state.get("last_interval_label") or "設定値"
+                if target_state.get("last_post_ok", False):
+                    self.log(f"[INFO] 🌿 @{acc_name} [テーマ: {chosen_theme}] の処理完了（ポスト間隔: {iv_disp}）。ブラウザを完全終了しメモリを解放しました。同テーマ次回予定: {next_theme_dt.strftime('%H:%M:%S')} (約{rem_min}分後)")
+                else:
+                    self.log(f"[WARN] ⚠️ @{acc_name} [テーマ: {chosen_theme}] は今回の投稿でエラー/未確認のためリトライ待機に入ります（通常ポスト間隔: {iv_disp}）。同テーマ再試行予定: {next_theme_dt.strftime('%H:%M:%S')} (約{rem_min}分後)")
+                self.root.after(0, lambda: self.load_excel_data(silent=True))
 
-                # 時間が被った別アカウントがあれば、このまま即座に次のループで次アカウントを実行！
+                # 時間が被った別テーマや別アカウントがあれば、待機せず即座に次のループで連続実行！
                 continue
 
-            # 4. 到達したアカウントがない場合（全アカウント待機中）
+            # 4. 到達したテーマ/アカウントがない場合（全テーマ待機中 / 時間帯待ち）
             # 常に開いているブラウザは「0」！メモリは完全に解放された状態！
-            all_valid_pending = [
-                a for a in account_states
-                if a["posts_file"] and os.path.exists(a["posts_file"])
-                and any(self._is_unposted_item(p_it) for p_it in read_excel_records(a["posts_file"]))
-            ]
-            if not all_valid_pending:
-                break
+            if not ready_now_or_later_tasks:
+                all_valid_pending = [
+                    a for a in account_states
+                    if a["posts_file"] and os.path.exists(a["posts_file"])
+                    and any(self._is_unposted_item(p_it) for p_it in read_excel_records(a["posts_file"]))
+                ]
+                if not all_valid_pending:
+                    break
+                slot_wait_key = ("timeslot", waiting_timeslot_count)
+                if last_wait_log_key != slot_wait_key:
+                    last_wait_log_key = slot_wait_key
+                    self.log(f"[INFO] ⏳ テーマ指定の実行時間・曜日の到来待ちのため待機中 ({waiting_timeslot_count} アカウント / ブラウザ完全終了・省メモリ)")
+                self.root.after(0, lambda cnt=waiting_timeslot_count: self.status_lbl.config(
+                    text=f"● 待機中: テーマ指定の実行時間・曜日の到来待ち ({cnt} アカウント) [省メモリ待機]",
+                    fg="#fbbf24"
+                ))
+                for _ in range(20):
+                    if not self.is_running:
+                        break
+                    time.sleep(1)
+                continue
 
-            nearest_acc = min(all_valid_pending, key=lambda a: a["next_run_time"])
-            secs_left = max(1.0, (nearest_acc["next_run_time"] - datetime.now()).total_seconds())
+            nearest_dt, _, _, nearest_acc, nearest_theme = min(ready_now_or_later_tasks, key=lambda item: item[0])
+            secs_left = max(1.0, (nearest_dt - datetime.now()).total_seconds())
             mins_left = int(secs_left // 60)
             secs_rem = int(secs_left % 60)
             time_disp = f"{mins_left:02d}分{secs_rem:02d}秒"
 
-            self.root.after(0, lambda an=nearest_acc['name'], td=time_disp: self.status_lbl.config(
-                text=f"● 待機中: 次回 @{an} (あと {td}) [ブラウザ完全終了・省メモリ]",
+            wait_key = (nearest_acc['name'], nearest_theme, nearest_dt.strftime('%H:%M:%S'))
+            if last_wait_log_key != wait_key:
+                last_wait_log_key = wait_key
+                self.log(f"[INFO] ⏳ 次回実行まで待機中: @{nearest_acc['name']} [テーマ: {nearest_theme}] 次回予定 {nearest_dt.strftime('%H:%M:%S')} (あと約{mins_left}分{secs_rem:02d}秒 / 省メモリ待機中)")
+
+            self.root.after(0, lambda an=nearest_acc['name'], th=nearest_theme, td=time_disp: self.status_lbl.config(
+                text=f"● 待機中: 次回 @{an} [{th}] (あと {td}) [ブラウザ完全終了・省メモリ]",
                 fg="#10b981"
             ))
 
@@ -7732,7 +11264,7 @@ class ThreadsPosterGUI:
                     break
                 time.sleep(1)
 
-    def _execute_single_post(self, acc_state, p):
+    def _execute_single_post(self, acc_state, p, target_theme=None):
         """
         1アカウント分のブラウザを単独起動し、1件投稿を実行して直ちにブラウザを完全クローズする。
         """
@@ -7740,6 +11272,7 @@ class ThreadsPosterGUI:
         account_name = acc_state["name"]
         posts_file = acc_state["posts_file"]
         cycle_num = acc_state.get("cycle_num", 1)
+        acc_state["last_post_ok"] = False
         _THREAD_LOG_LOCAL.account_name = sanitize_account_folder_name(account_name)
         get_account_images_dir(account_name, create=True)
 
@@ -7754,16 +11287,11 @@ class ThreadsPosterGUI:
             except Exception:
                 pass
 
-        clean_acc_id = account_name.lstrip("@").strip()
-        raw_prof_col = str(account.get("プロファイル名") or account.get("profile") or "").strip().lstrip("@").strip() if isinstance(account, dict) else ""
-        if raw_prof_col and raw_prof_col.lower() not in ["nan", "none", ""] and not any(k in raw_prof_col for k in ["コミュニティ", "トピック", "モード", "間隔", "ツイート", "ポスト"]):
-            prof_name = os.path.basename(raw_prof_col.replace("\\", "/"))
-        else:
-            prof_name = clean_acc_id
+        custom_settings = read_account_settings_from_post_file(posts_file) if (posts_file and os.path.exists(posts_file)) else {}
+        theme_map = read_theme_settings_from_xlsx(posts_file) if (posts_file and os.path.exists(posts_file)) else {}
+        _, clean_acc_id, prof_name, profile_dir = _resolve_profile_dir_for_account(account, custom_settings=custom_settings)
         profile_subpath = f"chrome_profiles/{prof_name}"
-        profile_dir = os.path.join(BASE_DIR, profile_subpath)
         os.makedirs(profile_dir, exist_ok=True)
-        custom_settings = read_account_settings_from_post_file(posts_file)
 
         if "min_interval_sec" in custom_settings:
             min_delay = custom_settings["min_interval_sec"]
@@ -7783,7 +11311,7 @@ class ThreadsPosterGUI:
             if self.var_auto_loop.get():
                 reset_cnt = reset_posts_file_silent(posts_file)
                 self.log(f"[INFO] [{account_name}] 未投稿が0件のため、全 {reset_cnt} 件を『未投稿』に自動リセットしました！")
-                self.root.after(0, self.load_excel_data)
+                self.root.after(0, lambda: self.load_excel_data(silent=True))
                 all_posts = read_excel_records(posts_file)
                 unposted = [p_it for p_it in all_posts if self._is_unposted_item(p_it)]
 
@@ -7791,13 +11319,44 @@ class ThreadsPosterGUI:
                 self.log(f"[WARN] [{account_name}] '{os.path.basename(posts_file)}' に有効な投稿文章がありません。")
                 return 300
 
-        # 今回のローテーションで投稿する1件を選択
-        if post_mode == 1:
-            post_item = random.choice(unposted)
-            self.log(f"[{account_name}] 【モード1: ランダム】未投稿 {len(unposted)} 件中から1件を選択して投稿します。")
+        now_dt = datetime.now()
+        eligible_by_theme = {}
+        for p_it in unposted:
+            ps = resolve_post_theme_schedule(p_it, theme_map, custom_settings, now_dt=now_dt)
+            if ps["is_eligible_now"]:
+                t_key = ps["theme"] or "基本"
+                eligible_by_theme.setdefault(t_key, []).append((p_it, ps))
+
+        eligible_count = sum(len(v) for v in eligible_by_theme.values())
+        if eligible_count == 0:
+            self.log(f"[INFO] ⏳ [{account_name}] 未投稿 {len(unposted)} 件はありますが、現在時刻({now_dt.strftime('%Y-%m-%d %H:%M')})の実行時間・曜日に該当するテーマ投稿がありません。到来まで待機します。")
+            return 120
+
+        # 指定テーマがある場合はそのテーマを直接実行（なければ有効テーマからローテーション選択）
+        theme_keys = list(eligible_by_theme.keys())
+        if target_theme and target_theme in eligible_by_theme:
+            chosen_theme = target_theme
         else:
-            post_item = unposted[0]
-            self.log(f"[{account_name}] 【モード0: 上から順】未投稿 {len(unposted)} 件中の先頭を選択して投稿します。")
+            t_rot = acc_state.get("theme_rotation_counter", 0)
+            chosen_theme = theme_keys[t_rot % len(theme_keys)]
+            acc_state["theme_rotation_counter"] = t_rot + 1
+        theme_candidates = eligible_by_theme[chosen_theme]
+
+        theme_mode = int(theme_candidates[0][1].get("post_mode", post_mode))
+        if theme_mode == 1:
+            post_item, post_sched = random.choice(theme_candidates)
+            self.log(f"[{account_name}] 【テーマ「{chosen_theme}」 モード1: ランダム】有効未投稿 {len(theme_candidates)}件 (全テーマ合計 {eligible_count}/{len(unposted)} 件) から1件を選択して投稿します。")
+        else:
+            post_item, post_sched = theme_candidates[0]
+            self.log(f"[{account_name}] 【テーマ「{chosen_theme}」 モード0: 上から順】有効未投稿 {len(theme_candidates)}件 (全テーマ合計 {eligible_count}/{len(unposted)} 件) 中の先頭を選択して投稿します。")
+
+        post_theme = post_sched["theme"]
+        min_delay = int(post_sched.get("min_interval_sec", min_delay))
+        max_delay = int(post_sched.get("max_interval_sec", max_delay))
+        interval_label = post_sched.get("interval_str", interval_label)
+        acc_state["last_interval_label"] = interval_label
+        if post_theme:
+            get_account_images_dir(account_name, create=True, theme_name=post_theme)
 
         os.makedirs(profile_dir, exist_ok=True)
         # 過去のクラッシュ残骸(SingletonLock)を事前除去してChrome起動失敗を防止
@@ -7872,11 +11431,8 @@ class ThreadsPosterGUI:
 
             text_content = expand_spintax_and_placeholders(self._extract_post_text(post_item))
             raw_image = self._extract_raw_image(post_item)
-            resolved_img = resolve_image_path(raw_image, text_content, account_name=account_name)
-            row_topic_raw = self._extract_topic_or_community(post_item)
-            custom_topic_raw = custom_settings.get("topic", "")
-            account_topic_raw = self._extract_topic_or_community(account) if isinstance(account, dict) else ""
-            raw_topic_source = row_topic_raw or custom_topic_raw or account_topic_raw
+            resolved_img = resolve_image_path(raw_image, text_content, account_name=account_name, theme_name=post_theme)
+            raw_topic_source = self._extract_topic_or_community(post_item)
 
             topic_counter = acc_state.get("topic_rotation_counter", 0)
             target_topic = select_topic_for_post(
@@ -7889,7 +11445,9 @@ class ThreadsPosterGUI:
             acc_state["topic_rotation_counter"] = topic_counter + 1
 
             topic_info_msg = f"「{target_topic}」" if target_topic else "なし"
-            self.log(f"[{account_name}] Post #{post_id} ({len(text_content)}文字, トピック: {topic_info_msg}) を投稿中...")
+            theme_disp_msg = f", テーマ: 「{post_theme}」({post_sched['time_slot']} / {post_sched.get('weekdays', '毎日')} / ポスト間隔:{interval_label})" if post_theme else ""
+            img_disp_msg = f", 画像: {os.path.basename(resolved_img)}" if resolved_img else ""
+            self.log(f"[{account_name}] Post #{post_id} ({len(text_content)}文字, トピック: {topic_info_msg}{theme_disp_msg}{img_disp_msg}) を投稿中...")
 
             # 1. 別のページにいる場合はホームに戻る
             try:
@@ -7941,8 +11499,9 @@ class ThreadsPosterGUI:
             topic_suffix = f" (トピック: 「{target_topic}」)" if target_topic else ""
             self.log(f"[SUCCESS] [{account_name}] Post #{post_id} 投稿成功！Excel更新{topic_suffix}。")
             acc_state["consecutive_errors"] = 0
+            acc_state["last_post_ok"] = True
 
-            # 投稿後の待機時間を決定
+            # 投稿後の待機時間を決定（テーマごとのポスト間隔を使用）
             wait_sec = random.randint(min_delay, max_delay)
             return wait_sec
 
@@ -8082,16 +11641,10 @@ class ThreadsPosterGUI:
         row_indices = daily_data["row_indices"]
         sheet_name = daily_data["sheet_name"]
 
-        clean_acc_id = account_name.lstrip("@").strip()
-        raw_prof_col = str(account.get("プロファイル名") or account.get("profile") or "").strip().lstrip("@").strip() if isinstance(account, dict) else ""
-        if raw_prof_col and raw_prof_col.lower() not in ["nan", "none", ""] and not any(k in raw_prof_col for k in ["コミュニティ", "トピック", "モード", "間隔", "ツイート", "ポスト"]):
-            prof_name = os.path.basename(raw_prof_col.replace("\\", "/"))
-        else:
-            prof_name = clean_acc_id
+        custom_settings = read_account_settings_from_post_file(posts_file) if (posts_file and os.path.exists(posts_file)) else {}
+        _, clean_acc_id, prof_name, profile_dir = _resolve_profile_dir_for_account(account, custom_settings=custom_settings)
         profile_subpath = f"chrome_profiles/{prof_name}"
-        profile_dir = os.path.join(BASE_DIR, profile_subpath)
         os.makedirs(profile_dir, exist_ok=True)
-        custom_settings = read_account_settings_from_post_file(posts_file)
 
         # 過去のクラッシュ残骸(SingletonLock)を事前除去
         for lk in ["SingletonLock", "SingletonCookie", "SingletonSocket"]:
@@ -8244,18 +11797,6 @@ class ThreadsPosterGUI:
             for acc in active_accounts:
                 if not self.is_running:
                     break
-                # 日常ポストのチェック
-                if self.var_daily_greeting.get():
-                    acc_name = str(acc.get("アカウントID") or acc.get("アカウント名") or "").strip()
-                    pf = self._find_posts_file(acc_name)
-                    if pf and os.path.exists(pf):
-                        daily_data = get_eligible_daily_post(pf)
-                        if daily_data:
-                            acc_st = {"account": acc, "name": acc_name, "posts_file": pf}
-                            ok = self._execute_daily_greeting_post(acc_st, daily_data, p)
-                            if ok:
-                                self.log(f"[INFO] 🛡️ 連投BAN防止: @{acc_name} の日常ポスト完了直後のプロモ投稿をスキップし次アカウントへ移行します。")
-                                continue
                 self._process_single_account(acc, p, cycle_num=cycle_num)
 
             if not self.var_auto_loop.get() or not self.is_running:
@@ -8284,9 +11825,9 @@ class ThreadsPosterGUI:
             return
 
         custom_settings = read_account_settings_from_post_file(posts_file)
-        profile_subpath = custom_settings.get("profile_dir", "")
-        if not profile_subpath or any(k in profile_subpath for k in ["コミュニティ", "トピック", "モード", "間隔", "ツイート", "ポスト"]): profile_subpath = f"chrome_profiles/{account_name}"
-        profile_dir = os.path.join(BASE_DIR, profile_subpath)
+        theme_map = read_theme_settings_from_xlsx(posts_file)
+        _, _, prof_name, profile_dir = _resolve_profile_dir_for_account(account, custom_settings=custom_settings)
+        profile_subpath = f"chrome_profiles/{prof_name}"
 
         if "min_interval_sec" in custom_settings:
             min_delay = custom_settings["min_interval_sec"]
@@ -8299,12 +11840,6 @@ class ThreadsPosterGUI:
 
         post_mode = custom_settings.get("post_mode", 1)
         mode_label = "ランダム" if post_mode == 1 else "上から順"
-
-        time_slot = custom_settings.get("time_slot", "0:00-0:00")
-        now_hour = datetime.now().hour
-        if not is_within_target_hours(time_slot, now_hour):
-            self.log(f"[WARN] [{account_name}] 現在時刻({now_hour}時)は{os.path.basename(posts_file)}の指定実行時間 ({time_slot}) 外のためスキップします。")
-            return
 
         self.log(f"[{account_name}] 【{os.path.basename(posts_file)} 設定適用】ポスト間隔: {interval_label} ({min_delay}〜{max_delay}秒ランダム) | モード: {mode_label} | プロファイル: {profile_subpath} (周回: {cycle_num})")
 
@@ -8332,11 +11867,41 @@ class ThreadsPosterGUI:
                     ))
                 return
 
-        if post_mode == 1:
-            random.shuffle(unposted)
-            self.log(f"[{account_name}] 【モード1: ランダム】未投稿 {len(unposted)} 件をランダム順序で投稿します。")
-        else:
-            self.log(f"[{account_name}] 【モード0: 上から順】未投稿 {len(unposted)} 件を先頭から順に投稿します。")
+        now_dt = datetime.now()
+        theme_buckets = {}
+        for p_it in unposted:
+            ps = resolve_post_theme_schedule(p_it, theme_map, custom_settings, now_dt=now_dt)
+            if ps["is_eligible_now"]:
+                tk_b = ps["theme"] or "基本"
+                theme_buckets.setdefault(tk_b, []).append((p_it, ps))
+
+        if not theme_buckets:
+            self.log(f"[WARN] [{account_name}] 現在時刻({now_dt.strftime('%Y-%m-%d %H:%M')})の実行時間・曜日に該当するテーマの未投稿ポストがないためスキップします。")
+            return
+
+        ordered_unposted = []
+        bucket_lists = []
+        for tk_b, items_b in theme_buckets.items():
+            t_mode = int(items_b[0][1].get("post_mode", post_mode))
+            t_iv = items_b[0][1].get("interval_str", interval_label)
+            if t_mode == 1:
+                random.shuffle(items_b)
+                self.log(f"[{account_name}] 【テーマ「{tk_b}」 モード1: ランダム / 間隔:{t_iv}】未投稿 {len(items_b)} 件")
+            else:
+                self.log(f"[{account_name}] 【テーマ「{tk_b}」 モード0: 上から順 / 間隔:{t_iv}】未投稿 {len(items_b)} 件")
+            bucket_lists.append([x[0] for x in items_b])
+
+        idx_b = 0
+        while True:
+            added_any = False
+            for bl in bucket_lists:
+                if idx_b < len(bl):
+                    ordered_unposted.append(bl[idx_b])
+                    added_any = True
+            if not added_any:
+                break
+            idx_b += 1
+        unposted = ordered_unposted
 
         os.makedirs(profile_dir, exist_ok=True)
 
@@ -8369,19 +11934,39 @@ class ThreadsPosterGUI:
                 return
 
             consecutive_account_errors = 0
+            legacy_theme_next_run_times = {}
             for post_loop_idx, post_item in enumerate(unposted):
                 if not self.is_running:
                     break
+
+                post_sched = resolve_post_theme_schedule(post_item, theme_map, custom_settings, now_dt=datetime.now())
+                if not post_sched["is_eligible_now"]:
+                    continue
+                post_theme_key = post_sched["theme"] or "基本"
+                t_next_legacy = legacy_theme_next_run_times.get(post_theme_key)
+                if t_next_legacy is not None and t_next_legacy > datetime.now():
+                    rem_wait_s = int(max(0, (t_next_legacy - datetime.now()).total_seconds()))
+                    if rem_wait_s > 0:
+                        self.log(f"[*] 【テーマ「{post_theme_key}」】同テーマ次回まで {rem_wait_s} 秒待機中...")
+                        for _ in range(rem_wait_s):
+                            if not self.is_running:
+                                break
+                            time.sleep(1)
+                        if not self.is_running:
+                            break
+                post_theme = post_sched["theme"]
+                post_min_delay = int(post_sched.get("min_interval_sec", min_delay))
+                post_max_delay = int(post_sched.get("max_interval_sec", max_delay))
+                post_interval_label = post_sched.get("interval_str", interval_label)
+                if post_theme:
+                    get_account_images_dir(account_name, create=True, theme_name=post_theme)
 
                 row_idx = post_item["_row_idx"]
                 post_id = post_item.get("ID") or post_item.get("id") or row_idx - 1
                 text_content = expand_spintax_and_placeholders(self._extract_post_text(post_item))
                 raw_image = self._extract_raw_image(post_item)
-                resolved_img = resolve_image_path(raw_image, text_content, account_name=account_name)
-                row_topic_raw = self._extract_topic_or_community(post_item)
-                custom_topic_raw = custom_settings.get("topic", "")
-                account_topic_raw = self._extract_topic_or_community(account) if isinstance(account, dict) else ""
-                raw_topic_source = row_topic_raw or custom_topic_raw or account_topic_raw
+                resolved_img = resolve_image_path(raw_image, text_content, account_name=account_name, theme_name=post_theme)
+                raw_topic_source = self._extract_topic_or_community(post_item)
 
                 target_topic = select_topic_for_post(
                     raw_topic_source,
@@ -8392,7 +11977,8 @@ class ThreadsPosterGUI:
                 )
 
                 topic_info_msg = f"「{target_topic}」" if target_topic else "なし"
-                self.log(f"[{account_name}] Post #{post_id} ({len(text_content)}文字, トピック: {topic_info_msg}) を投稿中...")
+                theme_disp_msg = f", テーマ: 「{post_theme}」({post_sched['time_slot']} / {post_sched.get('weekdays', '毎日')} / ポスト間隔:{post_interval_label})" if post_theme else ""
+                self.log(f"[{account_name}] Post #{post_id} ({len(text_content)}文字, トピック: {topic_info_msg}{theme_disp_msg}) を投稿中...")
 
                 try:
                     # 1. 別のユーザーページや投稿詳細にいる場合は、必ずホーム (https://www.threads.net/) に戻る
@@ -8439,16 +12025,25 @@ class ThreadsPosterGUI:
                     self.log(f"[SUCCESS] [{account_name}] Post #{post_id} 投稿成功！Excel更新{topic_suffix}。")
                     consecutive_account_errors = 0
 
-                    wait_sec = random.randint(min_delay, max_delay)
-                    if wait_sec >= 60:
-                        self.log(f"[*] BAN防止のため {wait_sec} 秒 (約 {wait_sec // 60} 分) 待機中...")
+                    wait_sec = random.randint(post_min_delay, post_max_delay)
+                    legacy_theme_next_run_times[post_theme or "基本"] = datetime.now() + timedelta(seconds=wait_sec)
+                    has_other_ready_theme = any(
+                        (resolve_post_theme_schedule(nxt_it, theme_map, custom_settings, now_dt=datetime.now())["theme"] or "基本") != (post_theme or "基本")
+                        and resolve_post_theme_schedule(nxt_it, theme_map, custom_settings, now_dt=datetime.now())["is_eligible_now"]
+                        and legacy_theme_next_run_times.get(resolve_post_theme_schedule(nxt_it, theme_map, custom_settings, now_dt=datetime.now())["theme"] or "基本", datetime.min) <= datetime.now()
+                        for nxt_it in unposted[post_loop_idx + 1:]
+                    )
+                    if has_other_ready_theme:
+                        self.log(f"[INFO] 🔀 時間が重複している別テーマが即実行可能なため、待機せず次のテーマを投稿します！（同テーマ「{post_theme or '基本'}」次回間隔: {wait_sec // 60}分）")
                     else:
-                        self.log(f"[*] BAN防止のため {wait_sec} 秒待機中...")
-                    
-                    for _ in range(wait_sec):
-                        if not self.is_running:
-                            break
-                        time.sleep(1)
+                        if wait_sec >= 60:
+                            self.log(f"[*] BAN防止のため {wait_sec} 秒 (約 {wait_sec // 60} 分) 待機中... (テーマ設定ポスト間隔: {post_interval_label})")
+                        else:
+                            self.log(f"[*] BAN防止のため {wait_sec} 秒待機中... (テーマ設定ポスト間隔: {post_interval_label})")
+                        for _ in range(wait_sec):
+                            if not self.is_running:
+                                break
+                            time.sleep(1)
 
                 except Exception as post_err:
                     consecutive_account_errors += 1

@@ -172,14 +172,14 @@ export const DownloadCenter: React.FC<DownloadCenterProps> = ({ accounts = [] })
     document.body.removeChild(a);
   };
 
-  const downloadAccountsExcelDirectly = () => {
+  const downloadAccountsExcelDirectly = async () => {
     try {
       if (accounts && accounts.length > 0) {
-        exportAccountsConfigWorkbook(accounts);
+        await exportAccountsConfigWorkbook(accounts);
       } else {
         downloadExcelFile('/download/アカウント情報.xlsx', 'アカウント情報.xlsx');
       }
-      setDownloadSuccess('アカウント情報.xlsx (sessionid・プロファイル連携版) のダウンロードを開始しました！');
+      setDownloadSuccess('アカウント情報.xlsx (カラー書式・sessionid・プロファイル連携版) のダウンロードを開始しました！');
       setTimeout(() => setDownloadSuccess(null), 4000);
     } catch (err: any) {
       console.error(err);
@@ -461,7 +461,7 @@ export const DownloadCenter: React.FC<DownloadCenterProps> = ({ accounts = [] })
                 </span>
               </div>
               <p className="text-zinc-400 text-[11px]">
-                メインアカウントの設定・投稿リスト・日常ポスト枠が入ったエクセルファイル。
+                メインアカウントのテーマ別投稿リスト（基本シート等）が入ったエクセルファイル。
               </p>
             </div>
             <div className="flex justify-end pt-2 border-t border-zinc-800/80">

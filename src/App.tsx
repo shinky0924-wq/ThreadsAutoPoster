@@ -11,7 +11,6 @@ import { AccountSelector } from './components/AccountSelector';
 import { FeatureToggles } from './components/FeatureToggles';
 import { PostsTable } from './components/PostsTable';
 import { ThreadsPreview } from './components/ThreadsPreview';
-import { DailyGreetings } from './components/DailyGreetings';
 import { ConsoleLogs } from './components/ConsoleLogs';
 import { SessionModal } from './components/SessionModal';
 import { exportAccountWorkbook, exportAccountsConfigWorkbook, parseExcelFile } from './utils/excelUtils';
@@ -22,7 +21,6 @@ import { RAW_THREADS_GUI_APP_PY, RAW_PROFILE_LAUNCHER_PY, RAW_PROFILE_EDITOR_PY 
 import { 
   FileSpreadsheet, 
   Smartphone, 
-  Sun, 
   Terminal, 
   Users, 
   Download, 
@@ -96,7 +94,7 @@ export default function App() {
   const [isStealthing, setIsStealthing] = useState(false);
   const [statusText, setStatusText] = useState('待機中 (Excel読込済)');
   const [countdownSeconds, setCountdownSeconds] = useState(0);
-  const [activeTab, setActiveTab] = useState<'posts' | 'generator' | 'preview' | 'daily' | 'logs' | 'accounts' | 'downloads'>('generator');
+  const [activeTab, setActiveTab] = useState<'posts' | 'generator' | 'preview' | 'logs' | 'accounts' | 'downloads'>('generator');
   const [generatedImagesMap, setGeneratedImagesMap] = useState<Record<string, Record<string, string>>>({});
   const [sessionModalOpen, setSessionModalOpen] = useState(false);
 
@@ -452,13 +450,13 @@ export default function App() {
   };
 
   // Export current Excel
-  const handleExportExcel = () => {
-    exportAccountWorkbook(currentAccount, currentPosts, dailySlots);
-    addLog('SUCCESS', `📥 『${currentAccount.id}.xlsx』を出力しました。(設定・投稿リスト・日常ポスト)`);
+  const handleExportExcel = async () => {
+    await exportAccountWorkbook(currentAccount, currentPosts, dailySlots);
+    addLog('SUCCESS', `📥 『${currentAccount.id}.xlsx』を出力しました。(テーマ別シート・カラー書式付き)`);
   };
 
-  const handleExportAccountsConfig = () => {
-    exportAccountsConfigWorkbook(accounts);
+  const handleExportAccountsConfig = async () => {
+    await exportAccountsConfigWorkbook(accounts);
     addLog('SUCCESS', `📥 『アカウント情報.xlsx』を出力しました。`);
   };
 
@@ -503,15 +501,16 @@ export default function App() {
               : acc
           )
         );
-        addLog('SUCCESS', `✅ [@${currentAccount.id}] の「アカウント設計」シート設定を読み込みました！`);
+        addLog('SUCCESS', `✅ [@${currentAccount.id}] のアカウント設計設定を読み込みました！`);
       }
 
       if (parsed.posts && parsed.posts.length > 0) {
+        const importedThemes = Array.from(new Set(parsed.posts.map((p) => p.theme || '基本')));
         setAccountPosts((prev) => ({
           ...prev,
           [currentAccount.id]: parsed.posts!,
         }));
-        addLog('SUCCESS', `✅ 投稿リストから ${parsed.posts.length} 件のポストデータを読み込みました！`);
+        addLog('SUCCESS', `✅ Excelから ${parsed.posts.length} 件のポストを読み込みました！（テーマシート: ${importedThemes.join(', ')}）`);
       }
 
       if (parsed.dailySlots && parsed.dailySlots.length > 0) {
@@ -762,18 +761,6 @@ export default function App() {
           </button>
 
           <button
-            onClick={() => setActiveTab('daily')}
-            className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg font-medium transition-all cursor-pointer whitespace-nowrap ${
-              activeTab === 'daily'
-                ? 'bg-zinc-800 text-white font-bold border border-zinc-700 shadow-sm'
-                : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900'
-            }`}
-          >
-            <Sun className="w-3.5 h-3.5 text-amber-400" />
-            <span>日常つぶやき・挨拶枠 ({dailySlots.length})</span>
-          </button>
-
-          <button
             onClick={() => setActiveTab('logs')}
             className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg font-medium transition-all cursor-pointer whitespace-nowrap ${
               activeTab === 'logs'
@@ -877,7 +864,7 @@ export default function App() {
                       : acc
                   )
                 );
-                addLog('SUCCESS', `💾 [@${accountId}] のアカウント設計を保存しました。（個別Excel ${accountId}.xlsx に出力対応）`);
+                addLog('SUCCESS', `💾 [@${accountId}] のアカウント設計プリセットをアプリ内に保存しました。`);
               }}
               onSwitchToTab={(tab) => setActiveTab(tab)}
               onLog={(level, message) => addLog(level, message)}
@@ -900,26 +887,6 @@ export default function App() {
               />
               <ConsoleLogs logs={logs} onClear={() => setLogs([])} />
             </div>
-          )}
-
-          {activeTab === 'daily' && (
-            <DailyGreetings
-              slots={dailySlots}
-              onUpdateSlot={(updated) => {
-                setDailySlots((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
-                addLog('INFO', `日常枠 [${updated.slotName}] を更新しました。`);
-              }}
-              onAddSlot={(newSlot) => {
-                const id = `daily_${Date.now()}`;
-                setDailySlots((prev) => [...prev, { ...newSlot, id }]);
-                addLog('SUCCESS', `新しい日常枠 [${newSlot.slotName}] を追加しました。`);
-              }}
-              onDeleteSlot={(id) => {
-                setDailySlots((prev) => prev.filter((s) => s.id !== id));
-                addLog('INFO', `日常枠を削除しました。`);
-              }}
-              onApplyAntiFreezeSpintax={handleApplyAntiFreezeSpintax}
-            />
           )}
 
           {activeTab === 'logs' && (
@@ -1024,7 +991,7 @@ export default function App() {
                           </td>
                           <td className="py-2.5 px-3 text-right">
                             <button
-                              onClick={() => exportAccountWorkbook(acc, pList, dailySlots)}
+                              onClick={() => void exportAccountWorkbook(acc, pList, dailySlots)}
                               className="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded text-[11px] cursor-pointer inline-flex items-center gap-1"
                             >
                               <Download className="w-3 h-3" />

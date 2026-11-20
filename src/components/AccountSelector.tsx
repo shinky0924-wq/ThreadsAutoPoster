@@ -525,7 +525,7 @@ export const AccountSelector: React.FC<AccountSelectorProps> = ({
 
           {/* Account Design Fields */}
           <div className="pt-2 border-t border-zinc-800 space-y-2.5">
-            <div className="text-zinc-300 font-semibold">アカウント設計設定（生成スタジオ＆Excel同期用）</div>
+            <div className="text-zinc-300 font-semibold">アカウント設計設定（生成スタジオ保存用）</div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <div>
                 <label className="text-zinc-400 block mb-1">ジャンル</label>

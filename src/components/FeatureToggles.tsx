@@ -7,7 +7,6 @@ import {
   Eye, 
   ShieldAlert, 
   Shuffle, 
-  SunMedium, 
   Gauge 
 } from 'lucide-react';
 
@@ -160,25 +159,6 @@ export const FeatureToggles: React.FC<FeatureTogglesProps> = ({ settings, onTogg
             </span>
             <p className="text-zinc-400 text-[11px] mt-0.5">
               Excelの複数トピック（信太山新地, 大阪求人, 高収入バイト等）を投稿ごとに自動均等切替
-            </p>
-          </div>
-        </label>
-
-        {/* Toggle 7: Daily Greeting */}
-        <label className="flex items-start gap-2.5 p-2 rounded-lg hover:bg-zinc-800/40 cursor-pointer transition-colors border border-transparent hover:border-zinc-800 md:col-span-2">
-          <input
-            type="checkbox"
-            checked={settings.dailyGreeting}
-            onChange={(e) => onToggle('dailyGreeting', e.target.checked)}
-            className="mt-0.5 rounded border-zinc-700 bg-zinc-950 text-orange-500 focus:ring-orange-500 cursor-pointer accent-orange-500"
-          />
-          <div className="flex-1">
-            <span className="text-orange-400 font-semibold flex items-center gap-1">
-              <SunMedium className="w-3.5 h-3.5" />
-              【日常つぶやき・あいさつ枠】優先投稿
-            </span>
-            <p className="text-zinc-400 text-[11px] mt-0.5">
-              朝(7-9時)・昼(12-13:30)・夜(21-23:30)に人間らしい日常文を優先投稿（スピンタックス自動展開・動的日付差し込み・30日間クールダウン）
             </p>
           </div>
         </label>
