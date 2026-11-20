@@ -165,9 +165,9 @@ async function buildStyledAccountWorkbook(
   const postHeaders = [
     'ID',
     'ポスト文章',
+    '投稿時間',
     'コミュニティまたはトピック',
     '画像ファイルパス',
-    '実行時間',
     '曜日',
     'ステータス',
     '投稿完了日時',
@@ -182,9 +182,9 @@ async function buildStyledAccountWorkbook(
     ws.columns = [
       { width: 16 },
       { width: 56 },
+      { width: 24 },
       { width: 26 },
       { width: 26 },
-      { width: 18 },
       { width: 38 },
       { width: 16 },
       { width: 22 },
@@ -210,6 +210,9 @@ async function buildStyledAccountWorkbook(
       cell.font = hdrFont;
       cell.border = hdrBorder;
       cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+      if (lbl === '投稿モード') {
+        cell.note = '【投稿モード】数字だけでもOK\n0 (または 0: 上から順) : シートの上から順番に投稿\n1 (または 1: ランダム) : 未投稿からランダムに投稿';
+      }
     });
 
     // Row 2: 上部テーマ設定値 (アイスブルー + 有効緑)
@@ -219,7 +222,7 @@ async function buildStyledAccountWorkbook(
       intervalStr,
       modeStr,
       '有効',
-      '下のシートを追加・複製するとテーマごとに文章・実行時間・曜日・間隔・モードを分けられます',
+      '投稿モード: 0=上から順 / 1=ランダム (数字だけでもOK) ｜ 下のシートを追加・複製するとテーマ別に管理できます',
     ];
     const r2 = ws.getRow(2);
     r2.height = 36;
@@ -270,9 +273,9 @@ async function buildStyledAccountWorkbook(
         ? [
             p.id ?? pIdx + 1,
             p.text,
+            p.timeSlot || '',
             p.topic || '',
             p.imagePath || '',
-            p.timeSlot || '',
             p.weekdays || '',
             p.status,
             p.completedAt || '',
@@ -284,8 +287,11 @@ async function buildStyledAccountWorkbook(
         const cell = row.getCell(c);
         cell.value = vals[c - 1];
         cell.border = dataBorder;
+        if (c === 3 || c === 6) {
+          cell.numFmt = '@';
+        }
 
-        if (c === 1 || c === 5 || c === 6 || c === 7) {
+        if (c === 1 || c === 3 || c === 6 || c === 7) {
           cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
         } else if (c === 2 || c === 9) {
           cell.alignment = { horizontal: 'left', vertical: 'top', wrapText: true };
@@ -308,7 +314,7 @@ async function buildStyledAccountWorkbook(
         } else if (c === 1) {
           cell.fill = idColFill;
           cell.font = idFont;
-        } else if (c === 5 || c === 6) {
+        } else if (c === 3 || c === 6) {
           cell.fill = schedColFill;
           cell.font = bodyFont;
         } else {
@@ -605,8 +611,8 @@ export async function parseExcelFile(
               } else if (!sheetIntervalStr && (lbl.includes('ツイート間隔') || lbl.includes('ポスト間隔') || lbl.includes('投稿間隔') || lbl === '間隔')) {
                 sheetIntervalStr = cand;
               } else if (sheetMode === undefined && (lbl.includes('投稿モード') || lbl.includes('モード') || lbl.toLowerCase() === 'mode')) {
-                const cl = cand.toLowerCase();
-                if (cl.startsWith('0') || (cand.includes('上') && cand.includes('順')) || cl === 'sequential') {
+                const cl = cand.normalize('NFKC').trim().toLowerCase();
+                if (cl.startsWith('0') || cand.includes('順番') || (cand.includes('上') && cand.includes('順')) || cl === 'sequential') {
                   sheetMode = 0;
                 } else if (cl.startsWith('1') || cand.includes('ランダム') || cl === 'random') {
                   sheetMode = 1;
@@ -621,7 +627,7 @@ export async function parseExcelFile(
           const textCol = headers.findIndex((h) => h.includes('ポスト文章') || h.includes('投稿本文') || h.includes('ツイート文章') || h.includes('ポスト内容') || h.includes('投稿内容') || h.includes('本文'));
           const topicCol = headers.findIndex((h) => (h.includes('トピック') || h.includes('コミュニティ')) && !h.includes('適用'));
           const imgCol = headers.findIndex((h) => h.includes('画像') || h.toLowerCase().includes('image'));
-          const slotCol = headers.findIndex((h) => (h.includes('実行時間') || h.includes('時間帯')) && !h.includes('完了') && !h.includes('最終'));
+          const slotCol = headers.findIndex((h) => (h.includes('投稿時間') || h.includes('投稿時刻') || h.includes('実行時間') || h.includes('時間帯')) && !h.includes('完了') && !h.includes('最終'));
           const wdCol = headers.findIndex((h) => h.includes('曜日') || h.toLowerCase().includes('weekday'));
           const statusCol = headers.findIndex((h) => h.includes('ステータス') || h.toLowerCase().includes('status'));
           const finishCol = headers.findIndex((h) => h.includes('完了日時') || h.includes('投稿完了日時'));

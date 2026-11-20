@@ -340,10 +340,10 @@ def parse_interval_range(raw_val):
 
 
 def parse_post_mode(raw_val, default=1):
-    """投稿モード（0:上から順, 1:ランダム）を (int_mode, 表示文字列) に正規化"""
+    """投稿モード（0:上から順, 1:ランダム）を (int_mode, 表示文字列) に正規化（数字0/1のみでも可）"""
     if raw_val is None:
         return default, ("1: ランダム" if default == 1 else "0: 上から順")
-    s = str(raw_val).strip()
+    s = unicodedata.normalize("NFKC", str(raw_val)).strip()
     if not s or s.startswith(("(", "（", "※")):
         return default, ("1: ランダム" if default == 1 else "0: 上から順")
     low = s.lower()
@@ -579,8 +579,9 @@ def read_excel_records(filepath):
                     elif norm_h in ["テーマ", "テーマ名", "theme", "カテゴリ", "カテゴリー"] or ("テーマ" in norm_h and not any(ex in norm_h for ex in ["システム", "配色", "カラー"])):
                         if val_clean or not r_dict.get("テーマ"):
                             r_dict["テーマ"] = val_clean
-                    elif any(k in norm_h for k in ["時間帯", "実行時間", "投稿時間", "配信時間", "timeslot", "時間枠"]) and not any(ex in norm_h for ex in ["完了", "最終", "実行ログ", "posted"]):
-                        if val_clean or not r_dict.get("時間帯"):
+                    elif any(k in norm_h for k in ["時間帯", "実行時間", "投稿時間", "投稿時刻", "配信時間", "timeslot", "時間枠"]) and not any(ex in norm_h for ex in ["完了", "最終", "実行ログ", "posted"]):
+                        if val_clean or not r_dict.get("投稿時間"):
+                            r_dict["投稿時間"] = val_clean
                             r_dict["時間帯"] = val_clean
                             r_dict["実行時間"] = val_clean
                     elif any(k in norm_h for k in ["曜日", "weekday", "weekdays"]):
@@ -4759,44 +4760,131 @@ def capture_error_diagnostic(page, account_name="unknown", context_label="postin
     }
 
 
+def _normalize_time_text(val):
+    s = unicodedata.normalize("NFKC", str(val or "")).strip()
+    s = (
+        s.replace("〜", "-")
+        .replace("～", "-")
+        .replace("ー", "-")
+        .replace("−", "-")
+        .replace("―", "-")
+        .replace("‐", "-")
+        .replace("–", "-")
+        .replace("—", "-")
+        .replace("から", "-")
+        .replace("~", "-")
+    )
+    s = re.sub(r'\bto\b', '-', s, flags=re.IGNORECASE)
+    return s
+
+
+def _parse_clock_token_to_min(tok, bound_kind=None):
+    """'9時', '9時30分', '9時半', '9:30', '9' などを 0..1440 の分単位整数に変換"""
+    s = _normalize_time_text(tok)
+    s = s.replace("翌", "").replace("午前", "").strip()
+    is_pm = False
+    if "午後" in s or "pm" in s.lower():
+        is_pm = True
+        s = re.sub(r'午後|pm', '', s, flags=re.IGNORECASE).strip()
+    s = s.replace("半", "30").replace(" ", "")
+    if not s:
+        return None
+
+    m_jp = re.fullmatch(r'(\d{1,2})時(?:(\d{1,2})分?)?', s)
+    if m_jp:
+        h = int(m_jp.group(1))
+        m_str = m_jp.group(2)
+        if m_str is not None:
+            m = int(m_str)
+        elif bound_kind == "single_end":
+            m = 59
+        else:
+            m = 0
+        if is_pm and h < 12:
+            h += 12
+        if 0 <= h <= 24 and 0 <= m <= 59 and not (h == 24 and m > 0):
+            return h * 60 + m
+        return None
+
+    m_col = re.fullmatch(r'(\d{1,2}):(\d{1,2})', s)
+    if m_col:
+        h = int(m_col.group(1))
+        m = int(m_col.group(2))
+        if is_pm and h < 12:
+            h += 12
+        if 0 <= h <= 24 and 0 <= m <= 59 and not (h == 24 and m > 0):
+            return h * 60 + m
+        return None
+
+    m_num = re.fullmatch(r'(\d{1,2})', s)
+    if m_num:
+        h = int(m_num.group(1))
+        if is_pm and h < 12:
+            h += 12
+        if 0 <= h <= 24:
+            if h == 24:
+                return 1440
+            return h * 60 + (59 if bound_kind == "single_end" else 0)
+        return None
+
+    return None
+
+
 def is_within_target_hours(time_setting, current_hour=None):
     if current_hour is None:
-        current_hour = datetime.now().hour
+        now_d = datetime.now()
+        cur_min = now_d.hour * 60 + now_d.minute
+        has_exact_min = True
+    else:
+        cur_min = int(current_hour) * 60
+        has_exact_min = False
     if time_setting is None:
         return True
     raw = str(time_setting).strip()
-    if not raw or raw.lower() == "nan":
+    if not raw or raw.lower() in ["nan", "none", "終日", "いつでも", "all"]:
         return True
-    parts = [p.strip() for p in raw.replace("、", ",").replace(";", ",").split(",") if p.strip()]
+    parts = [p.strip() for p in _normalize_time_text(raw).replace("、", ",").replace(";", ",").split(",") if p.strip()]
     if not parts:
         return True
     for part in parts:
-        is_range = False
-        for sep in ["〜", "~", "ー", "-", "to"]:
-            if sep in part:
-                tokens = part.split(sep, 1)
-                try:
-                    s = int(tokens[0].split(":")[0].strip())
-                    e = int(tokens[1].split(":")[0].strip())
-                    is_range = True
-                    if s == e or (s == 0 and e >= 24):
-                        return True
-                    elif s < e:
-                        if s <= current_hour < e:
+        norm_p = part.replace(" ", "")
+        if norm_p in ["0:00-0:00", "0-24", "0:00-24:00", "0-0", "0時-0時", "0時-24時"]:
+            return True
+        if "-" in part:
+            tokens = part.split("-", 1)
+            s_min = _parse_clock_token_to_min(tokens[0])
+            e_min = _parse_clock_token_to_min(tokens[1])
+            if s_min is not None and e_min is not None:
+                if s_min == e_min or (s_min == 0 and e_min >= 1440):
+                    return True
+                if has_exact_min:
+                    if s_min < e_min:
+                        if s_min <= cur_min <= e_min:
                             return True
                     else:
-                        if current_hour >= s or current_hour < e:
+                        if cur_min >= s_min or cur_min <= e_min:
                             return True
-                except Exception:
-                    pass
-                break
-        if not is_range:
-            try:
-                h = int(part.split(":")[0].strip())
-                if current_hour == h:
-                    return True
-            except Exception:
-                pass
+                else:
+                    s_h, e_h = s_min // 60, e_min // 60
+                    cur_h = cur_min // 60
+                    if s_h < e_h:
+                        if s_h <= cur_h < e_h:
+                            return True
+                    elif s_h > e_h:
+                        if cur_h >= s_h or cur_h < e_h:
+                            return True
+                    else:
+                        return True
+        else:
+            s_min = _parse_clock_token_to_min(part, bound_kind="single_start")
+            e_min = _parse_clock_token_to_min(part, bound_kind="single_end")
+            if s_min is not None and e_min is not None:
+                if has_exact_min:
+                    if s_min <= cur_min <= e_min:
+                        return True
+                else:
+                    if (s_min // 60) == (cur_min // 60):
+                        return True
     return False
 
 def reset_posts_file_silent(posts_file):
@@ -5009,44 +5097,40 @@ def select_topic_for_post(raw_topic_source, account_name, post_counter=0, enable
 
 def is_time_in_slot(now_dt, slot_str):
     """
-    時間帯文字列（例: '7:00-9:00', '7:00〜9:00', '12:00-13:30', '21:00-23:30'）
+    時間帯文字列（例: '7:00-9:00', '9時～12時', '12時30分〜14時', '21:00-23:30'）
     に現在時刻が含まれるかを分単位で正確に判定
     """
     if not slot_str:
         return False
-    raw = str(slot_str).strip()
-    for sep in ["-", "〜", "~", "ー", "to"]:
-        if sep in raw:
-            parts = raw.split(sep, 1)
-            t1_s, t2_s = parts[0].strip(), parts[1].strip()
-            def _parse_time(t_s):
-                if ":" in t_s:
-                    h, m = t_s.split(":", 1)
-                    return int(h.strip()), int(m.strip())
-                elif t_s.isdigit():
-                    return int(t_s), 0
-                return None
-            try:
-                p1 = _parse_time(t1_s)
-                p2 = _parse_time(t2_s)
-                if p1 and p2:
-                    h1, m1 = p1
-                    h2, m2 = p2
-                    cur_min = now_dt.hour * 60 + now_dt.minute
-                    start_min = h1 * 60 + m1
-                    end_min = h2 * 60 + m2
-                    if start_min <= end_min:
-                        return start_min <= cur_min <= end_min
-                    else:
-                        return cur_min >= start_min or cur_min <= end_min
-            except Exception:
-                pass
+    if now_dt is None:
+        now_dt = datetime.now()
+    cur_min = now_dt.hour * 60 + now_dt.minute
+    parts = [p.strip() for p in _normalize_time_text(slot_str).replace("、", ",").replace(";", ",").split(",") if p.strip()]
+    for part in parts:
+        if "-" in part:
+            t1_s, t2_s = part.split("-", 1)
+            start_min = _parse_clock_token_to_min(t1_s)
+            end_min = _parse_clock_token_to_min(t2_s)
+            if start_min is not None and end_min is not None:
+                if start_min <= end_min:
+                    if start_min <= cur_min <= end_min:
+                        return True
+                else:
+                    if cur_min >= start_min or cur_min <= end_min:
+                        return True
+        else:
+            start_min = _parse_clock_token_to_min(part, bound_kind="single_start")
+            end_min = _parse_clock_token_to_min(part, bound_kind="single_end")
+            if start_min is not None and end_min is not None:
+                if start_min <= cur_min <= end_min:
+                    return True
     return False
 
 
 def is_now_within_time_slot(now_dt, slot_str):
     """
-    アカウント・テーマ・個別投稿の時間帯判定用（空欄 / 0:00-0:00 / 0-24 は常にTrue。複数範囲のカンマ区切りにも対応）
+    アカウント・テーマ・個別投稿の時間帯判定用
+    （空欄 / 0:00-0:00 / 0時～0時 / 0-24 は常にTrue。'〇時～〇時'・'7:00-9:00'・複数範囲カンマ区切りに対応）
     """
     if now_dt is None:
         now_dt = datetime.now()
@@ -5055,19 +5139,15 @@ def is_now_within_time_slot(now_dt, slot_str):
     raw = str(slot_str).strip()
     if not raw or raw.lower() in ["nan", "none", "終日", "いつでも", "all"]:
         return True
-    parts = [p.strip() for p in raw.replace("、", ",").replace(";", ",").split(",") if p.strip()]
+    parts = [p.strip() for p in _normalize_time_text(raw).replace("、", ",").replace(";", ",").split(",") if p.strip()]
     if not parts:
         return True
     for part in parts:
-        norm_p = part.replace(" ", "").replace("　", "")
-        if norm_p in ["0:00-0:00", "0:00〜0:00", "0:00~0:00", "0-24", "0:00-24:00", "0:00〜24:00", "0-0"]:
+        norm_p = part.replace(" ", "")
+        if norm_p in ["0:00-0:00", "0-24", "0:00-24:00", "0-0", "0時-0時", "0時-24時"]:
             return True
-        if ":" in part:
-            if is_time_in_slot(now_dt, part):
-                return True
-        else:
-            if is_within_target_hours(part, now_dt.hour):
-                return True
+        if is_time_in_slot(now_dt, part):
+            return True
     return False
 
 
@@ -5234,6 +5314,17 @@ def style_theme_worksheet(ws):
                 is_memo_col = ("メモ" in c1_txt or "備考" in c1_txt)
                 if "有効" in c1_txt or "状態" in c1_txt:
                     status_meta_col = c_m
+                if "モード" in c1_txt:
+                    try:
+                        from openpyxl.comments import Comment
+                        c1.comment = Comment(
+                            "【投稿モード】数字だけでもOK\n"
+                            "0 (または 0: 上から順) : シートの上から順番に投稿\n"
+                            "1 (または 1: ランダム) : 未投稿からランダムに投稿",
+                            "ThreadsAutoPoster"
+                        )
+                    except Exception:
+                        pass
                 if _is_standard_or_empty_fill(c1):
                     c1.fill = fill_meta_hdr
                 c1.font = font_hdr
@@ -5242,6 +5333,11 @@ def style_theme_worksheet(ws):
 
                 c2 = ws.cell(row=2, column=c_m)
                 c2_val = str(c2.value or "").strip()
+                if is_memo_col and (
+                    not c2_val
+                    or c2_val == "下のシートを追加・複製するとテーマごとに文章・実行時間・曜日・間隔・モードを分けられます"
+                ):
+                    c2.value = "投稿モード: 0=上から順 / 1=ランダム (数字だけでもOK) ｜ 下のシートを追加・複製するとテーマ別に管理できます"
                 if c_m == status_meta_col:
                     is_off = c2_val in ["無効", "停止", "OFF", "off", "0", "false"]
                     if _is_standard_or_empty_fill(c2):
@@ -5276,7 +5372,7 @@ def style_theme_worksheet(ws):
                 col_roles[c_h] = "topic"
             elif any(k in nh for k in ["画像", "image", "media"]):
                 col_roles[c_h] = "image"
-            elif any(k in nh for k in ["実行時間", "時間帯", "timeslot"]) and "完了" not in nh and "最終" not in nh:
+            elif any(k in nh for k in ["投稿時間", "投稿時刻", "投稿時間帯", "実行時間", "時間帯", "配信時間", "timeslot", "時間枠"]) and "完了" not in nh and "最終" not in nh:
                 col_roles[c_h] = "time_slot"
             elif any(k in nh for k in ["曜日", "weekday"]):
                 col_roles[c_h] = "weekdays"
@@ -5347,6 +5443,8 @@ def style_theme_worksheet(ws):
                 role = col_roles.get(c_idx, "other")
 
                 cell.border = border_data
+                if role in ("time_slot", "weekdays"):
+                    cell.number_format = "@"
                 if role in ("id", "time_slot", "weekdays", "status"):
                     cell.alignment = align_center
                 elif role in ("text", "error"):
@@ -5525,7 +5623,7 @@ def _sanitize_excel_sheet_name(name):
 
 
 def _post_sheet_header_row():
-    return ["ID", "ポスト文章", "コミュニティまたはトピック", "画像ファイルパス", "実行時間", "曜日", "ステータス", "投稿完了日時", "エラー内容"]
+    return ["ID", "ポスト文章", "投稿時間", "コミュニティまたはトピック", "画像ファイルパス", "曜日", "ステータス", "投稿完了日時", "エラー内容"]
 
 
 def _init_theme_sheet_rows(ws, time_slot="0:00-0:00", weekdays="毎日", interval="120〜360分", post_mode=1, status="有効", memo=""):
@@ -5648,12 +5746,80 @@ def _find_post_sheet_in_wb(wb, create_if_missing=False, theme_name=None):
     return wb.active
 
 
+def _ensure_post_time_column_next_to_text(ws):
+    """投稿一覧テーブルの『ポスト文章』の右隣に『投稿時間』列を配置（既存シートの『実行時間』値も自動移行）"""
+    try:
+        all_rows = list(ws.iter_rows(values_only=True))
+        hdr_idx = _find_post_header_row_in_sheet(all_rows)
+        if not hdr_idx:
+            return False
+
+        max_c = max(ws.max_column or 1, 9)
+        headers = [str(ws.cell(row=hdr_idx, column=c).value or "").strip() for c in range(1, max_c + 1)]
+        norm_headers = [re.sub(r'[\s　_\-:=]+', '', h.lower()) for h in headers]
+
+        text_col = next(
+            (i + 1 for i, nh in enumerate(norm_headers)
+             if any(k in nh for k in ["ポスト文章", "投稿本文", "ツイート文章", "posttext", "投稿文章", "ポスト本文", "ポスト内容", "投稿内容", "本文"])),
+            None,
+        )
+        if not text_col:
+            return False
+
+        target_col = text_col + 1
+        right_norm = norm_headers[target_col - 1] if target_col - 1 < len(norm_headers) else ""
+        if right_norm in ["投稿時間", "投稿時刻", "投稿時間帯"]:
+            if headers[target_col - 1] != "投稿時間":
+                ws.cell(row=hdr_idx, column=target_col).value = "投稿時間"
+                style_theme_worksheet(ws)
+                return True
+            return False
+
+        old_time_col = next(
+            (i + 1 for i, nh in enumerate(norm_headers)
+             if any(k in nh for k in ["投稿時間", "投稿時刻", "投稿時間帯", "実行時間", "時間帯", "配信時間", "timeslot", "時間枠"])
+             and not any(ex in nh for ex in ["完了", "最終", "実行ログ", "posted"])),
+            None,
+        )
+
+        last_post_col = max((i + 1 for i, h in enumerate(headers) if h), default=target_col - 1)
+        last_data_row = hdr_idx
+        for r_scan in range(hdr_idx + 1, ws.max_row + 1):
+            if any(ws.cell(row=r_scan, column=c_s).value not in (None, "") for c_s in range(1, max(last_post_col, old_time_col or 1) + 1)):
+                last_data_row = r_scan
+
+        if old_time_col == target_col:
+            ws.cell(row=hdr_idx, column=target_col).value = "投稿時間"
+        elif old_time_col is not None and old_time_col > target_col:
+            for r in range(hdr_idx, last_data_row + 1):
+                time_val = ws.cell(row=r, column=old_time_col).value
+                for c in range(old_time_col - 1, target_col - 1, -1):
+                    ws.cell(row=r, column=c + 1).value = ws.cell(row=r, column=c).value
+                ws.cell(row=r, column=target_col).value = "投稿時間" if r == hdr_idx else time_val
+        elif old_time_col is not None and old_time_col < text_col:
+            for r in range(hdr_idx, last_data_row + 1):
+                time_val = ws.cell(row=r, column=old_time_col).value
+                for c in range(old_time_col, text_col):
+                    ws.cell(row=r, column=c).value = ws.cell(row=r, column=c + 1).value
+                ws.cell(row=r, column=text_col).value = "投稿時間" if r == hdr_idx else time_val
+        else:
+            for r in range(hdr_idx, last_data_row + 1):
+                for c in range(last_post_col, target_col - 1, -1):
+                    ws.cell(row=r, column=c + 1).value = ws.cell(row=r, column=c).value
+                ws.cell(row=r, column=target_col).value = "投稿時間" if r == hdr_idx else ""
+
+        style_theme_worksheet(ws)
+        return True
+    except Exception:
+        return False
+
+
 def _ensure_post_sheet_headers(ws, required_cols=None):
     if required_cols is None:
-        required_cols = ["実行時間", "曜日"]
+        required_cols = ["投稿時間", "曜日"]
     if ws.max_row == 0:
         if _is_legacy_flat_post_sheet_name(ws.title):
-            ws.append(["ID", "テーマ", "ポスト文章", "コミュニティまたはトピック", "画像ファイルパス", "実行時間", "曜日", "ステータス", "投稿完了日時", "エラー内容"])
+            ws.append(["ID", "テーマ", "ポスト文章", "投稿時間", "コミュニティまたはトピック", "画像ファイルパス", "曜日", "ステータス", "投稿完了日時", "エラー内容"])
         else:
             _init_theme_sheet_rows(ws)
 
@@ -5671,14 +5837,16 @@ def _ensure_post_sheet_headers(ws, required_cols=None):
                 for col_i, col_name in enumerate(_post_sheet_header_row(), start=1):
                     ws.cell(row=header_row_idx, column=col_i).value = col_name
 
+    _ensure_post_time_column_next_to_text(ws)
+
     headers = [str(ws.cell(row=header_row_idx, column=c).value or "").strip() for c in range(1, max(ws.max_column, 1) + 1)]
     norm_headers = [re.sub(r'[\s　_\-:=]+', '', h.lower()) for h in headers]
 
     def _has_col(target):
         if target == "テーマ":
             return any(n in ["テーマ", "テーマ名", "theme", "カテゴリ", "カテゴリー"] or ("テーマ" in n and "配色" not in n) for n in norm_headers)
-        if target in ["時間帯", "実行時間"]:
-            return any(any(k in n for k in ["時間帯", "実行時間", "投稿時間", "配信時間", "timeslot", "時間枠"]) and "完了" not in n and "最終" not in n for n in norm_headers)
+        if target in ["時間帯", "実行時間", "投稿時間"]:
+            return any(any(k in n for k in ["時間帯", "実行時間", "投稿時間", "投稿時刻", "配信時間", "timeslot", "時間枠"]) and "完了" not in n and "最終" not in n for n in norm_headers)
         if target == "曜日":
             return any(any(k in n for k in ["曜日", "weekday", "weekdays"]) for n in norm_headers)
         return target.lower() in norm_headers
@@ -5927,7 +6095,7 @@ def delete_theme_setting_from_xlsx(filepath, theme_name):
 
 
 def _resolve_post_sheet_col_map(ws, require_theme_col=False):
-    req = ["実行時間", "曜日"] + (["テーマ"] if require_theme_col else [])
+    req = ["投稿時間", "曜日"] + (["テーマ"] if require_theme_col else [])
     header_row_idx, headers = _ensure_post_sheet_headers(ws, req)
     col_map = {}
     for idx, h in enumerate(headers, start=1):
@@ -5942,7 +6110,7 @@ def _resolve_post_sheet_col_map(ws, require_theme_col=False):
             col_map["topic"] = idx
         elif any(k in norm_h for k in ["画像", "image", "media"]) and "image" not in col_map:
             col_map["image"] = idx
-        elif any(k in norm_h for k in ["時間帯", "実行時間", "投稿時間", "配信時間", "timeslot", "時間枠"]) and not any(ex in norm_h for ex in ["完了", "最終", "実行ログ", "posted"]) and "time_slot" not in col_map:
+        elif any(k in norm_h for k in ["投稿時間", "投稿時刻", "投稿時間帯", "時間帯", "実行時間", "配信時間", "timeslot", "時間枠"]) and not any(ex in norm_h for ex in ["完了", "最終", "実行ログ", "posted"]) and "time_slot" not in col_map:
             col_map["time_slot"] = idx
         elif any(k in norm_h for k in ["曜日", "weekday", "weekdays"]) and "weekdays" not in col_map:
             col_map["weekdays"] = idx
@@ -6063,7 +6231,12 @@ def resolve_post_theme_schedule(post_item, theme_map, global_settings, now_dt=No
     if not row_theme and sheet_name and not _is_legacy_flat_post_sheet_name(sheet_name):
         row_theme = sheet_name
 
-    row_slot = str(post_item.get("時間帯") or post_item.get("実行時間") or post_item.get("投稿時間帯") or "").strip()
+    row_slot = ""
+    for k_sl in ["投稿時間", "投稿時間帯", "投稿時刻", "時間帯", "実行時間", "配信時間", "time_slot"]:
+        v_sl = str(post_item.get(k_sl) or "").strip()
+        if v_sl and v_sl.lower() not in ["none", "nan"]:
+            row_slot = v_sl
+            break
     row_weekdays = str(post_item.get("曜日") or post_item.get("対象曜日") or post_item.get("weekdays") or "").strip()
     row_topic = ""
     for k in ["コミュニティまたはトピック", "コミュニティ", "トピック", "トピックタグ", "タグ", "topic"]:
@@ -6121,6 +6294,7 @@ def resolve_post_theme_schedule(post_item, theme_map, global_settings, now_dt=No
             "theme": row_theme,
             "topic": effective_topic,
             "time_slot": effective_slot,
+            "row_time_slot": row_slot,
             "weekdays": effective_weekdays,
             "interval_str": eff_iv_str,
             "min_interval_sec": eff_min_s,
@@ -6138,6 +6312,7 @@ def resolve_post_theme_schedule(post_item, theme_map, global_settings, now_dt=No
             "theme": row_theme,
             "topic": effective_topic,
             "time_slot": effective_slot,
+            "row_time_slot": row_slot,
             "weekdays": effective_weekdays,
             "interval_str": eff_iv_str,
             "min_interval_sec": eff_min_s,
@@ -6154,6 +6329,7 @@ def resolve_post_theme_schedule(post_item, theme_map, global_settings, now_dt=No
         "theme": row_theme,
         "topic": effective_topic,
         "time_slot": effective_slot,
+        "row_time_slot": row_slot,
         "weekdays": effective_weekdays,
         "interval_str": eff_iv_str,
         "min_interval_sec": eff_min_s,
@@ -6982,6 +7158,9 @@ def ensure_account_workbook(xlsx_path, account_id):
         for ws_t in theme_sheets:
             rows_t = list(ws_t.iter_rows(values_only=True))
             hdr_t = _find_post_header_row_in_sheet(rows_t)
+            if _ensure_post_time_column_next_to_text(ws_t):
+                changed = True
+
             if hdr_t and hdr_t >= 4 and rows_t:
                 for c_hdr_m in range(1, max(ws_t.max_column, 6) + 1):
                     c_hdr_val = str(ws_t.cell(row=1, column=c_hdr_m).value or "").strip()
@@ -7029,7 +7208,10 @@ def ensure_account_workbook(xlsx_path, account_id):
                     changed = True
 
         if changed:
-            wb.save(xlsx_path)
+            try:
+                wb.save(xlsx_path)
+            except Exception:
+                pass
         return wb
 
     wb = openpyxl.Workbook()
@@ -7042,7 +7224,7 @@ def ensure_account_workbook(xlsx_path, account_id):
         interval="120〜360分",
         post_mode=1,
         status="有効",
-        memo="下のシートを追加・複製するとテーマごとに文章・実行時間・曜日・間隔・モードを分けられます",
+        memo="投稿モード: 0=上から順 / 1=ランダム (数字だけでもOK) ｜ 下のシートを追加・複製するとテーマ別に管理できます",
     )
 
     wb.save(xlsx_path)
@@ -8617,7 +8799,7 @@ class ThreadsPosterGUI:
     def _extract_time_slot(self, post_item):
         if not isinstance(post_item, dict):
             return ""
-        for k in ["実行時間", "時間帯", "投稿時間帯", "配信時間帯", "時間枠", "time_slot"]:
+        for k in ["投稿時間", "投稿時間帯", "投稿時刻", "実行時間", "時間帯", "配信時間帯", "時間枠", "time_slot"]:
             if k in post_item and post_item[k] is not None:
                 val = str(post_item[k]).strip()
                 if val and val.lower() not in ["none", "nan"]:
@@ -10004,7 +10186,8 @@ class ThreadsPosterGUI:
         r_tf3m = tk.Frame(t_form, bg="#18181b")
         r_tf3m.pack(fill="x", pady=2)
         tk.Label(r_tf3m, text="投稿モード:", width=11, anchor="w", font=("Segoe UI", 8, "bold"), fg="#d4d4d8", bg="#18181b").pack(side="left")
-        ttk.Combobox(r_tf3m, textvariable=var_t_mode, values=["1: ランダム", "0: 上から順"], state="readonly", width=16).pack(side="left", fill="x", expand=True)
+        ttk.Combobox(r_tf3m, textvariable=var_t_mode, values=["1: ランダム", "0: 上から順"], state="readonly", width=13).pack(side="left", fill="x", expand=True)
+        tk.Label(r_tf3m, text="※Excelは「0」や「1」だけでもOK", font=("Segoe UI", 7), fg="#94a3b8", bg="#18181b").pack(side="left", padx=(6, 0))
 
         r_tf4 = tk.Frame(t_form, bg="#18181b")
         r_tf4.pack(fill="x", pady=2)
@@ -10034,22 +10217,22 @@ class ThreadsPosterGUI:
 
         post_tree_wrap = tk.Frame(right_pane, bg="#09090b")
         post_tree_wrap.pack(fill="both", expand=True)
-        p_cols = ("id", "theme", "slot", "weekdays", "text", "image", "topic", "status")
+        p_cols = ("id", "theme", "text", "slot", "weekdays", "image", "topic", "status")
         post_tree = ttk.Treeview(post_tree_wrap, columns=p_cols, show="headings", height=9)
         post_tree.heading("id", text="ID")
         post_tree.heading("theme", text="シート/テーマ")
-        post_tree.heading("slot", text="実行時間")
-        post_tree.heading("weekdays", text="曜日")
         post_tree.heading("text", text="ポスト文章")
+        post_tree.heading("slot", text="投稿時間")
+        post_tree.heading("weekdays", text="曜日")
         post_tree.heading("image", text="指定画像")
         post_tree.heading("topic", text="トピック")
         post_tree.heading("status", text="状態")
         post_tree.column("id", width=34, anchor="center")
-        post_tree.column("theme", width=78)
-        post_tree.column("slot", width=76)
-        post_tree.column("weekdays", width=62)
+        post_tree.column("theme", width=76)
         post_tree.column("text", width=180)
-        post_tree.column("image", width=100)
+        post_tree.column("slot", width=80, anchor="center")
+        post_tree.column("weekdays", width=58)
+        post_tree.column("image", width=98)
         post_tree.column("topic", width=72)
         post_tree.column("status", width=54, anchor="center")
         p_scroll = ttk.Scrollbar(post_tree_wrap, orient="vertical", command=post_tree.yview)
@@ -10070,14 +10253,14 @@ class ThreadsPosterGUI:
         pf_r1 = tk.Frame(p_form, bg="#18181b")
         pf_r1.pack(fill="x", pady=2)
         tk.Label(pf_r1, text="シート:", font=("Segoe UI", 8, "bold"), fg="#f472b6", bg="#18181b").pack(side="left")
-        cmb_p_theme = ttk.Combobox(pf_r1, textvariable=var_p_theme, values=["基本"], width=12)
+        cmb_p_theme = ttk.Combobox(pf_r1, textvariable=var_p_theme, values=["基本"], width=11)
         cmb_p_theme.pack(side="left", padx=(4, 6))
-        tk.Label(pf_r1, text="時間:", font=("Segoe UI", 8), fg="#a1a1aa", bg="#18181b").pack(side="left")
-        tk.Entry(pf_r1, textvariable=var_p_slot, bg="#09090b", fg="#ffffff", insertbackground="#ffffff", font=("Segoe UI", 9), width=10, relief="solid", bd=1).pack(side="left", padx=(3, 6))
+        tk.Label(pf_r1, text="投稿時間(〇時～〇時/空白=通常):", font=("Segoe UI", 8), fg="#38bdf8", bg="#18181b").pack(side="left")
+        tk.Entry(pf_r1, textvariable=var_p_slot, bg="#09090b", fg="#ffffff", insertbackground="#ffffff", font=("Segoe UI", 9), width=11, relief="solid", bd=1).pack(side="left", padx=(3, 6))
         tk.Label(pf_r1, text="曜日:", font=("Segoe UI", 8), fg="#a1a1aa", bg="#18181b").pack(side="left")
-        tk.Entry(pf_r1, textvariable=var_p_weekdays, bg="#09090b", fg="#ffffff", insertbackground="#ffffff", font=("Segoe UI", 9), width=9, relief="solid", bd=1).pack(side="left", padx=(3, 6))
+        tk.Entry(pf_r1, textvariable=var_p_weekdays, bg="#09090b", fg="#ffffff", insertbackground="#ffffff", font=("Segoe UI", 9), width=8, relief="solid", bd=1).pack(side="left", padx=(3, 6))
         tk.Label(pf_r1, text="トピック:", font=("Segoe UI", 8), fg="#a1a1aa", bg="#18181b").pack(side="left")
-        tk.Entry(pf_r1, textvariable=var_p_topic, bg="#09090b", fg="#ffffff", insertbackground="#ffffff", font=("Segoe UI", 9), width=11, relief="solid", bd=1).pack(side="left", padx=(3, 6))
+        tk.Entry(pf_r1, textvariable=var_p_topic, bg="#09090b", fg="#ffffff", insertbackground="#ffffff", font=("Segoe UI", 9), width=10, relief="solid", bd=1).pack(side="left", padx=(3, 6))
         tk.Label(pf_r1, text="状態:", font=("Segoe UI", 8), fg="#a1a1aa", bg="#18181b").pack(side="left")
         ttk.Combobox(pf_r1, textvariable=var_p_status, values=["未投稿", "投稿完了", "エラー"], state="readonly", width=7).pack(side="left", padx=(3, 0))
 
@@ -10161,7 +10344,7 @@ class ThreadsPosterGUI:
                 iid = f"p_{idx_item}"
                 state["post_iid_map"][iid] = (sh_name, row_idx)
                 pid = p_it.get("ID") or p_it.get("id") or (row_idx - 1 if row_idx else "")
-                slot_s = self._extract_time_slot(p_it) or "(シート継承)"
+                slot_s = self._extract_time_slot(p_it) or "(空白:通常)"
                 wd_s = self._extract_weekdays(p_it) or "(シート継承)"
                 txt_s = self._extract_post_text(p_it).replace("\n", " ")
                 if len(txt_s) > 36:
@@ -10169,7 +10352,7 @@ class ThreadsPosterGUI:
                 img_s = self._extract_raw_image(p_it) or "なし"
                 top_s = self._extract_topic_or_community(p_it) or "なし"
                 st_s = str(p_it.get("ステータス") or "未投稿").strip()
-                post_tree.insert("", "end", iid=iid, values=(pid, p_theme or "(未設定)", slot_s, wd_s, txt_s, img_s, top_s, st_s))
+                post_tree.insert("", "end", iid=iid, values=(pid, p_theme or "(未設定)", txt_s, slot_s, wd_s, img_s, top_s, st_s))
 
         def load_account_view(*_args):
             acc_id, p_file = _cur_acc_and_xlsx()
@@ -11321,15 +11504,18 @@ class ThreadsPosterGUI:
 
         now_dt = datetime.now()
         eligible_by_theme = {}
+        skipped_by_post_slot = {}
         for p_it in unposted:
             ps = resolve_post_theme_schedule(p_it, theme_map, custom_settings, now_dt=now_dt)
+            t_key = ps["theme"] or "基本"
             if ps["is_eligible_now"]:
-                t_key = ps["theme"] or "基本"
                 eligible_by_theme.setdefault(t_key, []).append((p_it, ps))
+            elif ps.get("row_time_slot"):
+                skipped_by_post_slot[t_key] = skipped_by_post_slot.get(t_key, 0) + 1
 
         eligible_count = sum(len(v) for v in eligible_by_theme.values())
         if eligible_count == 0:
-            self.log(f"[INFO] ⏳ [{account_name}] 未投稿 {len(unposted)} 件はありますが、現在時刻({now_dt.strftime('%Y-%m-%d %H:%M')})の実行時間・曜日に該当するテーマ投稿がありません。到来まで待機します。")
+            self.log(f"[INFO] ⏳ [{account_name}] 未投稿 {len(unposted)} 件はありますが、現在時刻({now_dt.strftime('%Y-%m-%d %H:%M')})の投稿時間・実行時間・曜日に該当するポストがありません。到来まで待機します。")
             return 120
 
         # 指定テーマがある場合はそのテーマを直接実行（なければ有効テーマからローテーション選択）
@@ -11341,6 +11527,9 @@ class ThreadsPosterGUI:
             chosen_theme = theme_keys[t_rot % len(theme_keys)]
             acc_state["theme_rotation_counter"] = t_rot + 1
         theme_candidates = eligible_by_theme[chosen_theme]
+
+        if skipped_by_post_slot.get(chosen_theme, 0) > 0:
+            self.log(f"[INFO] ⏭️ [{account_name}] [テーマ「{chosen_theme}」] 個別「投稿時間」外のため {skipped_by_post_slot[chosen_theme]} 件を即スキップし、実行可能な {len(theme_candidates)} 件から次ポストへ進みます。")
 
         theme_mode = int(theme_candidates[0][1].get("post_mode", post_mode))
         if theme_mode == 1:

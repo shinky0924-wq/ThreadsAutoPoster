@@ -6,7 +6,7 @@ openpyxlによる軽量・安全なExcel直接読み込み＆更新（NumPy/Pand
 - アカウント情報.xlsx: アカウントID, auth_token
 - 投稿エクセル: ポスト文章, 画像ファイルパス (設定セルのimage.png, ポスト文章内のimage2.pngも自動検出)
 """
-import os, sys, time, random, re
+import os, sys, time, random, re, unicodedata
 from datetime import datetime
 import openpyxl
 from playwright.sync_api import sync_playwright
@@ -217,6 +217,10 @@ def read_excel_records(filepath):
                 elif any(k in norm_h for k in ["コミュニティ", "トピック", "タグ", "topic"]):
                     r_dict["コミュニティまたはトピック"] = val_clean
                     r_dict["トピック"] = val_clean
+                elif any(k in norm_h for k in ["投稿時間", "投稿時刻", "投稿時間帯", "実行時間", "時間帯", "配信時間", "timeslot", "時間枠"]) and not any(ex in norm_h for ex in ["完了", "最終", "posted"]):
+                    r_dict["投稿時間"] = val_clean
+                    r_dict["時間帯"] = val_clean
+                    r_dict["実行時間"] = val_clean
                 elif any(k in norm_h for k in ["備考", "メモ", "note", "notes"]):
                     r_dict["備考"] = val_clean
 
@@ -433,44 +437,100 @@ def resolve_image_path(raw_path, post_text="", account_name=""):
                     return os.path.abspath(cand_base)
     return ""
 
+def _normalize_time_text(val):
+    s = unicodedata.normalize("NFKC", str(val or "")).strip()
+    s = (
+        s.replace("〜", "-")
+        .replace("～", "-")
+        .replace("ー", "-")
+        .replace("−", "-")
+        .replace("―", "-")
+        .replace("‐", "-")
+        .replace("–", "-")
+        .replace("—", "-")
+        .replace("から", "-")
+        .replace("~", "-")
+    )
+    return re.sub(r'\bto\b', '-', s, flags=re.IGNORECASE)
+
+def _parse_clock_token_to_min(tok, bound_kind=None):
+    s = _normalize_time_text(tok).replace("翌", "").replace("午前", "").strip()
+    is_pm = False
+    if "午後" in s or "pm" in s.lower():
+        is_pm = True
+        s = re.sub(r'午後|pm', '', s, flags=re.IGNORECASE).strip()
+    s = s.replace("半", "30").replace(" ", "")
+    if not s:
+        return None
+    m_jp = re.fullmatch(r'(\d{1,2})時(?:(\d{1,2})分?)?', s)
+    if m_jp:
+        h = int(m_jp.group(1))
+        m = int(m_jp.group(2)) if m_jp.group(2) is not None else (59 if bound_kind == "single_end" else 0)
+        if is_pm and h < 12:
+            h += 12
+        if 0 <= h <= 24 and 0 <= m <= 59 and not (h == 24 and m > 0):
+            return h * 60 + m
+        return None
+    m_col = re.fullmatch(r'(\d{1,2}):(\d{1,2})', s)
+    if m_col:
+        h, m = int(m_col.group(1)), int(m_col.group(2))
+        if is_pm and h < 12:
+            h += 12
+        if 0 <= h <= 24 and 0 <= m <= 59 and not (h == 24 and m > 0):
+            return h * 60 + m
+        return None
+    m_num = re.fullmatch(r'(\d{1,2})', s)
+    if m_num:
+        h = int(m_num.group(1))
+        if is_pm and h < 12:
+            h += 12
+        if 0 <= h <= 24:
+            return 1440 if h == 24 else h * 60 + (59 if bound_kind == "single_end" else 0)
+    return None
+
 def is_within_target_hours(time_setting, current_hour=None):
     if current_hour is None:
-        current_hour = datetime.now().hour
+        now_d = datetime.now()
+        cur_min = now_d.hour * 60 + now_d.minute
+        has_exact_min = True
+    else:
+        cur_min = int(current_hour) * 60
+        has_exact_min = False
     if time_setting is None:
         return True
     raw = str(time_setting).strip()
-    if not raw or raw.lower() == "nan":
+    if not raw or raw.lower() in ["nan", "none", "終日", "いつでも", "all"]:
         return True
-    parts = [p.strip() for p in raw.replace("、", ",").replace(";", ",").split(",") if p.strip()]
+    parts = [p.strip() for p in _normalize_time_text(raw).replace("、", ",").replace(";", ",").split(",") if p.strip()]
     if not parts:
         return True
     for part in parts:
-        is_range = False
-        for sep in ["〜", "~", "ー", "-", "to"]:
-            if sep in part:
-                tokens = part.split(sep, 1)
-                try:
-                    s = int(tokens[0].split(":")[0].strip())
-                    e = int(tokens[1].split(":")[0].strip())
-                    is_range = True
-                    if s == e or (s == 0 and e >= 24):
-                        return True
-                    elif s < e:
-                        if s <= current_hour < e:
-                            return True
-                    else:
-                        if current_hour >= s or current_hour < e:
-                            return True
-                except Exception:
-                    pass
-                break
-        if not is_range:
-            try:
-                h = int(part.split(":")[0].strip())
-                if current_hour == h:
+        norm_p = part.replace(" ", "")
+        if norm_p in ["0:00-0:00", "0-24", "0:00-24:00", "0-0", "0時-0時", "0時-24時"]:
+            return True
+        if "-" in part:
+            tokens = part.split("-", 1)
+            s_min = _parse_clock_token_to_min(tokens[0])
+            e_min = _parse_clock_token_to_min(tokens[1])
+            if s_min is not None and e_min is not None:
+                if s_min == e_min or (s_min == 0 and e_min >= 1440):
                     return True
-            except Exception:
-                pass
+                if has_exact_min:
+                    if (s_min < e_min and s_min <= cur_min <= e_min) or (s_min > e_min and (cur_min >= s_min or cur_min <= e_min)):
+                        return True
+                else:
+                    s_h, e_h, cur_h = s_min // 60, e_min // 60, cur_min // 60
+                    if (s_h < e_h and s_h <= cur_h < e_h) or (s_h > e_h and (cur_h >= s_h or cur_h < e_h)) or s_h == e_h:
+                        return True
+        else:
+            s_min = _parse_clock_token_to_min(part, bound_kind="single_start")
+            e_min = _parse_clock_token_to_min(part, bound_kind="single_end")
+            if s_min is not None and e_min is not None:
+                if has_exact_min and s_min <= cur_min <= e_min:
+                    return True
+                if not has_exact_min and (s_min // 60) == (cur_min // 60):
+                    return True
+    return False
 def update_account_sessionid(filepath, account_name, new_sessionid):
     try:
         if not filepath or not os.path.exists(filepath):
@@ -1203,6 +1263,17 @@ def main():
                 continue
 
             for post_item in unposted:
+                row_slot = ""
+                for k_sl in ["投稿時間", "投稿時間帯", "投稿時刻", "実行時間", "時間帯"]:
+                    v_sl = str(post_item.get(k_sl) or "").strip()
+                    if v_sl and v_sl.lower() not in ["none", "nan"]:
+                        row_slot = v_sl
+                        break
+                if row_slot and not is_within_target_hours(row_slot):
+                    post_id_skip = post_item.get("ID") or post_item.get("id") or post_item["_row_idx"] - 1
+                    acc_log(f"[INFO] ⏭️ [{name}] Post #{post_id_skip} は投稿時間 ({row_slot}) 外のため即スキップして次のポストへ進みます。")
+                    continue
+
                 row_idx = post_item["_row_idx"]
                 post_id = post_item.get("ID") or post_item.get("id") or row_idx - 1
                 
