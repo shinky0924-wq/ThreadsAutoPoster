@@ -166,9 +166,9 @@ async function buildStyledAccountWorkbook(
     'ID',
     'ポスト文章',
     '投稿時間',
+    '曜日',
     'コミュニティまたはトピック',
     '画像ファイルパス',
-    '曜日',
     'ステータス',
     '投稿完了日時',
     'エラー内容',
@@ -183,9 +183,9 @@ async function buildStyledAccountWorkbook(
       { width: 16 },
       { width: 56 },
       { width: 24 },
+      { width: 20 },
       { width: 26 },
       { width: 26 },
-      { width: 38 },
       { width: 16 },
       { width: 22 },
       { width: 30 },
@@ -258,6 +258,12 @@ async function buildStyledAccountWorkbook(
       cell.font = hdrFont;
       cell.border = hdrBorder;
       cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+      if (lbl === '投稿時間') {
+        cell.note = '【各ポストの投稿時間指定（上の「実行時間」より優先）】\n例: 7～10 / 9時～12時 / 18:00-22:00 / 終日\n空欄の場合はシート上部の「実行時間」設定に従います。\n（※上の実行時間が「12:00-15:00」でも、ここが「18～21」なら18～21時に投稿されます）';
+      }
+      if (lbl === '曜日') {
+        cell.note = '【各ポストの曜日指定（上の「曜日」より優先）】\n例: 月 / 月～木 / 月～金 / 月,木,金\n空欄の場合はシート上部の「曜日」設定に従います。\n（※上の曜日が「火」でも、ここが「水」なら水曜日に投稿されます）';
+      }
     });
 
     // Row 5〜バッファ行 (120行以上まで色・枠線を事前配置して削除時も消えない)
@@ -274,9 +280,9 @@ async function buildStyledAccountWorkbook(
             p.id ?? pIdx + 1,
             p.text,
             p.timeSlot || '',
+            p.weekdays || '',
             p.topic || '',
             p.imagePath || '',
-            p.weekdays || '',
             p.status,
             p.completedAt || '',
             p.errorMessage || '',
@@ -287,11 +293,11 @@ async function buildStyledAccountWorkbook(
         const cell = row.getCell(c);
         cell.value = vals[c - 1];
         cell.border = dataBorder;
-        if (c === 3 || c === 6) {
+        if (c === 3 || c === 4) {
           cell.numFmt = '@';
         }
 
-        if (c === 1 || c === 3 || c === 6 || c === 7) {
+        if (c === 1 || c === 3 || c === 4 || c === 7) {
           cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
         } else if (c === 2 || c === 9) {
           cell.alignment = { horizontal: 'left', vertical: 'top', wrapText: true };
@@ -314,7 +320,7 @@ async function buildStyledAccountWorkbook(
         } else if (c === 1) {
           cell.fill = idColFill;
           cell.font = idFont;
-        } else if (c === 3 || c === 6) {
+        } else if (c === 3 || c === 4) {
           cell.fill = schedColFill;
           cell.font = bodyFont;
         } else {

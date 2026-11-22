@@ -471,7 +471,7 @@ def _parse_clock_token_to_min(tok, bound_kind=None):
         if 0 <= h <= 24 and 0 <= m <= 59 and not (h == 24 and m > 0):
             return h * 60 + m
         return None
-    m_col = re.fullmatch(r'(\d{1,2}):(\d{1,2})', s)
+    m_col = re.fullmatch(r'(\d{1,2}):(\d{1,2})(?::\d{1,2})?', s)
     if m_col:
         h, m = int(m_col.group(1)), int(m_col.group(2))
         if is_pm and h < 12:
@@ -499,14 +499,14 @@ def is_within_target_hours(time_setting, current_hour=None):
     if time_setting is None:
         return True
     raw = str(time_setting).strip()
-    if not raw or raw.lower() in ["nan", "none", "終日", "いつでも", "all"]:
+    if not raw or raw.lower() in ["nan", "none", "終日", "24時間", "いつでも", "all"]:
         return True
     parts = [p.strip() for p in _normalize_time_text(raw).replace("、", ",").replace(";", ",").split(",") if p.strip()]
     if not parts:
         return True
     for part in parts:
         norm_p = part.replace(" ", "")
-        if norm_p in ["0:00-0:00", "0-24", "0:00-24:00", "0-0", "0時-0時", "0時-24時"]:
+        if norm_p in ["0:00-0:00", "0-24", "0:00-24:00", "0-0", "0時-0時", "0時-24時", "終日", "24時間"]:
             return True
         if "-" in part:
             tokens = part.split("-", 1)
@@ -531,6 +531,62 @@ def is_within_target_hours(time_setting, current_hour=None):
                 if not has_exact_min and (s_min // 60) == (cur_min // 60):
                     return True
     return False
+
+_WEEKDAY_TOKEN_MAP = {
+    "月": 0, "月曜": 0, "月曜日": 0, "mon": 0, "monday": 0,
+    "火": 1, "火曜": 1, "火曜日": 1, "tue": 1, "tues": 1, "tuesday": 1,
+    "水": 2, "水曜": 2, "水曜日": 2, "wed": 2, "wednesday": 2,
+    "木": 3, "木曜": 3, "木曜日": 3, "thu": 3, "thur": 3, "thurs": 3, "thursday": 3,
+    "金": 4, "金曜": 4, "金曜日": 4, "fri": 4, "friday": 4,
+    "土": 5, "土曜": 5, "土曜日": 5, "sat": 5, "saturday": 5,
+    "日": 6, "日曜": 6, "日曜日": 6, "sun": 6, "sunday": 6,
+}
+
+def is_now_within_weekdays(now_dt, weekday_str):
+    if now_dt is None:
+        now_dt = datetime.now()
+    if weekday_str is None:
+        return True
+    raw = unicodedata.normalize("NFKC", str(weekday_str)).strip()
+    norm_all = raw.lower().replace(" ", "").replace("　", "")
+    if not norm_all or norm_all in ["nan", "none", "毎日", "全日", "すべて", "全て", "全曜日", "all", "everyday", "指定なし"]:
+        return True
+    cleaned = re.sub(r'(?:毎週|曜日指定|のみ|だけ)', '', raw)
+    cleaned = re.sub(r'\s*(?:[〜～~ー−―‐–—\-]|から|\bto\b)\s*', '-', cleaned, flags=re.IGNORECASE)
+    allowed_days = set()
+    tokens = [t.strip() for t in re.split(r'[,，、/;；\s　・&＆+]+', cleaned) if t.strip()]
+    for tok in tokens:
+        tl = tok.lower()
+        if tl in ["毎日", "全日", "すべて", "全て", "all", "everyday"]:
+            return True
+        if tl in ["平日", "weekdays", "weekday"]:
+            allowed_days.update([0, 1, 2, 3, 4])
+            continue
+        if tl in ["土日", "週末", "土日祝", "weekend", "weekends"]:
+            allowed_days.update([5, 6])
+            continue
+        if "-" in tl:
+            parts = tl.split("-", 1)
+            d1 = _WEEKDAY_TOKEN_MAP.get(parts[0].strip())
+            d2 = _WEEKDAY_TOKEN_MAP.get(parts[1].strip())
+            if d1 is not None and d2 is not None:
+                cur = d1
+                for _ in range(7):
+                    allowed_days.add(cur)
+                    if cur == d2:
+                        break
+                    cur = (cur + 1) % 7
+                continue
+        if tl in _WEEKDAY_TOKEN_MAP:
+            allowed_days.add(_WEEKDAY_TOKEN_MAP[tl])
+            continue
+        if tl and all(ch in "月火水木金土日" for ch in tl):
+            for ch in tl:
+                allowed_days.add(_WEEKDAY_TOKEN_MAP[ch])
+    if not allowed_days:
+        return True
+    return now_dt.weekday() in allowed_days
+
 def update_account_sessionid(filepath, account_name, new_sessionid):
     try:
         if not filepath or not os.path.exists(filepath):
@@ -1210,12 +1266,7 @@ def main():
 
             # <アカウント名>.xlsx からポスト間隔・モード・実行時間・Chromeプロファイル設定をすべて反映
             custom_settings = read_account_settings_from_post_file(posts_file)
-
-            time_slot = custom_settings.get("time_slot", "0:00-0:00")
-            now_hour = datetime.now().hour
-            if not is_within_target_hours(time_slot, now_hour):
-                print(f"[SKIP] [{name}] 現在時刻({now_hour}時)は{os.path.basename(posts_file)}の指定実行時間 ({time_slot}) 外です。")
-                continue
+            global_time_slot = custom_settings.get("time_slot", "0:00-0:00")
 
             if "min_interval_sec" in custom_settings:
                 min_d = custom_settings["min_interval_sec"]
@@ -1236,6 +1287,34 @@ def main():
             if not unposted:
                 print(f"[{name}] 未投稿のポストはありません。")
                 continue
+
+            now_dt_check = datetime.now()
+            eligible_unposted = []
+            for p_it in unposted:
+                s_meta = p_it.get("_sheet_theme_meta") if isinstance(p_it.get("_sheet_theme_meta"), dict) else {}
+                if s_meta and not s_meta.get("enabled", True):
+                    continue
+                row_slot = ""
+                for k_sl in ["投稿時間", "投稿時間帯", "投稿時刻", "実行時間", "時間帯"]:
+                    v_sl = str(p_it.get(k_sl) or "").strip()
+                    if v_sl and v_sl.lower() not in ["none", "nan"]:
+                        row_slot = v_sl
+                        break
+                row_wd = ""
+                for k_wd in ["曜日", "対象曜日", "weekdays", "weekday"]:
+                    v_wd = str(p_it.get(k_wd) or "").strip()
+                    if v_wd and v_wd.lower() not in ["none", "nan"]:
+                        row_wd = v_wd
+                        break
+                eff_wd = row_wd or str(s_meta.get("weekdays") or "").strip() or "毎日"
+                eff_slot = row_slot or str(s_meta.get("time_slot") or "").strip() or global_time_slot or "0:00-0:00"
+                if is_now_within_weekdays(now_dt_check, eff_wd) and is_within_target_hours(eff_slot):
+                    eligible_unposted.append(p_it)
+
+            if not eligible_unposted:
+                print(f"[SKIP] [{name}] 現在日時({now_dt_check.strftime('%Y-%m-%d %H:%M')})の実行時間・曜日に該当する未投稿ポストがありません。")
+                continue
+            unposted = eligible_unposted
 
             if post_mode == 1:
                 random.shuffle(unposted)
@@ -1263,15 +1342,27 @@ def main():
                 continue
 
             for post_item in unposted:
+                s_meta = post_item.get("_sheet_theme_meta") if isinstance(post_item.get("_sheet_theme_meta"), dict) else {}
                 row_slot = ""
                 for k_sl in ["投稿時間", "投稿時間帯", "投稿時刻", "実行時間", "時間帯"]:
                     v_sl = str(post_item.get(k_sl) or "").strip()
                     if v_sl and v_sl.lower() not in ["none", "nan"]:
                         row_slot = v_sl
                         break
-                if row_slot and not is_within_target_hours(row_slot):
-                    post_id_skip = post_item.get("ID") or post_item.get("id") or post_item["_row_idx"] - 1
-                    acc_log(f"[INFO] ⏭️ [{name}] Post #{post_id_skip} は投稿時間 ({row_slot}) 外のため即スキップして次のポストへ進みます。")
+                row_wd = ""
+                for k_wd in ["曜日", "対象曜日", "weekdays", "weekday"]:
+                    v_wd = str(post_item.get(k_wd) or "").strip()
+                    if v_wd and v_wd.lower() not in ["none", "nan"]:
+                        row_wd = v_wd
+                        break
+                eff_wd = row_wd or str(s_meta.get("weekdays") or "").strip() or "毎日"
+                eff_slot = row_slot or str(s_meta.get("time_slot") or "").strip() or global_time_slot or "0:00-0:00"
+                post_id_skip = post_item.get("ID") or post_item.get("id") or post_item["_row_idx"] - 1
+                if not is_now_within_weekdays(datetime.now(), eff_wd):
+                    acc_log(f"[INFO] ⏭️ [{name}] Post #{post_id_skip} は対象曜日 ({eff_wd}) 外のため即スキップして次のポストへ進みます。")
+                    continue
+                if not is_within_target_hours(eff_slot):
+                    acc_log(f"[INFO] ⏭️ [{name}] Post #{post_id_skip} は投稿時間 ({eff_slot}) 外のため即スキップして次のポストへ進みます。")
                     continue
 
                 row_idx = post_item["_row_idx"]

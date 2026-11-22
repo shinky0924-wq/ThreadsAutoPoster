@@ -49,6 +49,7 @@ export const PostsTable: React.FC<PostsTableProps> = ({
   const [newTheme, setNewTheme] = useState('基本');
   const [newText, setNewText] = useState('');
   const [newTimeSlot, setNewTimeSlot] = useState('');
+  const [newWeekdays, setNewWeekdays] = useState('');
   const [newTopic, setNewTopic] = useState('信太山新地');
   const [newImagePath, setNewImagePath] = useState('image.png');
   const [editingPost, setEditingPost] = useState<PostItem | null>(null);
@@ -82,6 +83,7 @@ export const PostsTable: React.FC<PostsTableProps> = ({
       return (
         p.text.toLowerCase().includes(q) ||
         pTheme.toLowerCase().includes(q) ||
+        (p.weekdays && p.weekdays.toLowerCase().includes(q)) ||
         (p.topic && p.topic.toLowerCase().includes(q)) ||
         (p.imagePath && p.imagePath.toLowerCase().includes(q))
       );
@@ -101,12 +103,14 @@ export const PostsTable: React.FC<PostsTableProps> = ({
       text: newText.trim(),
       theme: newTheme.trim() || '基本',
       timeSlot: newTimeSlot.trim() || undefined,
+      weekdays: newWeekdays.trim() || undefined,
       topic: newTopic.trim(),
       imagePath: newImagePath.trim(),
       status: '未投稿',
     });
     setNewText('');
     setNewTimeSlot('');
+    setNewWeekdays('');
     setIsAdding(false);
   };
 
@@ -497,15 +501,25 @@ export const PostsTable: React.FC<PostsTableProps> = ({
             className="w-full bg-zinc-900 border border-zinc-700 text-white text-xs p-2.5 rounded-lg focus:outline-none focus:border-emerald-500"
             required
           />
-          <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 text-xs">
+          <div className="grid grid-cols-1 sm:grid-cols-5 gap-3 text-xs">
             <div>
-              <label className="text-zinc-400 block mb-1">投稿時間 (空白で通常稼働)</label>
+              <label className="text-zinc-400 block mb-1">投稿時間 (上の実行時間より優先)</label>
               <input
                 type="text"
                 value={newTimeSlot}
                 onChange={(e) => setNewTimeSlot(e.target.value)}
-                placeholder="例: 9時～12時"
+                placeholder="例: 7～10 / 9時～12時"
                 className="w-full bg-zinc-900 border border-zinc-700 text-white text-xs px-2.5 py-1.5 rounded focus:outline-none focus:border-sky-500"
+              />
+            </div>
+            <div>
+              <label className="text-zinc-400 block mb-1">曜日 (上の曜日より優先)</label>
+              <input
+                type="text"
+                value={newWeekdays}
+                onChange={(e) => setNewWeekdays(e.target.value)}
+                placeholder="例: 月 / 月～木 / 月,木,金"
+                className="w-full bg-zinc-900 border border-zinc-700 text-white text-xs px-2.5 py-1.5 rounded focus:outline-none focus:border-amber-500"
               />
             </div>
             <div>
@@ -597,15 +611,25 @@ export const PostsTable: React.FC<PostsTableProps> = ({
                 />
               </div>
             </div>
-            <div className="grid grid-cols-3 gap-3 text-xs">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
               <div>
-                <label className="text-zinc-400 block mb-1">投稿時間 (〇時～〇時/空白=通常)</label>
+                <label className="text-zinc-400 block mb-1">投稿時間 (上の実行時間より優先)</label>
                 <input
                   type="text"
                   value={editingPost.timeSlot || ''}
-                  placeholder="例: 9時～12時"
+                  placeholder="例: 7～10 / 9時～12時"
                   onChange={(e) => setEditingPost({ ...editingPost, timeSlot: e.target.value })}
                   className="w-full bg-zinc-950 border border-zinc-700 text-white text-xs px-2.5 py-1.5 rounded focus:outline-none focus:border-sky-500"
+                />
+              </div>
+              <div>
+                <label className="text-zinc-400 block mb-1">曜日 (上の曜日より優先)</label>
+                <input
+                  type="text"
+                  value={editingPost.weekdays || ''}
+                  placeholder="例: 月 / 月～木 / 月,木,金"
+                  onChange={(e) => setEditingPost({ ...editingPost, weekdays: e.target.value })}
+                  className="w-full bg-zinc-950 border border-zinc-700 text-white text-xs px-2.5 py-1.5 rounded focus:outline-none focus:border-amber-500"
                 />
               </div>
               <div>
@@ -657,6 +681,7 @@ export const PostsTable: React.FC<PostsTableProps> = ({
               <th className="py-2.5 px-3 w-12 text-center">ID</th>
               <th className="py-2.5 px-3">ポスト文章 / 投稿内容</th>
               <th className="py-2.5 px-3 w-28 text-center">投稿時間</th>
+              <th className="py-2.5 px-3 w-24 text-center">曜日</th>
               <th className="py-2.5 px-3 w-28">トピック</th>
               <th className="py-2.5 px-3 w-24">画像</th>
               <th className="py-2.5 px-3 w-28">ステータス</th>
@@ -667,7 +692,7 @@ export const PostsTable: React.FC<PostsTableProps> = ({
           <tbody className="divide-y divide-zinc-800/60 font-sans">
             {filteredPosts.length === 0 ? (
               <tr>
-                <td colSpan={8} className="py-12 text-center text-zinc-500">
+                <td colSpan={9} className="py-12 text-center text-zinc-500">
                   <div className="max-w-sm mx-auto space-y-2">
                     <p className="font-medium text-zinc-400">登録されているツイートはありません。</p>
                     <p className="text-[11px] text-zinc-500">
@@ -713,11 +738,28 @@ export const PostsTable: React.FC<PostsTableProps> = ({
                     {/* Per-Post Time Slot */}
                     <td className="py-2.5 px-3 text-center">
                       {post.timeSlot ? (
-                        <span className="px-2 py-0.5 rounded bg-sky-950/80 text-sky-300 font-mono text-[11px] border border-sky-800/60">
+                        <span
+                          className="px-2 py-0.5 rounded bg-sky-950/80 text-sky-300 font-mono text-[11px] border border-sky-800/60"
+                          title="上の実行時間設定より優先されます"
+                        >
                           {post.timeSlot}
                         </span>
                       ) : (
-                        <span className="text-zinc-500 text-[11px]">通常稼働</span>
+                        <span className="text-zinc-500 text-[11px]">シート継承</span>
+                      )}
+                    </td>
+
+                    {/* Per-Post Weekdays */}
+                    <td className="py-2.5 px-3 text-center">
+                      {post.weekdays ? (
+                        <span
+                          className="px-2 py-0.5 rounded bg-amber-950/80 text-amber-300 font-mono text-[11px] border border-amber-800/60"
+                          title="上の曜日設定より優先されます"
+                        >
+                          {post.weekdays}
+                        </span>
+                      ) : (
+                        <span className="text-zinc-500 text-[11px]">シート継承</span>
                       )}
                     </td>
 
