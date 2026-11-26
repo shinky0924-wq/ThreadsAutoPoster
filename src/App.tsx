@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { AccountInfo, AccountDesignProfile, PostItem, DailyGreetingSlot, SystemSettings, LogMessage } from './types';
+import { AccountInfo, AccountDesignProfile, PostItem, DailyGreetingSlot, SystemSettings, LogMessage, AiPostConfig, AiPostHistoryItem } from './types';
 import { initialAccounts, initialPosts, initialDailySlots, initialSettings } from './data/initialData';
 import { Header } from './components/Header';
 import { AccountSelector } from './components/AccountSelector';
@@ -14,9 +14,10 @@ import { ThreadsPreview } from './components/ThreadsPreview';
 import { ConsoleLogs } from './components/ConsoleLogs';
 import { SessionModal } from './components/SessionModal';
 import { exportAccountWorkbook, exportAccountsConfigWorkbook, parseExcelFile } from './utils/excelUtils';
-import { parseSpintax, resolveImagePath, extractUserIdFromToken } from './utils/spintax';
+import { parseSpintax, resolveImagePath, extractUserIdFromToken, parseDeleteDelaySpec, formatDurationJp } from './utils/spintax';
 import { DownloadCenter } from './components/DownloadCenter';
 import { GeneratorStudio } from './components/GeneratorStudio';
+import { AiPostStudio } from './components/AiPostStudio';
 import { RAW_THREADS_GUI_APP_PY, RAW_PROFILE_LAUNCHER_PY, RAW_PROFILE_EDITOR_PY } from './data/rawScript';
 import { 
   FileSpreadsheet, 
@@ -28,7 +29,8 @@ import {
   AlertCircle,
   Package,
   Rocket,
-  Wand2
+  Wand2,
+  Bot
 } from 'lucide-react';
 
 export default function App() {
@@ -94,9 +96,17 @@ export default function App() {
   const [isStealthing, setIsStealthing] = useState(false);
   const [statusText, setStatusText] = useState('待機中 (Excel読込済)');
   const [countdownSeconds, setCountdownSeconds] = useState(0);
-  const [activeTab, setActiveTab] = useState<'posts' | 'generator' | 'preview' | 'logs' | 'accounts' | 'downloads'>('generator');
+  const [activeTab, setActiveTab] = useState<'posts' | 'ai-posts' | 'generator' | 'preview' | 'logs' | 'accounts' | 'downloads'>('generator');
   const [generatedImagesMap, setGeneratedImagesMap] = useState<Record<string, Record<string, string>>>({});
   const [sessionModalOpen, setSessionModalOpen] = useState(false);
+  const deleteTimersRef = useRef<number[]>([]);
+
+  useEffect(() => {
+    return () => {
+      deleteTimersRef.current.forEach((tid) => window.clearTimeout(tid));
+      deleteTimersRef.current = [];
+    };
+  }, []);
 
   // Sync to localStorage
   useEffect(() => {
@@ -237,6 +247,43 @@ export default function App() {
     }));
 
     addLog('SUCCESS', `[${acc.id}] 🎉 Post #${targetPost.id} 投稿完了！Excel行を自動同期しました。`);
+
+    const parsedDel = parseDeleteDelaySpec(targetPost.deleteAfter);
+    if (parsedDel) {
+      const delaySec =
+        Math.floor(Math.random() * (parsedDel.maxSec - parsedDel.minSec + 1)) + parsedDel.minSec;
+      const etaDate = new Date(Date.now() + delaySec * 1000);
+      const etaStr = etaDate.toLocaleTimeString('ja-JP');
+      addLog(
+        'INFO',
+        `[${acc.id}] 🗑️ Post #${targetPost.id} の自動削除を予約: ${formatDurationJp(delaySec)}後 (${etaStr} 予定 / 設定値: ${parsedDel.label})`
+      );
+      const simMs =
+        settings.speedMode === 'real'
+          ? Math.min(delaySec * 1000, 15000)
+          : settings.speedMode === 'fast'
+            ? 3500
+            : 1500;
+      const accIdCapture = acc.id;
+      const postIdCapture = targetPost.id;
+      const tid = window.setTimeout(() => {
+        const delTs = new Date().toLocaleTimeString('ja-JP');
+        setAccountPosts((prev) => ({
+          ...prev,
+          [accIdCapture]: (prev[accIdCapture] || []).map((p) => {
+            if (p.id !== postIdCapture || p.status !== '投稿完了') return p;
+            const prevCompleted = p.completedAt || finishTime;
+            return {
+              ...p,
+              status: '投稿完了(削除済)',
+              completedAt: prevCompleted.includes('削除済') ? prevCompleted : `${prevCompleted} (削除済 ${delTs})`,
+            };
+          }),
+        }));
+        addLog('SUCCESS', `[${accIdCapture}] 🗑️ Post #${postIdCapture} を設定タイマー到達により自動削除しました！`);
+      }, simMs);
+      deleteTimersRef.current.push(tid);
+    }
 
     if (settings.singleWindowRotation) {
       addLog('INFO', `[${acc.id}] 🪟【1窓ローテーション】ブラウザを完全終了しメモリ解放。次回待機に移行`);
@@ -485,6 +532,8 @@ export default function App() {
               currentTopicIndex: 0,
               enabled: a.enabled !== false,
               ...(existing?.design ? { design: existing.design } : {}),
+              ...(existing?.aiPostConfig ? { aiPostConfig: existing.aiPostConfig } : {}),
+              ...(existing?.aiPostHistory ? { aiPostHistory: existing.aiPostHistory } : {}),
             };
           });
           setSelectedAccountId(merged[0].id);
@@ -502,6 +551,24 @@ export default function App() {
           )
         );
         addLog('SUCCESS', `✅ [@${currentAccount.id}] のアカウント設計設定を読み込みました！`);
+      }
+
+      if (parsed.aiPostConfig || parsed.aiPostHistory) {
+        setAccounts((prev) =>
+          prev.map((acc) =>
+            acc.id === currentAccount.id
+              ? {
+                  ...acc,
+                  ...(parsed.aiPostConfig ? { aiPostConfig: parsed.aiPostConfig } : {}),
+                  ...(parsed.aiPostHistory ? { aiPostHistory: parsed.aiPostHistory } : {}),
+                }
+              : acc
+          )
+        );
+        addLog(
+          'SUCCESS',
+          `🤖 [@${currentAccount.id}] 『AIポスト』シート設定を読み込みました（エンジン: ${parsed.aiPostConfig?.engine || 'duckai'} / 履歴・指示: ${(parsed.aiPostHistory || []).length}件）`
+        );
       }
 
       if (parsed.posts && parsed.posts.length > 0) {
@@ -745,7 +812,21 @@ export default function App() {
             }`}
           >
             <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />
-            <span>投稿リスト & Excel ({currentPosts.length})</span>
+            <span>固定ポスト & Excel ({currentPosts.length})</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('ai-posts')}
+            className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg font-medium transition-all cursor-pointer whitespace-nowrap shrink-0 ${
+              activeTab === 'ai-posts'
+                ? 'bg-indigo-600 text-white font-bold border border-indigo-400 shadow-sm'
+                : 'text-indigo-300 hover:text-white hover:bg-indigo-950/60 border border-indigo-500/40'
+            }`}
+          >
+            <Bot className="w-3.5 h-3.5 text-indigo-300" />
+            <span>
+              🤖 AIポスト (固定別) {currentAccount.aiPostConfig?.enabled ? '● ON' : ''}
+            </span>
           </button>
 
           <button
@@ -833,6 +914,25 @@ export default function App() {
               onPostSingle={async (p) => {
                 await executeSinglePost(p);
               }}
+            />
+          )}
+
+          {activeTab === 'ai-posts' && (
+            <AiPostStudio
+              currentAccount={currentAccount}
+              onUpdateAccountAiConfig={(accountId: string, config: AiPostConfig, history: AiPostHistoryItem[]) => {
+                setAccounts((prev) =>
+                  prev.map((acc) =>
+                    acc.id === accountId
+                      ? { ...acc, aiPostConfig: config, aiPostHistory: history }
+                      : acc
+                  )
+                );
+              }}
+              onExportAccountExcel={() => {
+                void handleExportExcel();
+              }}
+              onLog={(level, message) => addLog(level, message)}
             />
           )}
 

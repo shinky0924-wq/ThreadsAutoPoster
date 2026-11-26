@@ -16,6 +16,9 @@ import subprocess
 import shutil
 import time
 import json
+import re
+import hashlib
+import platform
 import urllib.parse
 from datetime import datetime
 
@@ -88,6 +91,124 @@ def extract_user_id(session_id):
         if p.isdigit():
             return p
     return ""
+
+def _get_current_machine_id():
+    raw = "|".join([
+        platform.node() or os.environ.get("COMPUTERNAME", ""),
+        os.environ.get("USERNAME", "") or os.environ.get("USER", ""),
+        platform.machine() or "",
+        sys.platform or "",
+    ])
+    return hashlib.sha256(raw.encode("utf-8", errors="ignore")).hexdigest()[:16]
+
+def parse_playwright_proxy(raw_proxy):
+    s = str(raw_proxy or "").strip()
+    if not s or s.lower() in ["nan", "none", "-", "なし"]:
+        return None
+    if not re.match(r'^(?:https?|socks5?)://', s, re.IGNORECASE):
+        m_colon = re.fullmatch(r'([^:@/\s]+):(\d{2,5}):([^:@\s]+):([^@\s]+)', s)
+        if m_colon:
+            host, port, user, pw = m_colon.groups()
+            return {"server": f"http://{host}:{port}", "username": user, "password": pw}
+        m_at = re.fullmatch(r'([^:@\s]+):([^@\s]+)@([^:@/\s]+):(\d{2,5})', s)
+        if m_at:
+            user, pw, host, port = m_at.groups()
+            return {"server": f"http://{host}:{port}", "username": user, "password": pw}
+        s = "http://" + s
+    try:
+        u = urllib.parse.urlparse(s)
+        if not u.hostname:
+            return None
+        scheme = (u.scheme or "http").lower()
+        port_part = f":{u.port}" if u.port else ""
+        cfg = {"server": f"{scheme}://{u.hostname}{port_part}"}
+        if u.username is not None:
+            cfg["username"] = urllib.parse.unquote(u.username)
+        if u.password is not None:
+            cfg["password"] = urllib.parse.unquote(u.password)
+        return cfg
+    except Exception:
+        return None
+
+def read_account_proxy_from_excel(account_name):
+    clean_target = str(account_name or "").strip().lstrip("@").lower()
+    if not clean_target or not os.path.exists(ACCOUNT_FILE):
+        return ""
+    try:
+        import openpyxl
+        wb = openpyxl.load_workbook(ACCOUNT_FILE, data_only=True)
+        ws = wb.active
+        for s in wb.sheetnames:
+            if "アカウント" in s:
+                ws = wb[s]
+                break
+        rows = list(ws.iter_rows(values_only=True))
+        wb.close()
+        if not rows:
+            return ""
+        headers = [str(c or "").strip() for c in rows[0]]
+        id_col, px_col = 0, None
+        for idx, h in enumerate(headers):
+            hl = h.lower()
+            if "アカウント" in h or hl == "id":
+                id_col = idx
+            elif "プロキシ" in h or "proxy" in hl:
+                px_col = idx
+        if px_col is None:
+            return ""
+        for r in rows[1:]:
+            if r and len(r) > max(id_col, px_col):
+                rid = str(r[id_col] or "").strip().lstrip("@").lower()
+                if rid == clean_target:
+                    pv = str(r[px_col] or "").strip()
+                    if pv and pv.lower() not in ["nan", "none", "-"] and not pv.startswith(("(", "（", "※")):
+                        return pv
+    except Exception:
+        pass
+    return ""
+
+def detect_and_mark_host_migration(profile_path, account_name="", log_func=None):
+    if not profile_path or not os.path.exists(profile_path):
+        return False
+    cur_host = _get_current_machine_id()
+    fp_path = os.path.join(profile_path, "fingerprint.json")
+    fp = {}
+    if os.path.exists(fp_path):
+        try:
+            with open(fp_path, "r", encoding="utf-8") as f:
+                fp = json.load(f) or {}
+        except Exception:
+            fp = {}
+    prev_host = str(fp.get("last_host_id") or "").strip()
+    has_portable = os.path.exists(os.path.join(profile_path, "portable_session.json")) or os.path.exists(os.path.join(profile_path, "cookies.json"))
+    has_default = os.path.exists(os.path.join(profile_path, "Default"))
+    host_changed = bool(prev_host and prev_host != cur_host)
+    legacy_migrated = bool(not prev_host and has_default and has_portable)
+    if host_changed or legacy_migrated:
+        if has_portable:
+            for rel in ["Default/Cookies", "Default/Cookies-journal", "Default/Network/Cookies", "Default/Network/Cookies-journal"]:
+                sp = os.path.join(profile_path, rel)
+                if os.path.exists(sp):
+                    try:
+                        os.remove(sp)
+                    except Exception:
+                        pass
+            try:
+                with open(os.path.join(profile_path, ".portable_needs_rebind"), "w", encoding="utf-8") as mf:
+                    mf.write(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+            except Exception:
+                pass
+        if host_changed:
+            fp["needs_migration_warmup"] = True
+            if log_func:
+                log_func(f"[WARN] 🌐 @{account_name} 別PC/別VPSからの起動を検知！DPAPI再バインドを実施します。")
+    fp["last_host_id"] = cur_host
+    try:
+        with open(fp_path, "w", encoding="utf-8") as f:
+            json.dump(fp, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+    return host_changed
 
 class ProfileLauncherApp:
     def __init__(self, root):
@@ -245,11 +366,27 @@ class ProfileLauncherApp:
             activeforeground="#ffffff",
             relief="flat",
             cursor="hand2",
-            padx=16,
+            padx=12,
             pady=6,
             command=self.create_profile_from_sessionid
         )
-        btn_create_from_session.pack(fill="x", expand=True)
+        btn_create_from_session.pack(side="left", fill="x", expand=True, padx=(0, 6))
+
+        btn_fixed_ai_win = tk.Button(
+            f_row2,
+            text="🧠 AI専用Window起動 (_ai_window固定)",
+            font=("Meiryo", 9, "bold"),
+            bg="#4338ca",
+            fg="#e0e7ff",
+            activebackground="#4f46e5",
+            activeforeground="#ffffff",
+            relief="flat",
+            cursor="hand2",
+            padx=12,
+            pady=6,
+            command=self.launch_fixed_ai_window
+        )
+        btn_fixed_ai_win.pack(side="left")
 
         # 2. Existing Profiles Card
         list_card = tk.LabelFrame(
@@ -525,6 +662,8 @@ class ProfileLauncherApp:
             profile_path = os.path.join(PROFILES_DIR, name)
             os.makedirs(profile_path, exist_ok=True)
             clean_profile_locks(profile_path)
+            detect_and_mark_host_migration(profile_path, account_name=name, log_func=self.log)
+            proxy_cfg = parse_playwright_proxy(read_account_proxy_from_excel(name))
 
             self.log(f"🌐 【提案1】@{name} のChromeを起動中... (IP完全一致セッション取得)")
             self.log("💡 ブラウザが開いたら、Threadsへログインしてください。ログイン完了を自動検知してCookieを全保存します。")
@@ -533,13 +672,17 @@ class ProfileLauncherApp:
                 from playwright.sync_api import sync_playwright
                 with sync_playwright() as p:
                     args = ["--start-maximized", "--no-first-run", "--no-default-browser-check", "--lang=ja-JP"]
-                    context = p.chromium.launch_persistent_context(
+                    lkwargs = dict(
                         user_data_dir=profile_path,
                         headless=False,
                         channel="chrome" if self.chrome_path else None,
                         locale="ja-JP",
-                        args=args
+                        args=args,
+                        ignore_default_args=["--enable-automation"],
                     )
+                    if proxy_cfg:
+                        lkwargs["proxy"] = proxy_cfg
+                    context = p.chromium.launch_persistent_context(**lkwargs)
                     page = context.pages[0] if context.pages else context.new_page()
                     page.goto("https://www.threads.net/login")
 
@@ -547,6 +690,9 @@ class ProfileLauncherApp:
                     captured = False
                     for _ in range(150):
                         time.sleep(2)
+                        cur_u = (page.url or "").lower()
+                        if any(k in cur_u for k in ["/challenge/", "/checkpoint/", "auth_platform", "two_step_verification", "/accounts/suspended"]):
+                            continue
                         cookies = context.cookies(["https://www.threads.net", "https://www.instagram.com"])
                         sess = next((c for c in cookies if c.get("name") == "sessionid" and c.get("value") and len(str(c["value"])) > 10), None)
                         if sess:
@@ -601,20 +747,40 @@ class ProfileLauncherApp:
         os.makedirs(profile_path, exist_ok=True)
         clean_profile_locks(profile_path)
 
-        # 【提案4: 端末指紋（Fingerprint）を生成・固定化】
+        # 【提案4: 端末指紋（Fingerprint）をマージ・固定化】
         fp_path = os.path.join(profile_path, "fingerprint.json")
-        default_fp = {
-            "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-            "viewport": {"width": 1280, "height": 850},
-            "locale": "ja-JP",
-            "timezone_id": "Asia/Tokyo",
-            "color_scheme": "light"
-        }
+        default_fp = {}
+        if os.path.exists(fp_path):
+            try:
+                with open(fp_path, "r", encoding="utf-8") as f:
+                    default_fp = json.load(f) or {}
+            except Exception:
+                default_fp = {}
+        default_fp.setdefault("user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+        default_fp.setdefault("viewport", {"width": 1280, "height": 850})
+        default_fp.setdefault("locale", "ja-JP")
+        default_fp.setdefault("timezone_id", "Asia/Tokyo")
+        default_fp.setdefault("color_scheme", "light")
+        default_fp["last_host_id"] = _get_current_machine_id()
         try:
             with open(fp_path, "w", encoding="utf-8") as f:
                 json.dump(default_fp, f, ensure_ascii=False, indent=2)
         except Exception:
             pass
+
+        portable_file = os.path.join(profile_path, "portable_session.json")
+        cookies_file = os.path.join(profile_path, "cookies.json")
+        existing_origins = []
+        existing_cookies = []
+        if os.path.exists(portable_file):
+            try:
+                with open(portable_file, "r", encoding="utf-8") as ef:
+                    ex_data = json.load(ef)
+                if isinstance(ex_data, dict):
+                    existing_cookies = ex_data.get("cookies", []) or []
+                    existing_origins = ex_data.get("origins", []) or []
+            except Exception:
+                pass
 
         cookies_list = []
         token_for_excel = ""
@@ -626,6 +792,8 @@ class ProfileLauncherApp:
             try:
                 parsed_json = json.loads(raw_token)
                 raw_c_list = parsed_json.get("cookies", []) if isinstance(parsed_json, dict) else (parsed_json if isinstance(parsed_json, list) else [])
+                if isinstance(parsed_json, dict) and parsed_json.get("origins"):
+                    existing_origins = parsed_json.get("origins") or existing_origins
                 for c in raw_c_list:
                     if isinstance(c, dict) and c.get("name") and c.get("value"):
                         c_dict = dict(c)
@@ -646,23 +814,21 @@ class ProfileLauncherApp:
             token_for_excel = token
             uid = extract_user_id(token)
 
-            self.log(f"⚡ @{name} のプロファイルを sessionid から作成中...")
+            self.log(f"⚡ @{name} のプロファイルを sessionid から更新中（正規端末Cookie datr/mid/ig_did は偽造せず保持）...")
             if uid:
                 self.log(f"👤 検出ユーザーID: {uid}")
 
             cookie_expires = int(time.time()) + 31536000  # 1年間有効
-
             domains = [
                 ".threads.net", "www.threads.net", "threads.net",
                 ".threads.com", "www.threads.com", "threads.com",
                 ".instagram.com", "www.instagram.com", "instagram.com"
             ]
 
-            import hashlib, uuid as uuid_mod
-            csrf_val = hashlib.md5(f"csrf_{uid}_{token[:16]}".encode()).hexdigest()
-            mid_val = "Z" + hashlib.md5(f"mid_{uid}_{name}".encode()).hexdigest()[:23]
-            ig_did_val = str(uuid_mod.uuid5(uuid_mod.NAMESPACE_DNS, f"{uid}_{name}")).upper()
-            datr_val = hashlib.md5(f"datr_{name}".encode()).hexdigest()[:24]
+            # 既存の正規Cookie（datr/mid/ig_did/csrftoken 等）は一切消さず維持し、sessionid/ds_user_id のみ差し替え
+            for c_ex in existing_cookies:
+                if isinstance(c_ex, dict) and c_ex.get("name") not in ("sessionid", "ds_user_id"):
+                    cookies_list.append(c_ex)
 
             for d in domains:
                 cookies_list.append({
@@ -685,20 +851,11 @@ class ProfileLauncherApp:
                         "sameSite": "Lax",
                         "expires": cookie_expires
                     })
-                # 【提案2: 必須セキュリティCookie群の自動補完】
-                cookies_list.append({"name": "csrftoken", "value": csrf_val, "domain": d, "path": "/", "secure": True, "sameSite": "Lax", "expires": cookie_expires})
-                cookies_list.append({"name": "mid", "value": mid_val, "domain": d, "path": "/", "secure": True, "sameSite": "Lax", "expires": cookie_expires})
-                cookies_list.append({"name": "ig_did", "value": ig_did_val, "domain": d, "path": "/", "httpOnly": True, "secure": True, "sameSite": "Lax", "expires": cookie_expires})
-                cookies_list.append({"name": "datr", "value": datr_val, "domain": d, "path": "/", "httpOnly": True, "secure": True, "sameSite": "Lax", "expires": cookie_expires})
-                cookies_list.append({"name": "rur", "value": "RVA", "domain": d, "path": "/", "httpOnly": True, "secure": True, "sameSite": "Lax", "expires": cookie_expires})
 
         # 1. portable_session.json と cookies.json を書き込み
-        portable_file = os.path.join(profile_path, "portable_session.json")
-        cookies_file = os.path.join(profile_path, "cookies.json")
-
         state_data = {
             "cookies": cookies_list,
-            "origins": []
+            "origins": existing_origins
         }
 
         try:
@@ -706,7 +863,7 @@ class ProfileLauncherApp:
                 json.dump(state_data, f, ensure_ascii=False, indent=2)
             with open(cookies_file, "w", encoding="utf-8") as f:
                 json.dump(cookies_list, f, ensure_ascii=False, indent=2)
-            self.log("📁 portable_session.json 保存完了 (Cookie全セット完全同期)")
+            self.log("📁 portable_session.json 保存完了 (正規端末Cookie保持・sessionid同期)")
         except Exception as e:
             self.log(f"❌ JSONファイル保存エラー: {e}")
 
@@ -714,13 +871,17 @@ class ProfileLauncherApp:
         dpapi_bound = False
         try:
             from playwright.sync_api import sync_playwright
+            proxy_cfg = parse_playwright_proxy(read_account_proxy_from_excel(name))
             with sync_playwright() as p:
-                context = p.chromium.launch_persistent_context(
+                lkwargs = dict(
                     user_data_dir=profile_path,
                     headless=True,
                     channel="chrome" if self.chrome_path else None,
                     args=["--no-sandbox", "--disable-dev-shm-usage"]
                 )
+                if proxy_cfg:
+                    lkwargs["proxy"] = proxy_cfg
+                context = p.chromium.launch_persistent_context(**lkwargs)
                 context.add_cookies(cookies_list)
                 context.storage_state(path=portable_file)
                 context.close()
@@ -769,6 +930,8 @@ class ProfileLauncherApp:
         def _launch_worker():
             try:
                 from playwright.sync_api import sync_playwright
+                detect_and_mark_host_migration(profile_path, account_name=name, log_func=self.log)
+                proxy_cfg = parse_playwright_proxy(read_account_proxy_from_excel(name))
                 with sync_playwright() as p:
                     args = [
                         "--start-maximized",
@@ -787,23 +950,27 @@ class ProfileLauncherApp:
                         except Exception:
                             pass
 
-                    context = p.chromium.launch_persistent_context(
+                    lkwargs = dict(
                         user_data_dir=profile_path,
                         headless=False,
                         channel="chrome" if self.chrome_path else None,
-                        user_agent=fp.get("user_agent") or "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-                        locale="ja-JP",
+                        locale=fp.get("locale", "ja-JP"),
+                        timezone_id=fp.get("timezone_id", "Asia/Tokyo"),
                         args=args,
                         ignore_default_args=["--enable-automation"]
                     )
+                    if proxy_cfg:
+                        lkwargs["proxy"] = proxy_cfg
+                    context = p.chromium.launch_persistent_context(**lkwargs)
                     try:
-                        context.add_init_script("Object.defineProperty(navigator, 'webdriver', { get: () => undefined }); window.chrome = { runtime: {} };")
+                        context.add_init_script("Object.defineProperty(navigator, 'webdriver', { get: () => undefined });")
                     except Exception:
                         pass
 
                     # 1. portable_session.json / cookies.json からCookieを完全復元
                     pfile = os.path.join(profile_path, "portable_session.json")
                     cfile = os.path.join(profile_path, "cookies.json")
+                    rebind_marker = os.path.join(profile_path, ".portable_needs_rebind")
                     injected_count = 0
                     if os.path.exists(pfile):
                         try:
@@ -815,6 +982,11 @@ class ProfileLauncherApp:
                                 injected_count = len(cks)
                         except Exception as ex:
                             self.log(f"[DEBUG] pfile restore: {ex}")
+                    if os.path.exists(rebind_marker):
+                        try:
+                            os.remove(rebind_marker)
+                        except Exception:
+                            pass
 
                     raw_token = self.entry_sessionid.get().strip()
                     if raw_token and not raw_token.startswith("ここに"):
@@ -848,6 +1020,10 @@ class ProfileLauncherApp:
                     last_detected = ""
                     while not page.is_closed():
                         try:
+                            cur_u = (page.url or "").lower()
+                            if any(k in cur_u for k in ["/challenge/", "/checkpoint/", "auth_platform", "two_step_verification", "/accounts/suspended"]):
+                                time.sleep(1.5)
+                                continue
                             cur_cks = context.cookies(["https://www.threads.net", "https://www.instagram.com"])
                             sess = next((c for c in cur_cks if c.get("name") == "sessionid" and c.get("value") and len(str(c["value"])) > 15), None)
                             if sess:
@@ -890,6 +1066,39 @@ class ProfileLauncherApp:
                     self.log(f"❌ 起動エラー: {pe}")
 
         threading.Thread(target=_launch_worker, daemon=True).start()
+
+    def launch_fixed_ai_window(self):
+        """AI生成専用の固定Chromeウィンドウ (chrome_profiles/_ai_window, CDP:9333) を起動する（アカウント窓と完全分離）"""
+        ai_prof_dir = os.path.join(PROFILES_DIR, "_ai_window")
+        os.makedirs(ai_prof_dir, exist_ok=True)
+        for lk in ("SingletonLock", "SingletonCookie", "SingletonSocket"):
+            try:
+                lp = os.path.join(ai_prof_dir, lk)
+                if os.path.exists(lp):
+                    os.remove(lp)
+            except Exception:
+                pass
+        chrome_exe = self.chrome_path or "chrome.exe"
+        cmd = [
+            chrome_exe,
+            f"--user-data-dir={ai_prof_dir}",
+            "--remote-debugging-port=9333",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--lang=ja-JP",
+            "--disable-session-crashed-bubble",
+            "--hide-crash-restore-bubble",
+            "--window-size=1180,820",
+            "https://gemini.google.com/app",
+        ]
+        try:
+            subprocess.Popen(cmd)
+            self.log("🧠 AI専用Window (chrome_profiles/_ai_window, CDP:9333) を固定ウィンドウとして起動しました！")
+            self.log("💡 アカウント用プロファイル窓とは完全に分離されています。Web AIにログインしてご利用ください。")
+            self.refresh_profile_list()
+        except Exception as e_ai:
+            self.log(f"❌ AI専用Window起動エラー: {e_ai}")
+            messagebox.showerror("起動エラー", f"AI専用Windowを起動できませんでした:\n{e_ai}")
 
     def open_profile_folder(self):
         name = self.entry_name.get().strip()

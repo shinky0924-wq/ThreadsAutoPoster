@@ -266,18 +266,49 @@ def _is_daily_greeting_sheet(sname, ws=None):
     return False
 
 
+def _is_ai_post_sheet_name(sname):
+    """固定ポストから完全分離管理される『AIポスト』シートかどうか判定"""
+    s = str(sname or "").strip()
+    if not s:
+        return False
+    ns = re.sub(r'[\s　_\-:=]+', '', s.lower())
+    return ns in {"aiポスト", "ai投稿", "aipost", "aiposts", "ai生成", "aigenerated", "ai"} or (
+        "aiポスト" in ns or "ai投稿" in ns or "aipost" in ns
+    )
+
+
 def _is_system_sheet_name(sname, ws=None):
     s = str(sname or "").strip()
     sl = s.lower()
     if not s:
         return True
-    if any(k in sl for k in ["設定", "config", "setting", "基本設定", "テーマ設定", "themesetting", "themeconfig"]):
+    if _is_ai_post_sheet_name(s):
         return True
     if _is_daily_greeting_sheet(sname, ws=ws):
         return True
-    if "設計" in s:
-        return True
     if any(k in sl for k in ["アカウント情報", "accountinfo", "account_info"]):
+        return True
+    exact_sys = {"設定", "基本設定", "テーマ設定", "アカウント設定", "config", "setting", "settings", "themesetting", "themeconfig"}
+    if sl in exact_sys or "設計" in s:
+        if ws is not None:
+            try:
+                rows = list(ws.iter_rows(max_row=15, values_only=True))
+                hdr_idx = _find_post_header_row_in_sheet(rows)
+                if hdr_idx is not None:
+                    h_cells = [re.sub(r'[\s　_\-:=]+', '', str(c).strip().lower()) for c in (rows[hdr_idx - 1] or []) if c is not None]
+                    if any(k in h_cells for k in ["id", "ステータス", "status", "状態"]):
+                        return False
+            except Exception:
+                pass
+        return True
+    if any(k in sl for k in ["設定", "config", "setting"]):
+        if ws is not None:
+            try:
+                rows = list(ws.iter_rows(max_row=15, values_only=True))
+                if _find_post_header_row_in_sheet(rows) is not None:
+                    return False
+            except Exception:
+                pass
         return True
     return False
 
@@ -288,13 +319,22 @@ def _is_legacy_flat_post_sheet_name(sname):
 
 
 def _find_post_header_row_in_sheet(rows):
+    post_keys = ["ポスト文章", "投稿本文", "ツイート文章", "posttext", "投稿文章", "ポスト本文", "ポスト内容", "投稿内容", "本文"]
+    aux_keys = ["id", "ステータス", "status", "状態", "画像", "削除時間", "トピック", "投稿時間", "投稿完了日時"]
+    fallback_row = None
     for r_idx, row in enumerate((rows or [])[:15], start=1):
         if not row:
             continue
         row_cells_norm = [re.sub(r'[\s　_\-:=]+', '', str(c).strip().lower()) for c in row if c is not None]
-        if any(any(k in cell for k in ["ポスト文章", "投稿本文", "ツイート文章", "posttext", "投稿文章", "ポスト本文", "ポスト内容", "投稿内容", "本文"]) for cell in row_cells_norm):
+        has_post_hdr = any(len(cell) <= 18 and any(k in cell for k in post_keys) for cell in row_cells_norm)
+        if not has_post_hdr:
+            continue
+        has_aux_hdr = any(len(cell) <= 18 and any(k in cell for k in aux_keys) for cell in row_cells_norm)
+        if has_aux_hdr:
             return r_idx
-    return None
+        if fallback_row is None:
+            fallback_row = r_idx
+    return fallback_row
 
 
 def _norm_meta_label(val):
@@ -393,7 +433,7 @@ def read_sheet_theme_meta(rows, header_row_idx, sheet_name):
             continue
         for c_i, cell in enumerate(row):
             nl = _norm_meta_label(cell)
-            if not nl:
+            if not nl or len(nl) > 24:
                 continue
             below_val = ""
             if r_i + 1 < len(meta_rows) and meta_rows[r_i + 1] and c_i < len(meta_rows[r_i + 1]):
@@ -431,8 +471,9 @@ def read_sheet_theme_meta(rows, header_row_idx, sheet_name):
                 meta["post_mode"] = pm
                 meta["mode_str"] = pm_str
             elif any(k in nl for k in ["有効", "状態", "status"]):
-                if val:
-                    en = val not in ["無効", "停止", "OFF", "off", "0", "false"]
+                if val and not val.startswith(("(", "（", "※")):
+                    val_n = unicodedata.normalize("NFKC", val).strip().lower()
+                    en = not any(off_k in val_n for off_k in ["無効", "停止", "off", "false"]) and val_n != "0"
                     meta["enabled"] = en
                     meta["status"] = "有効" if en else "無効"
             elif any(k in nl for k in ["メモ", "備考", "note"]):
@@ -587,6 +628,10 @@ def read_excel_records(filepath):
                     elif any(k in norm_h for k in ["曜日", "weekday", "weekdays"]):
                         if val_clean or not r_dict.get("曜日"):
                             r_dict["曜日"] = val_clean
+                    elif any(k in norm_h for k in ["削除時間", "自動削除時間", "自動削除", "削除タイマー", "削除まで", "deleteafter", "deletetime", "deletedelay", "autodelete"]) and not any(ex in norm_h for ex in ["済", "完了", "日時"]):
+                        if val_clean or not r_dict.get("削除時間"):
+                            r_dict["削除時間"] = val_clean
+                            r_dict["自動削除"] = val_clean
                     elif any(k in norm_h for k in ["備考", "メモ", "note", "notes"]):
                         if val_clean or not r_dict.get("備考"):
                             r_dict["備考"] = val_clean
@@ -856,6 +901,63 @@ def update_post_status(filepath, row_idx, status="投稿完了", finish_time=Non
         print(f"[WARN] Excel書き込みエラー: {e}")
         return False
 
+
+def mark_post_deleted_in_excel(filepath, row_idx, deleted_time_str=None, sheet_name=None):
+    """自動削除完了後にExcelの該当行を『投稿完了(削除済)』＆削除時刻記録へ更新"""
+    if not filepath or not os.path.exists(filepath) or not row_idx:
+        return False
+    try:
+        wb = openpyxl.load_workbook(filepath)
+        ws = None
+        if sheet_name and sheet_name in wb.sheetnames:
+            ws = wb[sheet_name]
+        else:
+            for sname in wb.sheetnames:
+                c_ws = wb[sname]
+                for r in c_ws.iter_rows(max_row=15, values_only=True):
+                    if r and any(str(c).strip() in ["ステータス", "status", "状態"] for c in r if c is not None):
+                        ws = c_ws
+                        break
+                if ws:
+                    break
+            if not ws:
+                ws = wb.active
+
+        status_col = None
+        time_col = None
+        for r_num, row_cells in enumerate(ws.iter_rows(max_row=15), start=1):
+            vals = [str(cell.value).strip() if cell.value is not None else "" for cell in row_cells]
+            for cand in ["ステータス", "status", "状態"]:
+                if cand in vals:
+                    status_col = vals.index(cand) + 1
+                    break
+            for cand in ["投稿完了日時", "完了日時", "日時", "posted_at"]:
+                if cand in vals:
+                    time_col = vals.index(cand) + 1
+                    break
+            if status_col:
+                break
+
+        del_ts = deleted_time_str or datetime.now().strftime("%H:%M:%S")
+        if status_col:
+            cur_st = str(ws.cell(row=row_idx, column=status_col).value or "").strip()
+            if cur_st == "未投稿":
+                # 自動ループ等で既に未投稿にリセット済みならステータスは上書きしない
+                pass
+            else:
+                ws.cell(row=row_idx, column=status_col, value="投稿完了(削除済)")
+        if time_col:
+            cur_t = str(ws.cell(row=row_idx, column=time_col).value or "").strip()
+            if "削除済" not in cur_t:
+                ws.cell(row=row_idx, column=time_col, value=f"{cur_t} (削除済 {del_ts})".strip())
+        style_theme_worksheet(ws)
+        wb.save(filepath)
+        wb.close()
+        return True
+    except Exception as e:
+        print(f"[WARN] Excel削除ステータス更新エラー: {e}")
+        return False
+
 def update_account_sessionid(filepath, account_name, new_sessionid):
     try:
         if not filepath or not os.path.exists(filepath):
@@ -1105,9 +1207,163 @@ def open_threads_composer_dialog(page, account_name, log_func=print):
     return dialog, textbox
 
 
+def _get_current_machine_id():
+    """現在のPC/VPSを識別する安定したホストIDを生成"""
+    import hashlib, platform
+    raw = "|".join([
+        str(platform.node() or ""),
+        str(os.environ.get("COMPUTERNAME") or ""),
+        str(os.environ.get("USERDOMAIN") or ""),
+        str(os.environ.get("PROCESSOR_IDENTIFIER") or ""),
+    ])
+    return hashlib.sha256(raw.encode("utf-8", errors="ignore")).hexdigest()[:16]
+
+
+def extract_proxy_from_account(account_rec):
+    """アカウント情報.xlsx の行からプロキシ設定文字列を抽出"""
+    if not isinstance(account_rec, dict):
+        return ""
+    for k in ["プロキシ", "プロキシ設定", "proxy", "Proxy", "PROXY", "proxy_url"]:
+        v = str(account_rec.get(k) or "").strip()
+        if v and v.lower() not in ["nan", "none", "なし", "無し", "-", "―"]:
+            return v
+    return ""
+
+
+def parse_playwright_proxy(raw_proxy):
+    """
+    以下の形式を Playwright の proxy dict に変換:
+    - http://user:pass@host:port / https://... / socks5://...
+    - user:pass@host:port
+    - host:port:user:pass
+    - host:port
+    """
+    s = str(raw_proxy or "").strip()
+    if not s or s.lower() in ["nan", "none", "なし", "無し", "-", "―"]:
+        return None
+    import urllib.parse
+    if "://" not in s:
+        parts = s.split(":")
+        if len(parts) == 4 and "@" not in s:
+            host, port, user, pwd = parts
+            s = f"http://{urllib.parse.quote(user, safe='')}:{urllib.parse.quote(pwd, safe='')}@{host}:{port}"
+        else:
+            s = f"http://{s}"
+    try:
+        parsed = urllib.parse.urlparse(s)
+        if not parsed.hostname or not parsed.port:
+            return None
+        scheme = (parsed.scheme or "http").lower()
+        cfg = {"server": f"{scheme}://{parsed.hostname}:{parsed.port}"}
+        if parsed.username:
+            cfg["username"] = urllib.parse.unquote(parsed.username)
+        if parsed.password:
+            cfg["password"] = urllib.parse.unquote(parsed.password)
+        return cfg
+    except Exception:
+        return None
+
+
+def clear_auth_cookies_preserve_device(context, domains=None, log_func=None):
+    """
+    sessionid/ds_user_id/rur 等の認証セッション系Cookieのみを整理し、
+    Metaの信頼済み端末Cookie (datr, mid, ig_did, dpr, wd) は削除せず保持します。
+    """
+    if not context:
+        return
+    target_domains = domains or ["threads.net", "threads.com", "instagram.com"]
+    preserved = []
+    preserve_names = {"datr", "mid", "ig_did", "ig_nrcb", "dpr", "wd", "ps_l", "ps_n"}
+    try:
+        cur_cks = context.cookies(["https://www.threads.net", "https://www.threads.com", "https://www.instagram.com"])
+        for c in cur_cks:
+            if c.get("name") in preserve_names and c.get("value"):
+                c_clean = {}
+                for k in ["name", "value", "domain", "path", "expires", "httpOnly", "secure", "sameSite"]:
+                    if k in c and c[k] is not None:
+                        c_clean[k] = c[k]
+                if "sameSite" in c_clean:
+                    sv = str(c_clean["sameSite"]).capitalize()
+                    c_clean["sameSite"] = sv if sv in ["Strict", "Lax", "None"] else "Lax"
+                if c_clean.get("name") and c_clean.get("domain"):
+                    preserved.append(c_clean)
+    except Exception:
+        pass
+
+    for d_target in target_domains:
+        try:
+            context.clear_cookies(domain=d_target)
+        except Exception:
+            pass
+
+    if preserved:
+        try:
+            context.add_cookies(preserved)
+            if log_func:
+                log_func(f"[INFO] 🛡️ 端末信頼Cookie（datr/mid等 {len(preserved)}件）を保護したまま認証セッションのみ整理しました。")
+        except Exception:
+            pass
+
+
+def detect_and_mark_host_migration(profile_dir, account_name="", log_func=None):
+    """
+    別PC / 別Hyonix VPS へのフォルダ移動を自動検知し、
+    1) Windows DPAPI暗号化キー不一致による古いSQLite Cookies破損を安全除去
+    2) portable_session.json からの完全再バインドを予約
+    3) IP変化に伴う警告ログを出力
+    """
+    if not profile_dir or not os.path.exists(profile_dir):
+        return False
+    cur_host = _get_current_machine_id()
+    fp_path = os.path.join(profile_dir, "fingerprint.json")
+    fp = {}
+    if os.path.exists(fp_path):
+        try:
+            with open(fp_path, "r", encoding="utf-8") as f:
+                fp = json.load(f) or {}
+        except Exception:
+            fp = {}
+
+    prev_host = str(fp.get("last_host_id") or "").strip()
+    has_portable = os.path.exists(os.path.join(profile_dir, "portable_session.json")) or os.path.exists(os.path.join(profile_dir, "cookies.json"))
+    has_chrome_default = os.path.exists(os.path.join(profile_dir, "Default"))
+    host_changed = bool(prev_host and prev_host != cur_host)
+    legacy_migrated = bool(not prev_host and has_chrome_default and has_portable)
+
+    if host_changed or legacy_migrated:
+        if has_portable:
+            for stale_rel in [
+                "Default/Cookies", "Default/Cookies-journal",
+                "Default/Network/Cookies", "Default/Network/Cookies-journal",
+            ]:
+                sp = os.path.join(profile_dir, stale_rel)
+                if os.path.exists(sp):
+                    try:
+                        os.remove(sp)
+                    except Exception:
+                        pass
+            try:
+                with open(os.path.join(profile_dir, ".portable_needs_rebind"), "w", encoding="utf-8") as mf:
+                    mf.write(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+            except Exception:
+                pass
+        if host_changed:
+            fp["needs_migration_warmup"] = True
+            if log_func:
+                prefix = f"[{account_name}] " if account_name else ""
+                log_func(f"[WARN] 🌐 {prefix}別PC/別VPSからの起動（環境変更）を検知しました！DPAPI再バインド＆PC移行保護モードを有効化します。")
+    fp["last_host_id"] = cur_host
+    try:
+        with open(fp_path, "w", encoding="utf-8") as f:
+            json.dump(fp, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+    return host_changed
+
+
 def restore_portable_session_if_needed(context, profile_dir, account_name, log_func=print):
     """
-    PC AからPC B（VPS等）へプロファイルをコピーした際、
+    PC AからPC B（別Hyonix VPS等）へプロファイルをコピーした際、
     Windows DPAPI暗号化キーの不一致によりChromeの内部Cookieがリセットされる問題を完全解決。
     profile_dir内に保存された「portable_session.json」または「cookies.json」から
     Cookie（およびlocalStorage）を自動検知して復元し、PC BのWindows DPAPIで再暗号化保存させます。
@@ -1125,16 +1381,21 @@ def restore_portable_session_if_needed(context, profile_dir, account_name, log_f
     force_rebind = os.path.exists(rebind_marker)
 
     try:
-        cur_cookies = context.cookies(["https://www.threads.net", "https://www.threads.com", "https://www.instagram.com"])
-        has_session = any(c.get("name") == "sessionid" and c.get("value") for c in cur_cookies)
-        if has_session and not force_rebind:
-            return True
-
         import json
         with open(portable_file, "r", encoding="utf-8") as f:
             data = json.load(f)
 
         cookies_to_add = data.get("cookies", []) if isinstance(data, dict) else (data if isinstance(data, list) else [])
+        cur_cookies = context.cookies(["https://www.threads.net", "https://www.threads.com", "https://www.instagram.com"])
+        cur_names = {c.get("name") for c in cur_cookies if c.get("value")}
+        has_session = any(c.get("name") == "sessionid" and c.get("value") for c in cur_cookies)
+        missing_device_cookies = any(
+            c.get("name") in ("datr", "mid", "ig_did") and c.get("value") and c.get("name") not in cur_names
+            for c in cookies_to_add
+        )
+        if has_session and not force_rebind and not missing_device_cookies:
+            return True
+
         restored_any = False
         if cookies_to_add:
             cleaned_cookies = []
@@ -1152,7 +1413,7 @@ def restore_portable_session_if_needed(context, profile_dir, account_name, log_f
             if cleaned_cookies:
                 context.add_cookies(cleaned_cookies)
                 restored_any = True
-                log_func(f"[SUCCESS] [{account_name}] 🔄 PC間移行を検知: portable_session.json からセッションCookie ({len(cleaned_cookies)}件) を自動復元しました！")
+                log_func(f"[SUCCESS] [{account_name}] 🔄 PC間移行を検知: portable_session.json から正規Cookie ({len(cleaned_cookies)}件) を自動復元しました！")
                 log_func(f"[INFO] [{account_name}] 🛡️ 現在のPCのWindows暗号化(DPAPI)にセッションを自動再バインドしました。")
 
         # localStorage (origins) が保存されている場合は初回ページ読み込み時に補完
@@ -1197,11 +1458,20 @@ def save_portable_session_file(context, profile_dir, account_name, log_func=prin
     """
     ログイン中のセッション状態を portable_session.json として保存。
     別PCにフォルダごとコピーした際もログイン状態を100%保持できるようにします。
-    ※ ログアウト状態や未認証状態での上書き破壊を防止する安全ガード付き。
+    ※ ログアウト状態やチェックポイント(ロック)画面での上書き破壊を防止する安全ガード付き。
     """
     if not profile_dir or not os.path.exists(profile_dir) or not context:
         return
     try:
+        # チェックポイント(電話番号認証等)画面中は保存しない
+        for pg in getattr(context, "pages", []) or []:
+            try:
+                u_l = (pg.url or "").lower()
+                if any(k in u_l for k in ["/challenge/", "/checkpoint/", "/auth_platform/", "/two_step_verification", "/accounts/suspended"]):
+                    return
+            except Exception:
+                pass
+
         import json
         cookies = context.cookies(["https://www.threads.net", "https://www.threads.com", "https://www.instagram.com"])
         if not cookies:
@@ -1223,14 +1493,17 @@ def save_portable_session_file(context, profile_dir, account_name, log_func=prin
 def get_or_create_fingerprint(profile_dir):
     """
     【提案4: 端末指紋（Fingerprint）の完全固定化】
-    アカウントごとに一貫したUser-Agent、解像度、タイムゾーン、言語設定を永続化し、
-    Metaによる「デバイス急変」「不審端末」判定を完全防止します。
+    アカウントごとに一貫した解像度、タイムゾーン、言語設定、ホスト識別子を永続化し、
+    Metaによる「デバイス急変」「不審端末」判定を防止します。
     """
     fp_path = os.path.join(profile_dir, "fingerprint.json")
+    cur_host = _get_current_machine_id()
     if os.path.exists(fp_path):
         try:
             with open(fp_path, "r", encoding="utf-8") as f:
-                return json.load(f)
+                data = json.load(f)
+                if isinstance(data, dict):
+                    return data
         except Exception:
             pass
 
@@ -1239,7 +1512,8 @@ def get_or_create_fingerprint(profile_dir):
         "viewport": {"width": 1280, "height": 850},
         "locale": "ja-JP",
         "timezone_id": "Asia/Tokyo",
-        "color_scheme": "light"
+        "color_scheme": "light",
+        "last_host_id": cur_host
     }
     try:
         with open(fp_path, "w", encoding="utf-8") as f:
@@ -1266,9 +1540,9 @@ def auto_bootstrap_countermeasure_profiles(accounts_data, log_func=print):
     """
     【アプリ起動時・自動構築】
     アカウント情報.xlsx に記載された全アカウントのプロファイル（chrome_profiles/<account>）を自動構築します。
-    - 端末指紋（fingerprint.json）の自動配備（固定User-Agent, 1280x850, 日本語, JST）
-    - sessionidと周辺セキュリティCookie（csrftoken, mid, ig_did, datr, rur）の全自動合成＆保存
-    これにより、ユーザーが profile_launcher を開くことなく、アプリ起動だけで対策プロファイルが100%自動配備されます。
+    - 端末指紋（fingerprint.json）の自動配備
+    - 既存の正規Cookie/localStorage（datr/mid/ig_did等）を絶対に偽造Cookieで上書き破壊せず保護
+    - portable_session.json が未作成の場合のみ、sessionid/ds_user_id の安全同期を実施
     """
     if not accounts_data:
         return 0
@@ -1286,7 +1560,6 @@ def auto_bootstrap_countermeasure_profiles(accounts_data, log_func=print):
         # 提案4: 端末指紋の自動作成・維持
         get_or_create_fingerprint(prof_dir)
 
-        # 提案2: sessionid があれば Cookie全種をプロファイルに完全同期
         raw_token = str(
             acc.get("auth_token") or
             acc.get("Authトークン_sessionid") or
@@ -1301,17 +1574,30 @@ def auto_bootstrap_countermeasure_profiles(accounts_data, log_func=print):
         pfile = os.path.join(prof_dir, "portable_session.json")
         cfile = os.path.join(prof_dir, "cookies.json")
 
-        if (not raw_token or raw_token.startswith("ここに") or raw_token.lower() in ["nan", "none"]) and os.path.exists(pfile):
+        existing_data = None
+        existing_cookies = []
+        existing_origins = []
+        has_real_session_in_file = False
+        has_real_device_cookies = False
+        if os.path.exists(pfile):
             try:
                 with open(pfile, "r", encoding="utf-8") as _pf:
-                    _d = json.load(_pf)
-                _cks = _d.get("cookies", []) if isinstance(_d, dict) else _d
-                for _c in _cks:
-                    if _c.get("name") == "sessionid" and _c.get("value"):
-                        raw_token = str(_c.get("value")).strip()
-                        break
+                    existing_data = json.load(_pf)
+                existing_cookies = existing_data.get("cookies", []) if isinstance(existing_data, dict) else (existing_data if isinstance(existing_data, list) else [])
+                existing_origins = existing_data.get("origins", []) if isinstance(existing_data, dict) else []
+                for _c in existing_cookies:
+                    if _c.get("name") == "sessionid" and len(str(_c.get("value") or "").strip()) > 15:
+                        has_real_session_in_file = True
+                        if not raw_token or raw_token.startswith("ここに") or raw_token.lower() in ["nan", "none"]:
+                            raw_token = str(_c.get("value")).strip()
+                    if _c.get("name") in ("datr", "mid", "ig_did") and _c.get("value"):
+                        has_real_device_cookies = True
             except Exception:
                 pass
+
+        # すでに本物のセッション・デバイスCookie (datr/mid等) が portable_session.json に保存されている場合は破壊しない！
+        if has_real_session_in_file and (has_real_device_cookies or len(existing_cookies) >= 2):
+            continue
 
         if raw_token and not raw_token.startswith("ここに") and raw_token.lower() not in ["nan", "none"]:
             token = clean_session_id_token(raw_token)
@@ -1326,54 +1612,35 @@ def auto_bootstrap_countermeasure_profiles(accounts_data, log_func=print):
                     uid = potential
 
             cookie_expires = int(time.time()) + 31536000
-            import hashlib, uuid as uuid_mod
-            csrf_val = hashlib.md5(f"csrf_{uid}_{token[:16]}".encode()).hexdigest()
-            mid_val = "Z" + hashlib.md5(f"mid_{uid}_{acc_id}".encode()).hexdigest()[:23]
-            ig_did_val = str(uuid_mod.uuid5(uuid_mod.NAMESPACE_DNS, f"{uid}_{acc_id}")).upper()
-            datr_val = hashlib.md5(f"datr_{acc_id}".encode()).hexdigest()[:24]
-
             domains = [
-                ".threads.net", "www.threads.net", "threads.net",
-                ".threads.com", "www.threads.com", "threads.com",
-                ".instagram.com", "www.instagram.com", "instagram.com"
+                ".threads.net", "www.threads.net",
+                ".threads.com", "www.threads.com",
+                ".instagram.com", "www.instagram.com"
             ]
 
-            cookies_list = []
+            # 偽造MD5のdatr/mid/ig_didは絶対に作らない（Metaサーバー側で本物を正規発行させる）
+            preserved_non_session = [
+                c for c in existing_cookies
+                if c.get("name") not in ("sessionid", "ds_user_id")
+            ]
+            cookies_list = list(preserved_non_session)
             for d in domains:
                 cookies_list.append({"name": "sessionid", "value": token, "domain": d, "path": "/", "httpOnly": True, "secure": True, "sameSite": "Lax", "expires": cookie_expires})
                 if uid:
                     cookies_list.append({"name": "ds_user_id", "value": str(uid), "domain": d, "path": "/", "secure": True, "sameSite": "Lax", "expires": cookie_expires})
-                cookies_list.append({"name": "csrftoken", "value": csrf_val, "domain": d, "path": "/", "secure": True, "sameSite": "Lax", "expires": cookie_expires})
-                cookies_list.append({"name": "mid", "value": mid_val, "domain": d, "path": "/", "secure": True, "sameSite": "Lax", "expires": cookie_expires})
-                cookies_list.append({"name": "ig_did", "value": ig_did_val, "domain": d, "path": "/", "httpOnly": True, "secure": True, "sameSite": "Lax", "expires": cookie_expires})
-                cookies_list.append({"name": "datr", "value": datr_val, "domain": d, "path": "/", "httpOnly": True, "secure": True, "sameSite": "Lax", "expires": cookie_expires})
-                cookies_list.append({"name": "rur", "value": "RVA", "domain": d, "path": "/", "httpOnly": True, "secure": True, "sameSite": "Lax", "expires": cookie_expires})
 
-            state_data = {"cookies": cookies_list, "origins": []}
-            # ファイルが存在しない、または古い場合は作成・更新
+            state_data = {"cookies": cookies_list, "origins": existing_origins}
             try:
-                need_write = True
-                if os.path.exists(pfile):
-                    try:
-                        with open(pfile, "r", encoding="utf-8") as f_ex:
-                            ex_data = json.load(f_ex)
-                        ex_cookies = ex_data.get("cookies", []) if isinstance(ex_data, dict) else ex_data
-                        for c in ex_cookies:
-                            if c.get("name") == "sessionid" and c.get("value") == token and len(ex_cookies) >= 5:
-                                need_write = False
-                                break
-                    except Exception:
-                        need_write = True
-
-                if need_write:
-                    with open(pfile, "w", encoding="utf-8") as f:
-                        json.dump(state_data, f, ensure_ascii=False, indent=2)
-                    with open(cfile, "w", encoding="utf-8") as f:
-                        json.dump(cookies_list, f, ensure_ascii=False, indent=2)
-                    bootstrapped_count += 1
-                    log_func(f"[SUCCESS] 🛡️ [@{acc_id}] アプリ起動時に【5大強制ログアウト対策プロファイル】を自動構築しました！（周辺Cookie＋端末指紋を全自動配備）")
+                with open(pfile, "w", encoding="utf-8") as f:
+                    json.dump(state_data, f, ensure_ascii=False, indent=2)
+                with open(cfile, "w", encoding="utf-8") as f:
+                    json.dump(cookies_list, f, ensure_ascii=False, indent=2)
+                bootstrapped_count += 1
+                if log_func:
+                    log_func(f"[SUCCESS] 🛡️ [@{acc_id}] アプリ起動時にプロファイル同期を完了しました（既存デバイスCookie保護＋セッション同期）")
             except Exception as e:
-                log_func(f"[DEBUG] auto_bootstrap write: {e}")
+                if log_func:
+                    log_func(f"[DEBUG] auto_bootstrap write: {e}")
 
     return bootstrapped_count
 
@@ -1434,6 +1701,8 @@ def upsert_account_excel_row(filepath, account_row, log_func=print):
                     temp_map.setdefault("status", idx)
                 elif any(k in nh for k in ["コミュニティ", "トピック", "topic"]):
                     temp_map.setdefault("topic", idx)
+                elif any(k in nh for k in ["プロキシ", "proxy"]):
+                    temp_map.setdefault("proxy", idx)
                 temp_map.setdefault(f"raw:{raw_h}", idx)
             if "id" in temp_map:
                 header_row_idx = r_num
@@ -1470,6 +1739,7 @@ def upsert_account_excel_row(filepath, account_row, log_func=print):
         tok_val = str(account_row.get("auth_token") or account_row.get("sessionid") or account_row.get("Authトークン_sessionid") or "").strip()
         status_val = str(account_row.get("有効/無効") or account_row.get("有効無効") or account_row.get("ステータス") or "有効").strip()
         topic_val = str(account_row.get("コミュニティまたはトピック") or account_row.get("トピック") or "").strip()
+        proxy_val = extract_proxy_from_account(account_row)
 
         ws.cell(row=target_row, column=id_col, value=acc_id)
         if "pw" in col_map and (pw_val or is_new_row):
@@ -1482,6 +1752,12 @@ def upsert_account_excel_row(filepath, account_row, log_func=print):
             ws.cell(row=target_row, column=col_map["status"], value=status_val or "有効")
         if "topic" in col_map and topic_val:
             ws.cell(row=target_row, column=col_map["topic"], value=topic_val)
+        if "proxy" in col_map and proxy_val:
+            ws.cell(row=target_row, column=col_map["proxy"], value=proxy_val)
+        elif proxy_val:
+            next_col = ws.max_column + 1
+            ws.cell(row=header_row_idx, column=next_col, value="プロキシ")
+            ws.cell(row=target_row, column=next_col, value=proxy_val)
 
         wb.save(filepath)
         wb.close()
@@ -1928,14 +2204,8 @@ def import_account_package(zip_path, base_dir=BASE_DIR, account_config_path=None
         }
 
 
-def safe_launch_persistent_context(p, profile_dir, headless=False, log_func=print):
-    """
-    SingletonLock等のブラウザ残骸を自動クリーンアップし、安定してChromeを起動します。
-    【提案4】固定User-Agentと端末指紋を維持してMetaのボット検知・強制ログアウトを防止します。
-    PC間移行時(Windows DPAPIリセット時)は portable_session.json から自動自己復元します。
-    """
-    os.makedirs(profile_dir, exist_ok=True)
-    for lk in ["SingletonLock", "SingletonCookie", "SingletonSocket"]:
+def _cleanup_profile_locks(profile_dir):
+    for lk in ["SingletonLock", "SingletonCookie", "SingletonSocket", "lockfile"]:
         try:
             lk_p = os.path.join(profile_dir, lk)
             if os.path.exists(lk_p):
@@ -1943,21 +2213,115 @@ def safe_launch_persistent_context(p, profile_dir, headless=False, log_func=prin
         except Exception:
             pass
 
+
+def _find_chrome_pids_for_profile(profile_dir, pipe_only=False):
+    if not profile_dir:
+        return []
+    abs_norm = os.path.abspath(profile_dir).replace("/", "\\").lower()
+    abs_posix = os.path.abspath(profile_dir).lower()
+    pids = []
+    if sys.platform == "win32":
+        try:
+            import subprocess
+            ps_script = (
+                "Get-CimInstance Win32_Process -Filter \"Name='chrome.exe' OR Name='msedge.exe'\" "
+                "| Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress"
+            )
+            creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            res = subprocess.run(
+                ["powershell", "-NoProfile", "-Command", ps_script],
+                capture_output=True, text=True, timeout=5, creationflags=creation_flags
+            )
+            raw = (res.stdout or "").strip()
+            if raw:
+                items = json.loads(raw)
+                if isinstance(items, dict):
+                    items = [items]
+                for it in (items or []):
+                    cmd = str(it.get("CommandLine") or "").replace("/", "\\").lower()
+                    pid = it.get("ProcessId")
+                    if not pid or not cmd:
+                        continue
+                    if abs_norm in cmd and "--user-data-dir=" in cmd:
+                        if pipe_only and "--remote-debugging-pipe" not in cmd:
+                            continue
+                        if not pipe_only or "--remote-debugging-pipe" in cmd:
+                            pids.append(int(pid))
+        except Exception:
+            pass
+    else:
+        try:
+            for ent in os.listdir("/proc"):
+                if not ent.isdigit():
+                    continue
+                try:
+                    with open(f"/proc/{ent}/cmdline", "rb") as f:
+                        cmd = f.read().replace(b"\x00", b" ").decode("utf-8", errors="ignore").lower()
+                    if ("chrome" in cmd or "msedge" in cmd) and "--user-data-dir=" in cmd and (abs_posix in cmd or abs_norm in cmd):
+                        if pipe_only and "--remote-debugging-pipe" not in cmd:
+                            continue
+                        pids.append(int(ent))
+                except Exception:
+                    pass
+        except Exception:
+            pass
+    return pids
+
+
+def _terminate_chrome_pids(pids, wait_sec=3.0):
+    if not pids:
+        return
+    import subprocess
+    if sys.platform == "win32":
+        creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        for pid in pids:
+            try:
+                subprocess.run(
+                    ["taskkill", "/PID", str(int(pid)), "/T", "/F"],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=4, creationflags=creation_flags
+                )
+            except Exception:
+                pass
+    else:
+        import signal
+        for pid in pids:
+            try:
+                os.kill(int(pid), signal.SIGTERM)
+            except Exception:
+                pass
+    time.sleep(min(1.5, max(0.3, wait_sec)))
+
+
+def safe_launch_persistent_context(p, profile_dir, headless=False, log_func=print, proxy_str=""):
+    """
+    SingletonLock等のブラウザ残骸を自動クリーンアップし、安定してChromeを起動します。
+    【提案4】端末指紋を維持し、プロキシ設定(任意)やPC間移行時のWindows DPAPI自動再バインドに対応します。
+    """
+    os.makedirs(profile_dir, exist_ok=True)
+    _cleanup_profile_locks(profile_dir)
+
+    detect_and_mark_host_migration(profile_dir, account_name=os.path.basename(profile_dir), log_func=log_func)
     fp = get_or_create_fingerprint(profile_dir)
 
-    # --disable-blink-features=AutomationControlled はChrome警告バナーを発生させ
-    # Metaの自動化検知を誘発するため削除し、ignore_default_args で自然に隠蔽
+    proxy_cfg = parse_playwright_proxy(proxy_str)
+    if proxy_str and not proxy_cfg and log_func:
+        log_func(f"[WARN] プロキシ設定 '{proxy_str}' の形式を解釈できませんでした（例: http://user:pass@ip:port または ip:port:user:pass）。通常回線で続行します。")
+    elif proxy_cfg and log_func:
+        auth_mark = " (認証付)" if proxy_cfg.get("username") else ""
+        log_func(f"[INFO] 🌐 [{os.path.basename(profile_dir)}] 専用プロキシ経由で接続します: {proxy_cfg['server']}{auth_mark}")
+
     args = [
         "--lang=ja-JP",
         "--disable-dev-shm-usage",
         "--test-type",
+        "--no-first-run",
+        "--no-default-browser-check",
         "--disable-session-crashed-bubble",
         "--hide-crash-restore-bubble"
     ]
     if sys.platform != "win32":
         args.append("--no-sandbox")
 
-    # Chromeの「ページを復元しますか？」ダイアログを抑制（Preferencesのexit_typeをNormalに自動修正）
     for pref_sub in ["Default/Preferences", "Preferences"]:
         pref_path = os.path.join(profile_dir, pref_sub)
         if os.path.exists(pref_path):
@@ -1971,9 +2335,9 @@ def safe_launch_persistent_context(p, profile_dir, headless=False, log_func=prin
             except Exception:
                 pass
 
-    for attempt in range(1, 3):
+    for attempt in range(1, 5):
         try:
-            context = p.chromium.launch_persistent_context(
+            launch_kwargs = dict(
                 user_data_dir=profile_dir,
                 headless=headless,
                 channel="chrome",
@@ -1984,7 +2348,20 @@ def safe_launch_persistent_context(p, profile_dir, headless=False, log_func=prin
                 args=args,
                 ignore_default_args=["--enable-automation"]
             )
-            # navigator.webdriver を隠蔽して通常の人間のブラウザとして維持（window.chromeは実Chromeのものを保持）
+            if proxy_cfg:
+                launch_kwargs["proxy"] = proxy_cfg
+
+            try:
+                context = p.chromium.launch_persistent_context(**launch_kwargs)
+            except Exception as chrome_err:
+                if "Executable doesn't exist" in str(chrome_err) or "Failed to launch chrome" in str(chrome_err):
+                    if log_func:
+                        log_func(f"[WARN] Google Chrome本体の起動に失敗したため内蔵Chromiumへ切替えてアカウント窓を起動します: {chrome_err}")
+                    fallback_kwargs = {k: v for k, v in launch_kwargs.items() if k != "channel"}
+                    context = p.chromium.launch_persistent_context(**fallback_kwargs)
+                else:
+                    raise
+
             try:
                 context.add_init_script("""
                     Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
@@ -1992,21 +2369,25 @@ def safe_launch_persistent_context(p, profile_dir, headless=False, log_func=prin
             except Exception:
                 pass
 
-            # PC間移行・クッキー揮発の自動検知＆自己修復
             restore_portable_session_if_needed(context, profile_dir, os.path.basename(profile_dir), log_func=log_func)
             return context
         except Exception as e:
             err_str = str(e)
-            if ("Target page, context or browser has been closed" in err_str or "closed" in err_str) and attempt == 1:
-                log_func("[WARN] 過去のChrome残骸ロックを検知しました。ロックファイルを削除して再起動します...")
-                time.sleep(1.5)
-                for lk in ["SingletonLock", "SingletonCookie", "SingletonSocket"]:
-                    try:
-                        lk_p = os.path.join(profile_dir, lk)
-                        if os.path.exists(lk_p):
-                            os.remove(lk_p)
-                    except Exception:
-                        pass
+            is_lock_err = any(k in err_str for k in ["Target page, context or browser has been closed", "closed", "ProcessSingleton", "Singleton", "user data directory is already in use"])
+            if is_lock_err and attempt < 4:
+                zombie_pids = _find_chrome_pids_for_profile(profile_dir, pipe_only=True)
+                if zombie_pids:
+                    if log_func:
+                        log_func(f"[WARN] [{os.path.basename(profile_dir)}] 残留Chromeプロセス ({len(zombie_pids)}件) の終了・ロック解除を実行して再起動します... ({attempt}/3)")
+                    _terminate_chrome_pids(zombie_pids, wait_sec=2.0)
+                else:
+                    all_pids = _find_chrome_pids_for_profile(profile_dir, pipe_only=False)
+                    if all_pids and log_func:
+                        log_func(f"[WARN] [{os.path.basename(profile_dir)}] このアカウント用の手動Chromeウィンドウが開いています（閉じてください）。再試行します... ({attempt}/3)")
+                    elif log_func:
+                        log_func(f"[WARN] [{os.path.basename(profile_dir)}] Chromeロック残骸または終了待機を検知。ロック掃除後に再起動します... ({attempt}/3)")
+                    time.sleep(1.8 + attempt * 0.5)
+                _cleanup_profile_locks(profile_dir)
                 continue
             raise e
 
@@ -2016,9 +2397,7 @@ def setup_media_blocking(target_context_or_page, log_func=None):
     【提案2: 画像・動画（リール等）読み込みブロック機能】
     Playwrightのネットワークルーティングを活用し、タイムラインやリール等の
     重い画像(.jpg .png .webp)や動画(.mp4 .webm)、音声、Webフォントの自動通信を遮断します。
-    ※ 自身のポスト添付画像のアップロード(POST)やAPI/GraphQL通信は正常に通過させます。
-    効果: ブラウザ1窓あたりのメモリ使用量を約50%〜70%カットし、ページ表示を数倍高速化、
-         CPUファンが激しく回るのを防ぎます。
+    ※ ログイン・認証・チェックポイント・reCAPTCHA関連通信は一切遮断しません。
     """
     def route_filter(route):
         try:
@@ -2027,12 +2406,12 @@ def setup_media_blocking(target_context_or_page, log_func=None):
             url = req.url.lower()
             res_type = (req.resource_type or "").lower()
 
-            # 1. POST / PUT / PATCH によるアップロードやAPI、GraphQL通信は絶対に許可
+            # 1. POST / PUT / PATCH によるアップロードやAPI、GraphQL、認証・チャレンジ関連は絶対に許可
             if method in ["POST", "PUT", "PATCH"]:
                 route.continue_()
                 return
 
-            if any(k in url for k in ["/api/", "graphql", "upload", "logging", "session", "login"]):
+            if any(k in url for k in ["/api/", "graphql", "upload", "logging", "session", "login", "challenge", "checkpoint", "auth_platform", "recaptcha", "gstatic", "accounts"]):
                 route.continue_()
                 return
 
@@ -2168,13 +2547,13 @@ def inject_session_cookies(context, raw_token, account_name, log_func=print):
     if token != decoded_token:
         cookie_values_to_set.append(token)
 
-    # 既存のCookieをチェック (すでに全く同じ値が設定済みの場合は二重設定をスキップ)
+    # 既存のCookieをチェック (すでに同じ値、または既にプロファイルに有効なsessionid+デバイスCookieがある場合はスキップ)
     try:
-        existing_cookies = context.cookies(["https://www.threads.net", "https://www.instagram.com"])
+        existing_cookies = context.cookies(["https://www.threads.net", "https://www.threads.com", "https://www.instagram.com"])
         for c in existing_cookies:
             if c.get("name") == "sessionid" and c.get("value"):
                 c_val = str(c.get("value")).strip()
-                if c_val == decoded_token or c_val == token:
+                if c_val == decoded_token or c_val == token or len(c_val) > 15:
                     return True
     except Exception:
         pass
@@ -2182,17 +2561,12 @@ def inject_session_cookies(context, raw_token, account_name, log_func=print):
     cookie_expires = int(time.time()) + 31536000  # 1年間有効（揮発防止）
 
     domains = [
-        ".threads.net", "www.threads.net", "threads.net",
-        ".threads.com", "www.threads.com", "threads.com",
-        ".instagram.com", "www.instagram.com", "instagram.com"
+        ".threads.net", "www.threads.net",
+        ".threads.com", "www.threads.com",
+        ".instagram.com", "www.instagram.com"
     ]
 
-    import hashlib, uuid
-    csrf_val = hashlib.md5(f"csrf_{ds_user_id}_{decoded_token[:16]}".encode()).hexdigest()
-    mid_val = "Z" + hashlib.md5(f"mid_{ds_user_id}_{account_name}".encode()).hexdigest()[:23]
-    ig_did_val = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{ds_user_id}_{account_name}")).upper()
-    datr_val = hashlib.md5(f"datr_{account_name}".encode()).hexdigest()[:24]
-
+    # 偽造MD5のdatr/mid/ig_didは絶対に注入しない（Meta側の正規デバイス判定に委ねる）
     cookies_to_add = []
     for domain in domains:
         cookies_to_add.append({
@@ -2215,55 +2589,6 @@ def inject_session_cookies(context, raw_token, account_name, log_func=print):
                 "sameSite": "Lax",
                 "expires": cookie_expires
             })
-        # 【提案2: 必須セキュリティCookie群の自動補完・完全同期】
-        cookies_to_add.append({
-            "name": "csrftoken",
-            "value": csrf_val,
-            "domain": domain,
-            "path": "/",
-            "secure": True,
-            "sameSite": "Lax",
-            "expires": cookie_expires
-        })
-        cookies_to_add.append({
-            "name": "mid",
-            "value": mid_val,
-            "domain": domain,
-            "path": "/",
-            "secure": True,
-            "sameSite": "Lax",
-            "expires": cookie_expires
-        })
-        cookies_to_add.append({
-            "name": "ig_did",
-            "value": ig_did_val,
-            "domain": domain,
-            "path": "/",
-            "httpOnly": True,
-            "secure": True,
-            "sameSite": "Lax",
-            "expires": cookie_expires
-        })
-        cookies_to_add.append({
-            "name": "datr",
-            "value": datr_val,
-            "domain": domain,
-            "path": "/",
-            "httpOnly": True,
-            "secure": True,
-            "sameSite": "Lax",
-            "expires": cookie_expires
-        })
-        cookies_to_add.append({
-            "name": "rur",
-            "value": "RVA",
-            "domain": domain,
-            "path": "/",
-            "httpOnly": True,
-            "secure": True,
-            "sameSite": "Lax",
-            "expires": cookie_expires
-        })
 
     try:
         context.add_cookies(cookies_to_add)
@@ -2307,7 +2632,7 @@ def inject_session_cookies(context, raw_token, account_name, log_func=print):
     except Exception as pe:
         log_func(f"[DEBUG] 自動プロファイルファイル生成: {pe}")
 
-    log_func(f"[SUCCESS] [{account_name}] sessionid と必須Cookie全セット（csrftoken, mid, datr等）を永続注入しました（提案2完全同期）。")
+    log_func(f"[SUCCESS] [{account_name}] sessionid をブラウザへ注入しました（正規デバイスCookieは保護）。")
     return True
 
 
@@ -2398,8 +2723,8 @@ def auto_refresh_and_save_session(context, account_name, profile_dir, account_fi
 
 def detect_phone_checkpoint_screen(page):
     """
-    Metaの携帯電話番号認証（SMS / WhatsApp確認）要求画面を即時検知
-    ※ 通常のログイン画面（ユーザーネーム/電話番号入力欄）との誤検知を100%防止
+    Metaの携帯電話番号認証（SMS / WhatsApp確認・本人確認ロック）要求画面を即時検知
+    ※ 通常のログイン画面（ユーザーネーム/パスワード入力欄）との誤検知を100%防止
     """
     if not page:
         return False, ""
@@ -2410,19 +2735,19 @@ def detect_phone_checkpoint_screen(page):
         except Exception:
             pass
 
-        # 通常のログイン画面やThreadsホームは絶対にチェックポイントではない
+        if any(k in cur_url for k in ["/challenge/", "/checkpoint/", "/auth_platform/", "/two_step_verification", "/accounts/suspended"]):
+            return True, f"認証・ロックURL検知 ({cur_url})"
+
+        # 通常のログイン画面やThreadsホームはチェックポイントではない
         if any(k in cur_url for k in ["/accounts/login", "/login", "threads.net/@", "instagram.com/direct"]):
             return False, ""
 
         # 通常のユーザーネーム/パスワード入力欄が表示されている場合はログイン画面
         try:
-            if page.locator('input[name="username"]').first.is_visible(timeout=200) or                page.locator('input[name="password"]').first.is_visible(timeout=200):
+            if page.locator('input[name="username"]').first.is_visible(timeout=200) or page.locator('input[name="password"]').first.is_visible(timeout=200):
                 return False, ""
         except Exception:
             pass
-
-        if any(k in cur_url for k in ["/challenge/", "/checkpoint/"]):
-            return True, f"認証URL検知 ({cur_url})"
 
         content = ""
         try:
@@ -2433,9 +2758,26 @@ def detect_phone_checkpoint_screen(page):
         keywords = [
             "SMSまたはWhatsAppで送信されたコードでこの携帯電話番号を認証する必要があります",
             "電話番号を認証する必要があります",
+            "携帯電話番号を入力",
+            "電話番号を入力してください",
+            "電話番号を追加",
+            "電話番号の確認",
             "セキュリティコードを入力",
             "認証コードを入力",
+            "本人確認を行ってください",
+            "不審なログイン",
+            "アカウントがロックされました",
+            "アカウントが一時停止",
             "Enter your confirmation code",
+            "Enter your mobile number",
+            "Enter your phone number",
+            "Add a phone number",
+            "Confirm your phone number",
+            "Confirm your info",
+            "Help us confirm it's you",
+            "We noticed unusual activity",
+            "We suspended your account",
+            "SMS or WhatsApp",
         ]
         for kw in keywords:
             if kw in content:
@@ -2444,7 +2786,10 @@ def detect_phone_checkpoint_screen(page):
         checkpoint_selectors = [
             'input[name="security_code"]',
             'input[name="verificationCode"]',
+            'input[name="phone_number"]',
+            'input[type="tel"]',
             'button:has-text("コードを再送信")',
+            'button:has-text("Resend code")',
             'text="SMSまたはWhatsApp"'
         ]
         for sel in checkpoint_selectors:
@@ -2462,7 +2807,7 @@ def safe_goto_threads(page, context, session_token, account_name, log_func=print
     """
     Threadsホーム (https://www.threads.net/) または ログイン画面 (https://www.threads.net/login) へ安全にアクセスします。
     セッションIDが無い場合や失効している場合は、無駄なリダイレクトループを避けて直接ログイン画面を開きます。
-    net::ERR_TOO_MANY_REDIRECTS や about:blank を検知した場合は、CookieをクリアしてThreadsログイン画面へ自己修復遷移します。
+    net::ERR_TOO_MANY_REDIRECTS や about:blank を検知した場合は、端末Cookie(datr/mid)を保持したまま認証Cookieのみ整理して自己修復遷移します。
     """
     token_str = str(session_token or "").strip()
     has_valid_token = bool(token_str and token_str.lower() not in ["", "nan", "none"] and not token_str.startswith("ここに"))
@@ -2471,7 +2816,7 @@ def safe_goto_threads(page, context, session_token, account_name, log_func=print
     has_profile_cookies = False
     try:
         prof_cks = context.cookies(["https://www.threads.net", "https://www.threads.com", "https://www.instagram.com"])
-        has_profile_cookies = len(prof_cks) > 0
+        has_profile_cookies = any(c.get("name") == "sessionid" and c.get("value") for c in prof_cks) or len(prof_cks) > 0
     except Exception:
         pass
 
@@ -2513,16 +2858,9 @@ def safe_goto_threads(page, context, session_token, account_name, log_func=print
             log_func(f"[WARN] [{account_name}] ページ接続エラー ({err_str[:60]}) を検知しました。")
 
     if redirect_detected or "about:blank" in (page.url or "").lower():
-        log_func(f"[INFO] 🧹 [{account_name}] セッション失効 / about:blank / リダイレクトループを検知。Threads/Instagramの競合Cookieを整理してログイン画面へ自己修復遷移します...")
-        try:
-            for d_target in ["threads.net", "threads.com", "instagram.com"]:
-                try:
-                    context.clear_cookies(domain=d_target)
-                except Exception:
-                    pass
-            time.sleep(1.0)
-        except Exception as ce:
-            log_func(f"[DEBUG] clear_cookies: {ce}")
+        log_func(f"[INFO] 🧹 [{account_name}] セッション失効 / about:blank / リダイレクトループを検知。端末Cookieを保持しつつ認証Cookieのみ整理してログイン画面へ自己修復遷移します...")
+        clear_auth_cookies_preserve_device(context, log_func=log_func)
+        time.sleep(1.0)
 
         # 直接クリーンにThreadsログイン画面へアクセス
         for target_url in ["https://www.threads.net/login", "https://www.threads.net/"]:
@@ -2859,7 +3197,15 @@ def execute_id_pw_login(page, context, account_name, password, log_func=print):
             except Exception:
                 pass
 
-            # 2. reCAPTCHA / セキュリティ確認画面の検知（誤検知防止ガード！）
+            # 2. 電話番号確認ロック / reCAPTCHA / セキュリティ確認画面の検知（誤検知防止ガード！）
+            is_cp_login, cp_login_why = detect_phone_checkpoint_screen(page)
+            if is_cp_login:
+                log_func("=" * 60)
+                log_func(f"[CRITICAL] 🚨 [{account_name}] ログイン中に携帯電話番号認証・本人確認画面を検知しました（{cp_login_why}）。")
+                log_func(f"[INFO] 🛑 アカウント保護のため自動ログイン試行を即中止します。")
+                log_func("=" * 60)
+                return False
+
             is_recaptcha_or_challenge = any(k in cur_u for k in [
                 "recaptcha", "auth_platform", "challenge", "checkpoint", "two_factor", "two_step_verification"
             ])
@@ -3050,6 +3396,9 @@ def ensure_authenticated_session(page, context, account, filepath, log_func=prin
     is_cp, cp_why = detect_phone_checkpoint_screen(page)
     if is_cp:
         log_func(f"[WARN] 🚨 [{account_name}] 携帯電話番号（SMS）認証画面を検知しました（{cp_why}）。")
+        if acc_state is not None:
+            acc_state["checkpoint_paused"] = True
+            acc_state["checkpoint_reason"] = cp_why
         return False
 
     # 既にログイン成功しているか判定
@@ -3088,6 +3437,14 @@ def ensure_authenticated_session(page, context, account, filepath, log_func=prin
         except Exception:
             pass
 
+    is_cp_after_sso, cp_sso_why = detect_phone_checkpoint_screen(page)
+    if is_cp_after_sso:
+        log_func(f"[WARN] 🚨 [{account_name}] 連携ボタン後に携帯電話番号（SMS）認証画面を検知しました（{cp_sso_why}）。")
+        if acc_state is not None:
+            acc_state["checkpoint_paused"] = True
+            acc_state["checkpoint_reason"] = cp_sso_why
+        return False
+
     is_ok, reason = detect_threads_logged_in(page)
     if is_ok:
         log_func(f"[SUCCESS] 🎉 [{account_name}] ワンクリック連携により自動ログイン復帰しました！（{reason}）")
@@ -3099,8 +3456,15 @@ def ensure_authenticated_session(page, context, account, filepath, log_func=prin
             acc_state["pure_profile_mode"] = True
         return True
 
-    # 2. セッションIDが入っていない場合、またはセッションIDでログインできない場合 ➔ 入力されているID/PWで即座に自動ログインを実行！
+    # 2. セッションIDが入っていない場合、またはセッションIDでログインできない場合 ➔ 入力されているID/PWで自動ログインを実行
     if password:
+        if acc_state and acc_state.get("migrated_from_other_pc") and acc_state.get("migration_idpw_attempted"):
+            log_func(f"[WARN] 🛑 [{account_name}] 別PC/VPSへの移行直後にID/PWログインが再要求されたため、電話番号ロック防止のため連続自動ログインを停止します。")
+            log_func(f"[INFO] 💡 [{account_name}] 「🛠️ 手動Chrome起動」または「アカウント情報.xlsx」の『プロキシ』設定でIPを一致させてログイン確認してください。")
+            acc_state["checkpoint_paused"] = True
+            acc_state["checkpoint_reason"] = "別PC移行後の再ログイン保護停止（要手動ログイン確認）"
+            return False
+
         session_token_present = False
         if isinstance(account, dict):
             session_token_present = bool(str(account.get("auth_token") or account.get("sessionid") or "").strip())
@@ -3112,16 +3476,12 @@ def ensure_authenticated_session(page, context, account, filepath, log_func=prin
             log_func(f"[INFO] 🔐 [{account_name}] セッションID失効または無効を検知。Excelに入力されている【ID/パスワード】で自動復帰ログインを実行します！")
         log_func("=" * 60)
 
-        # Threads/Instagramの壊れたセッションCookieのみを整理し、他サイト(X/Google等)のログインCookieは完全保持
-        try:
-            for d_target in ["threads.net", "threads.com", "instagram.com"]:
-                try:
-                    context.clear_cookies(domain=d_target)
-                except Exception:
-                    pass
-            time.sleep(0.5)
-        except Exception:
-            pass
+        # 信頼済み端末Cookie (datr/mid/ig_did) は保護しつつ認証セッションCookieのみ整理
+        clear_auth_cookies_preserve_device(context, log_func=log_func)
+        time.sleep(0.5)
+
+        if acc_state is not None and acc_state.get("migrated_from_other_pc"):
+            acc_state["migration_idpw_attempted"] = True
 
         ok = execute_id_pw_login(page, context, account_name, password, log_func=log_func)
         if ok:
@@ -3135,7 +3495,11 @@ def ensure_authenticated_session(page, context, account, filepath, log_func=prin
             save_context_cookies_to_excel(context, filepath, account_name, log_func=log_func)
             return True
         else:
-            log_func(f"[WARN] ❌ [{account_name}] ID/PW自動ログインに失敗しました。パスワードをご確認ください。")
+            is_cp_end, cp_end_why = detect_phone_checkpoint_screen(page)
+            if is_cp_end and acc_state is not None:
+                acc_state["checkpoint_paused"] = True
+                acc_state["checkpoint_reason"] = cp_end_why
+            log_func(f"[WARN] ❌ [{account_name}] ID/PW自動ログインに失敗しました。パスワードまたはSMS認証要求をご確認ください。")
             return False
     else:
         log_func(f"[WARN] [{account_name}] セッションIDが未設定または無効で、パスワードも「アカウント情報.xlsx」に未記入のため、ログインを実行できません。Excelの「パスワード」列にご記入ください。")
@@ -3780,6 +4144,9 @@ def _verify_post_appeared_on_profile(page, account_name, text_content, profile_h
         return False, f"プロフィール確認例外: {ve}"
 
 
+LAST_POSTED_META = {}
+
+
 def _perform_fill_and_submit_post(
     page,
     container,
@@ -3802,6 +4169,9 @@ def _perform_fill_and_submit_post(
         "request_seen": False,
         "confirmed": False,
         "error": "",
+        "post_code": "",
+        "post_pk": "",
+        "post_url": "",
     }
 
     def _on_post_response(response):
@@ -3854,6 +4224,14 @@ def _perform_fill_and_submit_post(
                 '"pk"', '"code"', '"media"', '"id"', '"data":', 'text_post_app_thread', '"status":"ok"', '"status": "ok"'
             ]):
                 network_state["confirmed"] = True
+                if not network_state.get("post_code"):
+                    m_code = re.search(r'"code"\s*:\s*"([A-Za-z0-9_-]{5,32})"', body_text)
+                    if m_code:
+                        network_state["post_code"] = m_code.group(1)
+                if not network_state.get("post_pk"):
+                    m_pk = re.search(r'"pk"\s*:\s*"?(\d{6,30})"?', body_text)
+                    if m_pk:
+                        network_state["post_pk"] = m_pk.group(1)
         except Exception:
             pass
 
@@ -4384,6 +4762,45 @@ def _perform_fill_and_submit_post(
                 return False, f"Threads送信確認エラー: {post_error_detected}"
 
             if posted_success:
+                # 削除予約用に投稿URL/コードを収集（トースト内の「スレッドを表示」リンク等）
+                try:
+                    if not network_state.get("post_url"):
+                        captured_dom_url = page.evaluate("""(handle) => {
+                            const hLower = (handle || '').toLowerCase();
+                            const toastLinks = Array.from(document.querySelectorAll('[role="status"] a[href*="/post/"], [role="alert"] a[href*="/post/"], div[aria-live] a[href*="/post/"]'));
+                            for (const a of toastLinks) {
+                                const href = (a.getAttribute('href') || '').trim();
+                                if (href) return href.startsWith('http') ? href : ('https://www.threads.com' + href);
+                            }
+                            if (hLower) {
+                                const allLinks = Array.from(document.querySelectorAll('a[href*="/post/"]'));
+                                for (const a of allLinks) {
+                                    const href = (a.getAttribute('href') || '').trim();
+                                    if (href.toLowerCase().includes('/@' + hLower + '/post/')) {
+                                        return href.startsWith('http') ? href : ('https://www.threads.com' + href);
+                                    }
+                                }
+                            }
+                            return '';
+                        }""", profile_handle or "") or ""
+                        if captured_dom_url:
+                            network_state["post_url"] = captured_dom_url
+                except Exception:
+                    pass
+                p_code = network_state.get("post_code", "")
+                p_url = network_state.get("post_url", "")
+                if not p_url and p_code and profile_handle:
+                    p_url = f"https://www.threads.com/@{profile_handle}/post/{p_code}"
+                acc_meta_key = sanitize_account_folder_name(account_name)
+                if acc_meta_key:
+                    LAST_POSTED_META[acc_meta_key] = {
+                        "post_url": p_url,
+                        "post_code": p_code,
+                        "post_pk": network_state.get("post_pk", ""),
+                        "profile_handle": profile_handle or acc_meta_key,
+                        "text_content": text_content or "",
+                        "timestamp": time.time(),
+                    }
                 return True, ""
             return False, "投稿ボタン押下後、完了通知・API成功レスポンスのいずれも確認できませんでした"
         finally:
@@ -4403,6 +4820,386 @@ def _perform_fill_and_submit_post(
 
     except Exception as e:
         return False, str(e)
+
+
+_PENDING_DELETES_LOCK = threading.Lock()
+
+
+def parse_delete_delay_spec(raw_spec):
+    """
+    ポスト横の『削除時間』指定文字列を解析し、(min_sec, max_sec, 表示文字列) を返す。
+    対応例:
+      - 空欄 / 0 / 削除しない -> (None, None, "")
+      - 30～60 / 30-60 / 30分～60分 -> (1800, 3600, "30〜60分")
+      - 1～3時間 / 1時間～3時間 -> (3600, 10800, "1〜3時間")
+      - 10～30秒 -> (10, 30, "10〜30秒")
+      - 45 / 45分 / 2時間 -> 単一値（単位省略時は「分」）
+    """
+    if raw_spec is None:
+        return None, None, ""
+    s = unicodedata.normalize("NFKC", str(raw_spec)).strip()
+    if not s or s.startswith(("(", "（", "※")):
+        return None, None, ""
+    low_compact = s.lower().replace(" ", "").replace("　", "")
+    if low_compact in ["nan", "none", "null", "0", "なし", "無し", "削除しない", "残す", "off", "no", "false", "-", "ー"]:
+        return None, None, ""
+
+    def _detect_unit(tok_str, default_mult=60):
+        t_low = tok_str.lower()
+        if any(u in tok_str for u in ["時間"]) or re.search(r'\d\s*(?:hr|hrs|hour|hours|h)\b', t_low):
+            return 3600, "時間"
+        if any(u in tok_str for u in ["秒"]) or re.search(r'\d\s*(?:sec|secs|second|seconds|s)\b', t_low):
+            return 1, "秒"
+        if any(u in tok_str for u in ["分"]) or re.search(r'\d\s*(?:min|mins|minute|minutes|m)\b', t_low):
+            return 60, "分"
+        return default_mult, ("時間" if default_mult == 3600 else ("秒" if default_mult == 1 else "分"))
+
+    # 範囲区切り記号を統一
+    normalized = re.sub(r'\s*(?:[〜～~ー−―‐–—\-]|から|\bto\b)\s*', '-', s, flags=re.IGNORECASE)
+    if "-" in normalized:
+        p1, p2 = normalized.split("-", 1)
+        m1_all = re.findall(r'\d+(?:\.\d+)?', p1)
+        m2_all = re.findall(r'\d+(?:\.\d+)?', p2)
+        if m1_all and m2_all:
+            mult2, unit2 = _detect_unit(p2, default_mult=60)
+            mult1, unit1 = _detect_unit(p1, default_mult=mult2)
+            v1 = float(m1_all[0]) * mult1
+            v2 = float(m2_all[0]) * mult2
+            min_s = max(1, int(round(min(v1, v2))))
+            max_s = max(min_s, int(round(max(v1, v2))))
+            n1_disp = m1_all[0].rstrip('0').rstrip('.') if '.' in m1_all[0] else m1_all[0]
+            n2_disp = m2_all[0].rstrip('0').rstrip('.') if '.' in m2_all[0] else m2_all[0]
+            if unit1 == unit2:
+                disp = f"{n1_disp}〜{n2_disp}{unit2}"
+            else:
+                disp = f"{n1_disp}{unit1}〜{n2_disp}{unit2}"
+            return min_s, max_s, disp
+
+    m_single = re.findall(r'\d+(?:\.\d+)?', s)
+    if m_single:
+        mult, unit = _detect_unit(s, default_mult=60)
+        val_f = float(m_single[0])
+        if val_f <= 0:
+            return None, None, ""
+        sec_val = max(1, int(round(val_f * mult)))
+        n_disp = m_single[0].rstrip('0').rstrip('.') if '.' in m_single[0] else m_single[0]
+        return sec_val, sec_val, f"{n_disp}{unit}"
+
+    return None, None, ""
+
+
+def _pending_deletes_path(profile_dir):
+    return os.path.join(profile_dir, "pending_deletes.json")
+
+
+def load_pending_deletes(profile_dir):
+    if not profile_dir:
+        return []
+    path = _pending_deletes_path(profile_dir)
+    with _PENDING_DELETES_LOCK:
+        if not os.path.exists(path):
+            return []
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return data if isinstance(data, list) else []
+        except Exception:
+            return []
+
+
+def save_pending_deletes(profile_dir, jobs):
+    if not profile_dir:
+        return False
+    os.makedirs(profile_dir, exist_ok=True)
+    path = _pending_deletes_path(profile_dir)
+    with _PENDING_DELETES_LOCK:
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(jobs or [], f, ensure_ascii=False, indent=2)
+            return True
+        except Exception:
+            return False
+
+
+def enqueue_pending_delete_job(
+    profile_dir,
+    account_name,
+    posts_file,
+    row_idx,
+    sheet_name,
+    post_id,
+    delete_spec,
+    post_url="",
+    post_code="",
+    profile_handle="",
+    text_content="",
+):
+    min_s, max_s, disp = parse_delete_delay_spec(delete_spec)
+    if min_s is None or max_s is None:
+        return None
+    delay_sec = random.randint(min_s, max_s)
+    now_ts = time.time()
+    job = {
+        "job_id": f"{int(now_ts * 1000)}_{row_idx}_{random.randint(100, 999)}",
+        "account_name": str(account_name or "").strip(),
+        "profile_dir": profile_dir,
+        "posts_file": posts_file or "",
+        "row_idx": int(row_idx) if row_idx else 0,
+        "sheet_name": str(sheet_name or ""),
+        "post_id": str(post_id or ""),
+        "text_content": str(text_content or ""),
+        "post_url": str(post_url or ""),
+        "post_code": str(post_code or ""),
+        "profile_handle": str(profile_handle or account_name or "").strip().lstrip("@"),
+        "delete_spec": disp or str(delete_spec),
+        "delay_sec": delay_sec,
+        "posted_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "delete_at_ts": now_ts + delay_sec,
+        "attempts": 0,
+    }
+    jobs = load_pending_deletes(profile_dir)
+    jobs.append(job)
+    save_pending_deletes(profile_dir, jobs)
+    return job
+
+
+def get_due_pending_deletes(profile_dir, now_ts=None):
+    cur = time.time() if now_ts is None else now_ts
+    return [j for j in load_pending_deletes(profile_dir) if float(j.get("delete_at_ts") or 0) <= cur]
+
+
+def remove_pending_delete_job(profile_dir, job_id):
+    jobs = load_pending_deletes(profile_dir)
+    filtered = [j for j in jobs if j.get("job_id") != job_id]
+    save_pending_deletes(profile_dir, filtered)
+
+
+def update_pending_delete_job(profile_dir, updated_job):
+    jobs = load_pending_deletes(profile_dir)
+    new_jobs = [updated_job if j.get("job_id") == updated_job.get("job_id") else j for j in jobs]
+    save_pending_deletes(profile_dir, new_jobs)
+
+
+def _format_duration_jp(seconds):
+    s = max(0, int(round(seconds)))
+    h = s // 3600
+    m = (s % 3600) // 60
+    rem_s = s % 60
+    if h > 0:
+        return f"{h}時間{m}分" if m > 0 else f"{h}時間"
+    if m > 0:
+        return f"{m}分{rem_s}秒" if rem_s > 0 else f"{m}分"
+    return f"{rem_s}秒"
+
+
+def delete_threads_post_on_browser(page, context, account_name, job, log_func=print):
+    """
+    指定された投稿（post_url 優先、なければプロフィール欄から本文スニペット一致）を
+    Threads上で『...』→『削除』→確認ダイアログ『削除』の順に自動削除する。
+    """
+    handle = str(job.get("profile_handle") or account_name or "").strip().lstrip("@")
+    post_url = str(job.get("post_url") or "").strip()
+    post_code = str(job.get("post_code") or "").strip()
+    text_content = str(job.get("text_content") or "").strip()
+    snippets = _extract_verification_snippets(text_content)
+
+    target_urls = []
+    if post_url:
+        u_norm = post_url.replace("https://www.threads.net", "https://www.threads.com")
+        if u_norm.startswith("/"):
+            u_norm = "https://www.threads.com" + u_norm
+        target_urls.append(u_norm)
+    elif post_code and handle:
+        target_urls.append(f"https://www.threads.com/@{handle}/post/{post_code}")
+    if handle:
+        prof_u = f"https://www.threads.com/@{handle}"
+        if prof_u not in target_urls:
+            target_urls.append(prof_u)
+
+    if not target_urls:
+        return False, "削除対象URL/アカウント名が特定できません"
+
+    for t_url in target_urls:
+        is_permalink = "/post/" in t_url
+        if log_func:
+            log_func(f"[{account_name}] 🗑️ 削除対象ページを開きます: {t_url}")
+        try:
+            page.goto(t_url, wait_until="domcontentloaded", timeout=30000)
+            time.sleep(2.5)
+        except Exception as ge:
+            if log_func:
+                log_func(f"[WARN] [{account_name}] 削除ページ遷移警告: {ge}")
+            continue
+
+        cur_u = (page.url or "").lower()
+        if "/login" in cur_u or "accounts/login" in cur_u:
+            return False, "login_required"
+        is_cp, cp_why = detect_phone_checkpoint_screen(page)
+        if is_cp:
+            return False, f"checkpoint:{cp_why}"
+
+        try:
+            body_txt_check = page.inner_text("body")[:2000]
+        except Exception:
+            body_txt_check = ""
+        if is_permalink and any(nf in body_txt_check for nf in [
+            "このページはご利用いただけません", "ページが見つかりません",
+            "Sorry, this page isn't available", "This page isn't available"
+        ]):
+            return True, "already_deleted"
+
+        # 対象投稿の「もっと見る (...)」メニューボタンを探してクリック
+        more_clicked = False
+        for scroll_try in range(1 if is_permalink else 6):
+            try:
+                found_box = page.evaluate("""({ snippets, isPermalink }) => {
+                    const norm = (t) => (t || '').normalize('NFKC').replace(/[\\s\\u200b-\\u200d\\ufeff]+/g, '');
+                    const root = document.querySelector('main') || document.querySelector('div[role="main"]') || document.body;
+                    const matchMoreAria = (txt) => {
+                        const t = (txt || '').trim();
+                        if (!t) return false;
+                        return ['もっと見る', 'More', 'オプション', 'Options', 'メニュー', 'Menu'].some(k => t === k || t.includes(k));
+                    };
+                    const btns = Array.from(root.querySelectorAll('div[role="button"], button')).filter(el => {
+                        if (el.closest('nav')) return false;
+                        const r = el.getBoundingClientRect();
+                        if (r.width <= 0 || r.height <= 0 || r.width > 120 || r.height > 120) return false;
+                        if (matchMoreAria(el.getAttribute('aria-label'))) return true;
+                        const svg = el.querySelector('svg[aria-label], svg title');
+                        if (svg) {
+                            const sLabel = svg.getAttribute('aria-label') || svg.textContent || '';
+                            if (matchMoreAria(sLabel)) return true;
+                        }
+                        const circles = el.querySelectorAll('svg circle');
+                        if (circles.length === 3 && r.width <= 48 && r.height <= 48) return true;
+                        return false;
+                    });
+                    if (!btns.length) return null;
+
+                    let targetBtn = null;
+                    if (snippets && snippets.length > 0) {
+                        let bestBtn = null;
+                        let smallestContainerLen = 9999999;
+                        for (const b of btns) {
+                            let cur = b.parentElement;
+                            for (let depth = 0; depth < 8 && cur && cur !== root; depth++) {
+                                const cNorm = norm(cur.innerText || '');
+                                if (snippets.some(sn => sn && cNorm.includes(sn))) {
+                                    if (cNorm.length < smallestContainerLen) {
+                                        smallestContainerLen = cNorm.length;
+                                        bestBtn = b;
+                                    }
+                                    break;
+                                }
+                                cur = cur.parentElement;
+                            }
+                        }
+                        targetBtn = bestBtn;
+                    }
+                    if (!targetBtn && isPermalink) {
+                        targetBtn = btns[0];
+                    }
+                    if (!targetBtn) return null;
+                    targetBtn.scrollIntoView({ block: 'center' });
+                    const rect = targetBtn.getBoundingClientRect();
+                    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+                }""", {"snippets": snippets, "isPermalink": is_permalink})
+                if found_box:
+                    page.mouse.click(found_box["x"], found_box["y"])
+                    time.sleep(1.2)
+                    more_clicked = True
+                    break
+            except Exception:
+                pass
+            if not is_permalink and scroll_try < 5:
+                try:
+                    page.evaluate("window.scrollBy(0, 650)")
+                    time.sleep(1.2)
+                except Exception:
+                    pass
+
+        if not more_clicked:
+            continue
+
+        # メニュー内の「削除 / Delete」をクリック
+        del_menu_clicked = False
+        for d_sel in [
+            'div[role="menuitem"]:has-text("削除")',
+            'div[role="menu"] div[role="button"]:has-text("削除")',
+            'div[role="menu"] span:text-is("削除")',
+            'button:text-is("削除")',
+            'div[role="button"]:has-text("削除")',
+            'span:text-is("削除")',
+            'div[role="menuitem"]:has-text("Delete")',
+            'div[role="menu"] span:text-is("Delete")',
+            'button:text-is("Delete")',
+            'span:text-is("Delete")',
+        ]:
+            try:
+                loc = page.locator(d_sel).last
+                if loc.is_visible(timeout=900):
+                    txt_m = (loc.inner_text() or "").strip()
+                    if len(txt_m) <= 20:
+                        loc.click(force=True)
+                        del_menu_clicked = True
+                        time.sleep(1.2)
+                        break
+            except Exception:
+                pass
+
+        if not del_menu_clicked:
+            try:
+                page.keyboard.press("Escape")
+            except Exception:
+                pass
+            continue
+
+        # 確認ダイアログ内の「削除 / Delete」をクリック
+        confirm_clicked = False
+        for c_sel in [
+            'div[role="dialog"] button:has-text("削除")',
+            'div[role="dialog"] div[role="button"]:has-text("削除")',
+            'div[aria-modal="true"] button:has-text("削除")',
+            'div[aria-modal="true"] div[role="button"]:has-text("削除")',
+            'div[role="dialog"] span:text-is("削除")',
+            'div[role="dialog"] button:has-text("Delete")',
+            'div[role="dialog"] div[role="button"]:has-text("Delete")',
+            'div[aria-modal="true"] span:text-is("Delete")',
+            'button:text-is("削除")',
+            'button:text-is("Delete")',
+        ]:
+            try:
+                loc_c = page.locator(c_sel).last
+                if loc_c.is_visible(timeout=2000):
+                    txt_c = (loc_c.inner_text() or "").strip()
+                    if len(txt_c) <= 20:
+                        loc_c.click(force=True)
+                        confirm_clicked = True
+                        break
+            except Exception:
+                pass
+
+        if not confirm_clicked:
+            continue
+
+        # 削除完了トーストまたは遷移確認 (最大6秒)
+        for _ in range(12):
+            time.sleep(0.5)
+            try:
+                done_toast = page.evaluate("""() => {
+                    const txt = (document.body.innerText || '');
+                    return txt.includes('削除しました') || txt.includes('投稿を削除しました') || txt.includes('Post deleted') || txt.includes('Deleted');
+                }""")
+                if done_toast:
+                    return True, "deleted"
+            except Exception:
+                pass
+            if is_permalink and "/post/" not in (page.url or ""):
+                return True, "deleted"
+
+        return True, "delete_confirmed"
+
+    return False, "対象投稿が画面上に見つかりませんでした"
 
 
 def _open_timeline_top_composer(page, account_name, log_func=print):
@@ -5257,7 +6054,7 @@ def style_theme_worksheet(ws):
     try:
         all_rows = list(ws.iter_rows(values_only=True))
         hdr_idx = _find_post_header_row_in_sheet(all_rows) or 4
-        max_col = max(9, ws.max_column or 9)
+        max_col = max(10, ws.max_column or 10)
 
         try:
             ws.views.sheetView[0].showGridLines = True
@@ -5357,7 +6154,7 @@ def style_theme_worksheet(ws):
                     c3.border = Border()
 
         # 2. 投稿テーブルヘッダー (hdr_idx 行)
-        post_col_count = max(9, max((c for c in range(1, max_col + 1) if ws.cell(row=hdr_idx, column=c).value is not None), default=9))
+        post_col_count = max(10, max((c for c in range(1, max_col + 1) if ws.cell(row=hdr_idx, column=c).value is not None), default=10))
         ws.row_dimensions[hdr_idx].height = 28
         col_roles = {}
         for c_h in range(1, post_col_count + 1):
@@ -5398,6 +6195,19 @@ def style_theme_worksheet(ws):
                     )
                 except Exception:
                     pass
+            elif any(k in nh for k in ["削除時間", "自動削除", "削除タイマー", "削除まで", "deleteafter", "deletetime", "deletedelay", "autodelete"]) and not any(ex in nh for ex in ["済", "完了", "日時"]):
+                col_roles[c_h] = "delete_after"
+                try:
+                    from openpyxl.comments import Comment
+                    ch.comment = Comment(
+                        "【各ポストの自動削除時間指定（指定時間後に自動削除）】\n"
+                        "例: 30～60 / 30分～60分 / 1～3時間 / 10～30秒 / 45\n"
+                        "投稿完了後、指定範囲からランダムに選んだ時間経過するとThreads上から自動削除します。\n"
+                        "（※単位を省略すると「分」になります。空欄・0の場合は削除せず残します）",
+                        "ThreadsAutoPoster"
+                    )
+                except Exception:
+                    pass
             elif any(k in nh for k in ["ステータス", "status", "状態"]):
                 col_roles[c_h] = "status"
             elif any(k in nh for k in ["完了日時", "投稿完了"]):
@@ -5421,8 +6231,9 @@ def style_theme_worksheet(ws):
             "image": 26,
             "time_slot": 18,
             "weekdays": 18,
+            "delete_after": 18,
             "status": 16,
-            "finish_time": 22,
+            "finish_time": 24,
             "error": 30,
             "other": 18,
         }
@@ -5465,9 +6276,9 @@ def style_theme_worksheet(ws):
                 role = col_roles.get(c_idx, "other")
 
                 cell.border = border_data
-                if role in ("time_slot", "weekdays"):
+                if role in ("time_slot", "weekdays", "delete_after"):
                     cell.number_format = "@"
-                if role in ("id", "time_slot", "weekdays", "status"):
+                if role in ("id", "time_slot", "weekdays", "delete_after", "status"):
                     cell.alignment = align_center
                 elif role in ("text", "error"):
                     cell.alignment = align_left_top
@@ -5475,7 +6286,7 @@ def style_theme_worksheet(ws):
                     cell.alignment = align_left_ctr
 
                 if c_idx == status_col and val_s:
-                    if "完了" in val_s:
+                    if "完了" in val_s or "削除済" in val_s:
                         if _is_standard_or_empty_fill(cell):
                             cell.fill = fill_green
                         cell.font = font_green
@@ -5497,7 +6308,7 @@ def style_theme_worksheet(ws):
                     if role == "id":
                         target_fill = fill_id_col
                         target_font = font_id
-                    elif role in ("time_slot", "weekdays"):
+                    elif role in ("time_slot", "weekdays", "delete_after"):
                         target_fill = fill_sched_col
                     if _is_standard_or_empty_fill(cell):
                         cell.fill = target_fill
@@ -5522,6 +6333,7 @@ def style_theme_worksheet(ws):
             s_col_ltr = get_column_letter(status_col)
             s_rng = f"{s_col_ltr}{hdr_idx + 1}:{s_col_ltr}{max(end_row + 200, 500)}"
             ws.conditional_formatting.add(s_rng, CellIsRule(operator="equal", formula=['"投稿完了"'], fill=fill_green, font=font_green))
+            ws.conditional_formatting.add(s_rng, CellIsRule(operator="equal", formula=['"投稿完了(削除済)"'], fill=fill_green, font=font_green))
             ws.conditional_formatting.add(s_rng, CellIsRule(operator="equal", formula=['"未投稿"'], fill=fill_amber, font=font_amber))
             ws.conditional_formatting.add(s_rng, CellIsRule(operator="equal", formula=['"エラー"'], fill=fill_red, font=font_red))
         if status_meta_col and hdr_idx >= 4:
@@ -5645,7 +6457,7 @@ def _sanitize_excel_sheet_name(name):
 
 
 def _post_sheet_header_row():
-    return ["ID", "ポスト文章", "投稿時間", "曜日", "コミュニティまたはトピック", "画像ファイルパス", "ステータス", "投稿完了日時", "エラー内容"]
+    return ["ID", "ポスト文章", "投稿時間", "曜日", "削除時間", "コミュニティまたはトピック", "画像ファイルパス", "ステータス", "投稿完了日時", "エラー内容"]
 
 
 def _init_theme_sheet_rows(ws, time_slot="0:00-0:00", weekdays="毎日", interval="120〜360分", post_mode=1, status="有効", memo=""):
@@ -5880,6 +6692,56 @@ def _ensure_post_time_column_next_to_text(ws):
                     ws.cell(row=r, column=wd_target_col).value = "曜日" if r == hdr_idx else ""
             changed = True
 
+        # 3. 『削除時間』列を text_col + 3（『曜日』のすぐ右）に配置
+        max_c3 = max(ws.max_column or 1, 11)
+        headers3 = [str(ws.cell(row=hdr_idx, column=c).value or "").strip() for c in range(1, max_c3 + 1)]
+        norm_headers3 = [re.sub(r'[\s　_\-:=]+', '', h.lower()) for h in headers3]
+        text_col3 = next(
+            (i + 1 for i, nh in enumerate(norm_headers3)
+             if any(k in nh for k in ["ポスト文章", "投稿本文", "ツイート文章", "posttext", "投稿文章", "ポスト本文", "ポスト内容", "投稿内容", "本文"])),
+            text_col2,
+        )
+        del_target_col = text_col3 + 3
+        del_right_norm = norm_headers3[del_target_col - 1] if del_target_col - 1 < len(norm_headers3) else ""
+        if any(k in del_right_norm for k in ["削除時間", "自動削除", "削除タイマー", "削除まで", "deleteafter", "deletetime", "deletedelay", "autodelete"]) and not any(ex in del_right_norm for ex in ["済", "完了", "日時"]):
+            if headers3[del_target_col - 1] != "削除時間":
+                ws.cell(row=hdr_idx, column=del_target_col).value = "削除時間"
+                changed = True
+        else:
+            old_del_col = next(
+                (i + 1 for i, nh in enumerate(norm_headers3)
+                 if any(k in nh for k in ["削除時間", "自動削除", "削除タイマー", "削除まで", "deleteafter", "deletetime", "deletedelay", "autodelete"])
+                 and not any(ex in nh for ex in ["済", "完了", "日時"])),
+                None,
+            )
+            last_post_col3 = max((i + 1 for i, h in enumerate(headers3) if h), default=del_target_col - 1)
+            last_data_row3 = hdr_idx
+            for r_scan in range(hdr_idx + 1, ws.max_row + 1):
+                if any(ws.cell(row=r_scan, column=c_s).value not in (None, "") for c_s in range(1, max(last_post_col3, old_del_col or 1) + 1)):
+                    last_data_row3 = r_scan
+
+            if old_del_col == del_target_col:
+                ws.cell(row=hdr_idx, column=del_target_col).value = "削除時間"
+            elif old_del_col is not None and old_del_col > del_target_col:
+                for r in range(hdr_idx, last_data_row3 + 1):
+                    del_val = ws.cell(row=r, column=old_del_col).value
+                    for c in range(old_del_col - 1, del_target_col - 1, -1):
+                        ws.cell(row=r, column=c + 1).value = ws.cell(row=r, column=c).value
+                    ws.cell(row=r, column=del_target_col).value = "削除時間" if r == hdr_idx else del_val
+            elif old_del_col is not None and old_del_col < del_target_col:
+                dest_col = del_target_col - 1
+                for r in range(hdr_idx, last_data_row3 + 1):
+                    del_val = ws.cell(row=r, column=old_del_col).value
+                    for c in range(old_del_col, dest_col):
+                        ws.cell(row=r, column=c).value = ws.cell(row=r, column=c + 1).value
+                    ws.cell(row=r, column=dest_col).value = "削除時間" if r == hdr_idx else del_val
+            else:
+                for r in range(hdr_idx, last_data_row3 + 1):
+                    for c in range(last_post_col3, del_target_col - 1, -1):
+                        ws.cell(row=r, column=c + 1).value = ws.cell(row=r, column=c).value
+                    ws.cell(row=r, column=del_target_col).value = "削除時間" if r == hdr_idx else ""
+            changed = True
+
         if changed:
             style_theme_worksheet(ws)
         return changed
@@ -5889,10 +6751,10 @@ def _ensure_post_time_column_next_to_text(ws):
 
 def _ensure_post_sheet_headers(ws, required_cols=None):
     if required_cols is None:
-        required_cols = ["投稿時間", "曜日"]
+        required_cols = ["投稿時間", "曜日", "削除時間"]
     if ws.max_row == 0:
         if _is_legacy_flat_post_sheet_name(ws.title):
-            ws.append(["ID", "テーマ", "ポスト文章", "投稿時間", "曜日", "コミュニティまたはトピック", "画像ファイルパス", "ステータス", "投稿完了日時", "エラー内容"])
+            ws.append(["ID", "テーマ", "ポスト文章", "投稿時間", "曜日", "削除時間", "コミュニティまたはトピック", "画像ファイルパス", "ステータス", "投稿完了日時", "エラー内容"])
         else:
             _init_theme_sheet_rows(ws)
 
@@ -5922,6 +6784,8 @@ def _ensure_post_sheet_headers(ws, required_cols=None):
             return any(any(k in n for k in ["時間帯", "実行時間", "投稿時間", "投稿時刻", "配信時間", "timeslot", "時間枠"]) and "完了" not in n and "最終" not in n for n in norm_headers)
         if target == "曜日":
             return any(any(k in n for k in ["曜日", "weekday", "weekdays"]) for n in norm_headers)
+        if target == "削除時間":
+            return any(any(k in n for k in ["削除時間", "自動削除", "削除タイマー", "削除まで", "deleteafter", "deletetime", "deletedelay", "autodelete"]) and not any(ex in n for ex in ["済", "完了", "日時"]) for n in norm_headers)
         return target.lower() in norm_headers
 
     next_col = max((i + 1 for i, h in enumerate(headers) if h), default=0) + 1
@@ -6168,7 +7032,7 @@ def delete_theme_setting_from_xlsx(filepath, theme_name):
 
 
 def _resolve_post_sheet_col_map(ws, require_theme_col=False):
-    req = ["投稿時間", "曜日"] + (["テーマ"] if require_theme_col else [])
+    req = ["投稿時間", "曜日", "削除時間"] + (["テーマ"] if require_theme_col else [])
     header_row_idx, headers = _ensure_post_sheet_headers(ws, req)
     col_map = {}
     for idx, h in enumerate(headers, start=1):
@@ -6187,6 +7051,8 @@ def _resolve_post_sheet_col_map(ws, require_theme_col=False):
             col_map["time_slot"] = idx
         elif any(k in norm_h for k in ["曜日", "weekday", "weekdays"]) and "weekdays" not in col_map:
             col_map["weekdays"] = idx
+        elif any(k in norm_h for k in ["削除時間", "自動削除", "削除タイマー", "削除まで", "deleteafter", "deletetime", "deletedelay", "autodelete"]) and not any(ex in norm_h for ex in ["済", "完了", "日時"]) and "delete_after" not in col_map:
+            col_map["delete_after"] = idx
         elif any(k in norm_h for k in ["ステータス", "status", "状態"]) and "status" not in col_map:
             col_map["status"] = idx
         elif any(k in norm_h for k in ["投稿完了", "完了日時", "finishtime"]) and "finish_time" not in col_map:
@@ -6250,6 +7116,7 @@ def save_or_update_post_row_in_xlsx(filepath, account_id, post_data, row_idx=Non
         ("image", post_data.get("image", "")),
         ("time_slot", post_data.get("time_slot", "")),
         ("weekdays", post_data.get("weekdays", "")),
+        ("delete_after", post_data.get("delete_after", "")),
         ("status", post_data.get("status", "未投稿") or "未投稿"),
     ]
     for key, val in mapping:
@@ -7182,8 +8049,2393 @@ def _extract_design_from_legacy_sheet(ws):
     return extracted
 
 
+AI_ENGINE_CHOICES = (
+    "groq",
+    "gemini",
+    "duckai",
+    "venice",
+    "deepai",
+    "talkai",
+    "chatgpt",
+    "qwen",
+    "mistral",
+    "grok",
+    "deepseek",
+    "claude",
+    "perplexity",
+    "copilot",
+    "openrouter",
+    "ollama",
+    "lmstudio",
+    "chrome_builtin",
+)
+
+AI_WINDOW_PROFILE_NAME = "_ai_window"
+AI_WINDOW_CDP_PORT = 9333
+
+AI_ENGINE_DEFAULTS = {
+    "groq": {"model": "llama-3.3-70b-versatile", "api_url": "https://api.groq.com/openai/v1/chat/completions", "web_url": "https://console.groq.com/", "mode": "openai"},
+    "gemini": {"model": "gemini-2.5-flash", "api_url": "", "web_url": "https://gemini.google.com/app", "mode": "gemini"},
+    "duckai": {"model": "gpt-4o-mini", "api_url": "", "web_url": "https://duckduckgo.com/?q=DuckDuckGo+AI+Chat&ia=chat", "mode": "web"},
+    "venice": {"model": "llama-3.3-70b", "api_url": "https://api.venice.ai/api/v1/chat/completions", "web_url": "https://venice.ai/chat", "mode": "web_or_openai"},
+    "deepai": {"model": "standard", "api_url": "", "web_url": "https://deepai.org/chat", "mode": "web"},
+    "talkai": {"model": "gpt-4o-mini", "api_url": "", "web_url": "https://talkai.info/", "mode": "web"},
+    "chatgpt": {"model": "gpt-4o-mini", "api_url": "https://api.openai.com/v1/chat/completions", "web_url": "https://chatgpt.com/", "mode": "web_or_openai"},
+    "qwen": {"model": "qwen-plus", "api_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions", "web_url": "https://chat.qwen.ai/", "mode": "web_or_openai"},
+    "mistral": {"model": "mistral-small-latest", "api_url": "https://api.mistral.ai/v1/chat/completions", "web_url": "https://chat.mistral.ai/chat", "mode": "web_or_openai"},
+    "grok": {"model": "grok-3-mini", "api_url": "https://api.x.ai/v1/chat/completions", "web_url": "https://grok.com/", "mode": "web_or_openai"},
+    "deepseek": {"model": "deepseek-chat", "api_url": "https://api.deepseek.com/chat/completions", "web_url": "https://chat.deepseek.com/", "mode": "web_or_openai"},
+    "claude": {"model": "claude-3-5-haiku-latest", "api_url": "https://api.anthropic.com/v1/messages", "web_url": "https://claude.ai/new", "mode": "claude"},
+    "perplexity": {"model": "sonar", "api_url": "https://api.perplexity.ai/chat/completions", "web_url": "https://www.perplexity.ai/", "mode": "web_or_openai"},
+    "copilot": {"model": "copilot", "api_url": "", "web_url": "https://copilot.microsoft.com/", "mode": "web"},
+    "openrouter": {"model": "google/gemini-2.0-flash-exp:free", "api_url": "https://openrouter.ai/api/v1/chat/completions", "web_url": "https://openrouter.ai/chat", "mode": "openai"},
+    "ollama": {"model": "llama3.2", "api_url": "http://127.0.0.1:11434/api/chat", "web_url": "http://127.0.0.1:11434", "mode": "ollama"},
+    "lmstudio": {"model": "local-model", "api_url": "http://127.0.0.1:1234/v1/chat/completions", "web_url": "http://127.0.0.1:1234", "mode": "openai_nokey"},
+    "chrome_builtin": {"model": "gemini-nano", "api_url": "", "web_url": "about:blank", "mode": "chrome_builtin"},
+}
+
+FIXED_AI_SYSTEM_PROMPT = (
+    "以下の内容を確認したうえで、設定されたキャラ・指示に沿った魅力的なスレッズのポストのメッセージを作成してください。\n"
+    "【作成方針（自動選定）】\n"
+    "設定されたキャラ・指示に沿った切り口を内部で3パターン（共感・補足・視点の共有など）検討し、対象の投稿に最も自然で噛み合っている1つだけを選んでください。\n"
+    "※検討過程や他案・比較・番号（1. 2. 3. 等）は一切書かず、選んだ1つのポストの本文のみを出力してください。"
+)
+
+AI_PROMPT_SECTION_META = [
+    (
+        "character",
+        "キャラ設定",
+        "あなたはThreads(スレッズ)で役立つ発信をする親しみやすく魅力的なユーザーです。",
+        "年齢層・立場・発信ジャンル・運用目的など、アカウントの人物像を設定します（空欄で省略可）",
+    ),
+    (
+        "target",
+        "ターゲット層",
+        "日々の暮らしや仕事を少し良くしたいと思っている20〜40代のユーザー。小さな悩みや気づきに共感しやすい層。",
+        "「誰に届けるか」の指定です。発信側の「キャラ設定」とは別に、読者の属性・悩み・興味関心をAIに伝えます（空欄で省略可）",
+    ),
+    (
+        "purpose",
+        "投稿の目的",
+        "読者の共感や「なるほど」を引き出し、いいね・保存・プロフィール閲覧やリプライにつなげること。",
+        "プロフィール画面への誘導、リンクのクリック、リプライの獲得など、読者に最終的にどう行動してほしいかの着地点です（空欄で省略可）",
+    ),
+    (
+        "tone_rule",
+        "口調・文体ルール",
+        "一人称は使わず自然なです・ます調で、親しみやすく柔らかい文体にしてください。絵文字は文末に0〜1個まで、感嘆符（！）の連続は控えてください。",
+        "一人称・敬語/タメ口・絵文字や記号の癖など、文章のトーンと口調を指定します（空欄で省略可）",
+    ),
+    (
+        "prompt",
+        "プロンプト",
+        "ターゲット層の悩みや関心に寄り添った、思わず共感や保存をしたくなる自然な日本語のThreadsポストを作成してください。ハッシュタグや絵文字の多用は控えてください。",
+        "内容の作り方・文字数目安など具体的な作成指示を記述してください（改行を保持したままAIへ送信されます）",
+    ),
+    (
+        "samples",
+        "お手本サンプル",
+        "例1: 朝のたった5分で今日やることを3つだけ書き出すようにしたら、1日の焦りが驚くほど減りました。全部完璧にやろうとしない方が案外うまくいきますよね✨\n例2: 「あとでやろう」はだいたい忘れるので、2分で終わることはその場で片付けるようにしています。小さなストレスが溜まらなくておすすめです。",
+        "このアカウントらしい理想の投稿例を2〜3個記述してください。AIがトーンと距離感の参考にします（空欄で省略可）",
+    ),
+    (
+        "ng_rules",
+        "NGルール",
+        "・「素晴らしいですね！」「応援しています！」などの定型的なお世辞やAIっぽい表現は禁止\n・宣伝・営業・勧誘・過度なハッシュタグ（#）は禁止",
+        "禁止ワード・AIっぽい定型句の禁止・避ける話題など、アカウント別のNGルールを記述してください（空欄で省略可）",
+    ),
+    (
+        "output_rule",
+        "出力ルール",
+        "※出力は投稿するメッセージ本文のみ（140〜400文字以内）で返してください。挨拶や前置き（例：「了解しました」「投稿案:」）や引用符などの余計な注釈は一切含めないでください。",
+        "本文のみ出力・前置きや「」禁止・文字数上限などの最終整形ルールです（空欄で省略可）",
+    ),
+]
+
+AI_TOP_ROW1_HEADERS = ["実行時間", "曜日", "ポスト間隔", "有効/無効", "メモ"]
+AI_TOP_ROW3_HEADERS = [
+    "AIエンジン",
+    "AIモデル名(空欄=既定モデル自動)",
+    "AIフォールバック候補(空欄=自動切替/off=切替なし)",
+    "AI専用ウィンドウ連携(1=ON/0=OFF)",
+    "AI APIキー / 接続URL",
+]
+AI_TOP_HEADERS = AI_TOP_ROW1_HEADERS + AI_TOP_ROW3_HEADERS
+
+AI_HISTORY_HEADERS = ["ID", "生成されたポスト文章", "使用AIエンジン", "ステータス", "投稿完了日時 / エラー"]
+AI_TABLE_HEADERS = AI_HISTORY_HEADERS
+AI_DEFAULT_MEMO = "例: フレンドリーで共感されやすい口調・絵文字1〜2個・ハッシュタグは1個まで（カンマ区切りでエンジン・モデル・API複数指定＆失敗時自動切替に対応）"
+
+
+def get_ai_window_profile_dir(base_dir=BASE_DIR):
+    """全アカウント共通で固定維持される AI専用ウィンドウ用プロファイルパス (各アカウント窓とは完全分離)"""
+    p_dir = os.path.join(base_dir, "chrome_profiles", AI_WINDOW_PROFILE_NAME)
+    os.makedirs(p_dir, exist_ok=True)
+    return p_dir
+
+
+def _find_chrome_executable_for_ai():
+    import shutil
+    candidates = [
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
+        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+    ]
+    exe = next((c for c in candidates if c and os.path.exists(c)), None)
+    if exe:
+        return exe
+    return shutil.which("chrome") or shutil.which("google-chrome") or shutil.which("chromium") or shutil.which("msedge")
+
+
+_AI_WINDOW_LAUNCH_LOCK = threading.Lock()
+
+
+def is_ai_cdp_port_open(port=AI_WINDOW_CDP_PORT):
+    import urllib.request
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{int(port)}/json/version", timeout=1.2) as res:
+            return res.status == 200
+    except Exception:
+        return False
+
+
+def _prepare_ai_window_prefs(profile_dir):
+    """固定AIウィンドウ起動時に前回のセッション復元で2窓開くのを防止する"""
+    for pref_sub in ["Default/Preferences", "Preferences"]:
+        pref_path = os.path.join(profile_dir, pref_sub)
+        if os.path.exists(pref_path):
+            try:
+                with open(pref_path, "r", encoding="utf-8") as pf:
+                    data = json.load(pf) or {}
+                if not isinstance(data, dict):
+                    data = {}
+                prof = data.setdefault("profile", {})
+                if isinstance(prof, dict):
+                    prof["exit_type"] = "Normal"
+                    prof["exited_cleanly"] = True
+                sess = data.setdefault("session", {})
+                if isinstance(sess, dict):
+                    sess["restore_on_startup"] = 5
+                with open(pref_path, "w", encoding="utf-8") as pf:
+                    json.dump(data, pf, ensure_ascii=False)
+            except Exception:
+                try:
+                    with open(pref_path, "r", encoding="utf-8") as pf:
+                        p_text = pf.read()
+                    p_text = p_text.replace('"exit_type":"Crashed"', '"exit_type":"Normal"')
+                    p_text = p_text.replace('"exited_cleanly":false', '"exited_cleanly":true')
+                    with open(pref_path, "w", encoding="utf-8") as pf:
+                        pf.write(p_text)
+                except Exception:
+                    pass
+    sess_dir = os.path.join(profile_dir, "Default", "Sessions")
+    if os.path.isdir(sess_dir):
+        try:
+            for fn in os.listdir(sess_dir):
+                if fn.startswith(("Session_", "Tabs_")):
+                    try:
+                        os.remove(os.path.join(sess_dir, fn))
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+
+def ensure_fixed_ai_window_launched(base_dir=BASE_DIR, cdp_port=AI_WINDOW_CDP_PORT, initial_url=None, log_func=print):
+    """
+    AI生成専用の【固定Chromeウィンドウ】(chrome_profiles/_ai_window, ポート9333) を1窓のみ起動・維持する。
+    二重起動・クラッシュ復元による2窓化をロック＆セッション正規化で防止します。
+    """
+    with _AI_WINDOW_LAUNCH_LOCK:
+        profile_dir = get_ai_window_profile_dir(base_dir)
+        if is_ai_cdp_port_open(cdp_port):
+            return True, profile_dir
+
+        existing_pids = _find_chrome_pids_for_profile(profile_dir, pipe_only=False)
+        if existing_pids:
+            for _ in range(4):
+                time.sleep(0.4)
+                if is_ai_cdp_port_open(cdp_port):
+                    return True, profile_dir
+            if log_func:
+                log_func("[INFO] 🧠 既存の非CDP AIウィンドウを整理してから1窓のみで再起動します...")
+            _terminate_chrome_pids(existing_pids, wait_sec=2.0)
+
+        _cleanup_profile_locks(profile_dir)
+        _prepare_ai_window_prefs(profile_dir)
+
+        chrome_exe = _find_chrome_executable_for_ai()
+        if not chrome_exe:
+            raise RuntimeError("AI専用ウィンドウ起動用の Google Chrome (chrome.exe) が見つかりませんでした。")
+
+        import subprocess
+        cmd = [
+            chrome_exe,
+            f"--user-data-dir={profile_dir}",
+            f"--remote-debugging-port={int(cdp_port)}",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--lang=ja-JP",
+            "--disable-session-crashed-bubble",
+            "--hide-crash-restore-bubble",
+            "--disable-features=InfiniteSessionRestore",
+            "--window-size=1180,820",
+        ]
+        if initial_url:
+            cmd.append(str(initial_url))
+
+        creation_flags = 0
+        if sys.platform == "win32":
+            creation_flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+
+        if log_func:
+            log_func(f"[INFO] 🧠 【固定AI専用Window起動】プロファイル: chrome_profiles/{AI_WINDOW_PROFILE_NAME} (CDP:{cdp_port}) — Threadsアカウント窓とは完全分離")
+        subprocess.Popen(cmd, cwd=base_dir, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=creation_flags)
+
+        for _ in range(24):
+            if is_ai_cdp_port_open(cdp_port):
+                return True, profile_dir
+            time.sleep(0.5)
+
+        return is_ai_cdp_port_open(cdp_port), profile_dir
+
+
+_AI_ENGINE_ALIASES = {
+    "openai": "chatgpt",
+    "gpt": "chatgpt",
+    "google": "gemini",
+    "anthropic": "claude",
+    "duck": "duckai",
+    "ddg": "duckai",
+    "or": "openrouter",
+    "chrome": "chrome_builtin",
+}
+
+AI_ENGINE_META_INFO = {
+    "groq": ("APIキー (gsk_...)", "高速推論・API専用"),
+    "gemini": ("APIキー(AIza...) または AI専用Window", "無料枠あり/Web対応"),
+    "duckai": ("空欄可 (AI専用Window連携)", "登録不要・無料チャット"),
+    "venice": ("APIキー または AI専用Window", "検閲緩め・Web/API両対応"),
+    "deepai": ("APIキー または AI専用Window", "無料Webチャット対応"),
+    "talkai": ("空欄可 (AI専用Window連携)", "登録不要・無料Webチャット"),
+    "chatgpt": ("APIキー(sk-...) または AI専用Window", "OpenAI Web/API両対応"),
+    "qwen": ("DashScope APIキー または Window", "Alibaba Qwen Web/API"),
+    "mistral": ("Mistral APIキー または Window", "Le Chat / API両対応"),
+    "grok": ("xAI APIキー(xai-...) または Window", "xAI Grok Web/API"),
+    "deepseek": ("DeepSeek APIキー または Window", "高コスパ推論 Web/API"),
+    "claude": ("Anthropic APIキー(sk-ant-...) または Window", "自然な日本語 Web/API"),
+    "perplexity": ("Perplexity APIキー(pplx-...) または Window", "検索連携型 Web/API"),
+    "copilot": ("空欄可 (AI専用Window / 互換URL)", "Microsoft Copilot"),
+    "openrouter": ("APIキー (sk-or-v1-...)", "無料枠含む統合ゲートウェイ"),
+    "ollama": ("ローカルURL (http://127.0.0.1:11434)", "完全無料・PCローカル実行"),
+    "lmstudio": ("ローカルURL (http://127.0.0.1:1234)", "完全無料・ローカルAPI"),
+    "chrome_builtin": ("空欄可 (Chrome内蔵Gemini Nano)", "固定AI専用Window内蔵AI"),
+}
+
+
+def _split_multi_tokens(raw_val):
+    s = str(raw_val or "").strip()
+    if not s:
+        return []
+    return [t.strip() for t in re.split(r'[,，、;；]+', s) if t.strip()]
+
+
+def _normalize_engine_token(tok):
+    t = str(tok or "").strip().lower()
+    t = _AI_ENGINE_ALIASES.get(t, t)
+    return t if t in AI_ENGINE_CHOICES else None
+
+
+def _parse_engine_list(raw_val, default_fallback="duckai"):
+    s = str(raw_val or "").strip()
+    if not s:
+        return [default_fallback] if default_fallback else []
+    res = []
+    for tok in re.split(r'[,，、;；/\s]+', s):
+        norm = _normalize_engine_token(tok)
+        if norm and norm not in res:
+            res.append(norm)
+    if not res and default_fallback:
+        return [default_fallback]
+    return res
+
+
+def _normalize_engine_list_str(raw_val, default_fallback="duckai"):
+    return ", ".join(_parse_engine_list(raw_val, default_fallback=default_fallback))
+
+
+def _extract_engine_tag(token):
+    s = str(token or "").strip()
+    if ":" in s:
+        head, tail = s.split(":", 1)
+        h_low = head.strip().lower()
+        if h_low not in ("http", "https"):
+            norm = _normalize_engine_token(h_low)
+            if norm and tail.strip():
+                return norm, tail.strip()
+    return None, s
+
+
+def _infer_engine_for_key_or_url(val_str):
+    v = str(val_str or "").strip()
+    vl = v.lower()
+    if v.startswith("gsk_") or "api.groq.com" in vl or "console.groq.com" in vl:
+        return "groq"
+    if v.startswith("AIza") or "generativelanguage.googleapis.com" in vl or "gemini.google.com" in vl:
+        return "gemini"
+    if v.startswith("sk-ant-") or "api.anthropic.com" in vl or "claude.ai" in vl:
+        return "claude"
+    if v.startswith("sk-or-") or "openrouter.ai" in vl:
+        return "openrouter"
+    if v.startswith("xai-") or "api.x.ai" in vl:
+        return "grok"
+    if v.startswith("pplx-") or "api.perplexity.ai" in vl:
+        return "perplexity"
+    if v.startswith("sk-proj-") or "api.openai.com" in vl:
+        return "chatgpt"
+    if ":11434" in vl or "ollama" in vl:
+        return "ollama"
+    if ":1234" in vl or "lmstudio" in vl:
+        return "lmstudio"
+    if "api.deepseek.com" in vl:
+        return "deepseek"
+    if "api.mistral.ai" in vl:
+        return "mistral"
+    if "dashscope" in vl:
+        return "qwen"
+    if "api.venice.ai" in vl:
+        return "venice"
+    return None
+
+
+def _parse_api_key_or_url(raw_val, default_url=""):
+    s = str(raw_val or "").strip()
+    if not s or s.lower() in ("none", "nan", "-"):
+        return "", default_url
+    if "|" in s:
+        p1, p2 = [x.strip() for x in s.split("|", 1)]
+        if p1.lower().startswith(("http://", "https://")):
+            return p2, p1
+        if p2.lower().startswith(("http://", "https://")):
+            return p1, p2
+    if s.lower().startswith(("http://", "https://")):
+        return "", s
+    return s, default_url
+
+
+def _resolve_ai_engine_chain(primary_engine, fallback_spec=""):
+    primaries = _parse_engine_list(primary_engine, default_fallback="duckai")
+    fb = str(fallback_spec or "").strip()
+    if fb.lower() in {"off", "none", "no", "0", "false", "なし", "無効", "切替なし"}:
+        return primaries
+    chain = list(primaries)
+    if fb:
+        for t in _parse_engine_list(fb, default_fallback=None):
+            if t not in chain:
+                chain.append(t)
+        return chain
+    default_order = [
+        "duckai", "talkai", "deepai", "venice",
+        "groq", "gemini", "chatgpt", "grok", "claude", "copilot",
+        "perplexity", "deepseek", "qwen", "mistral", "openrouter",
+        "ollama", "lmstudio", "chrome_builtin",
+    ]
+    for e in default_order:
+        if e not in chain:
+            chain.append(e)
+    return chain
+
+
+def _resolve_engine_models_for_chain(model_raw, primary_engines, chain):
+    tokens = _split_multi_tokens(model_raw)
+    per_eng = {e: [] for e in chain}
+    untagged = []
+    for tok in tokens:
+        tag, val = _extract_engine_tag(tok)
+        if tag:
+            if tag in per_eng and val not in per_eng[tag]:
+                per_eng[tag].append(val)
+        else:
+            untagged.append(val)
+    if untagged:
+        if len(primary_engines) <= 1 and primary_engines:
+            target = primary_engines[0]
+            if target in per_eng:
+                for u in untagged:
+                    if u not in per_eng[target]:
+                        per_eng[target].append(u)
+        else:
+            for idx, u in enumerate(untagged):
+                if idx < len(primary_engines):
+                    target = primary_engines[idx]
+                    if target in per_eng and u not in per_eng[target]:
+                        per_eng[target].append(u)
+    return per_eng
+
+
+def _resolve_engine_credentials_for_chain(raw_key_or_url, primary_engines, chain):
+    tokens = _split_multi_tokens(raw_key_or_url)
+    per_eng = {e: [] for e in chain}
+    untagged = []
+    for tok in tokens:
+        tag, val = _extract_engine_tag(tok)
+        if tag:
+            if tag in per_eng and val not in per_eng[tag]:
+                per_eng[tag].append(val)
+            continue
+        inferred = _infer_engine_for_key_or_url(val)
+        if inferred and inferred in per_eng:
+            if val not in per_eng[inferred]:
+                per_eng[inferred].append(val)
+            continue
+        untagged.append(tok)
+    if untagged:
+        if len(primary_engines) <= 1 and primary_engines:
+            target = primary_engines[0]
+            if target in per_eng:
+                for u in untagged:
+                    if u not in per_eng[target]:
+                        per_eng[target].append(u)
+        else:
+            for idx, u in enumerate(untagged):
+                if idx < len(primary_engines):
+                    target = primary_engines[idx]
+                    if target in per_eng and u not in per_eng[target]:
+                        per_eng[target].append(u)
+    return per_eng
+
+
+def _strip_ai_ui_noise_lines(text):
+    t = str(text or "").strip()
+    if not t:
+        return ""
+    exact_noise = {
+        "duck.ai", "duck.aiの発言", "duck.ai said", "chatgptの発言", "chatgpt said",
+        "geminiの回答", "claudeの回答", "grokの発言", "deepseekの発言", "aiの発言", "aiの回答",
+        "アシスタント", "assistant", "下書き", "draft", "思考中", "考え中", "生成中", "検索中",
+        "thinking", "thinking...", "generating", "generating...", "searching", "searching...",
+        "最新の回答へ移動", "下にスクロール", "トップへ戻る", "scroll to bottom", "jump to latest response",
+        "コピー", "コピーしました", "copy", "copied", "再生成", "regenerate",
+        "良い回答", "悪い回答", "good response", "bad response",
+        "共有", "share", "編集", "edit", "新しいチャット", "new chat",
+        "音声で読み上げる", "read aloud", "停止", "stop", "送信", "send",
+        "他のaiモデルに質問", "他のAIモデルに質問", "ask another ai model", "ask another model",
+        "ダウンロード", "download", "やり直す", "retry",
+        "投稿文を作成しました", "投稿文を作成しました。", "投稿を作成しました", "投稿を作成しました。",
+        "こちらが投稿文です", "こちらが投稿文です。", "以上です", "以上です。",
+    }
+    model_badge_re = re.compile(
+        r'^(?:gpt-[\w.-]+|claude[\s-][\w.-]+|gemini[\s-][\w.-]+|llama[\s-][\w.-]+|mixtral[\s-][\w.-]+|mistral[\s-][\w.-]+|qwen[\s-]?[\w.-]+|deepseek[\s-]?[\w.-]+|o[134](?:-[\w.-]+)?)(?:\s+[a-z0-9._-]+){0,3}$',
+        re.IGNORECASE,
+    )
+    disclaimer_re = re.compile(
+        r'すべてのチャットは非公開|aiは間違える可能性|all chats are private|ai can make mistakes|check important info',
+        re.IGNORECASE,
+    )
+    out = []
+    for line in t.splitlines():
+        s = line.strip()
+        if not s:
+            if out and out[-1] != "":
+                out.append("")
+            continue
+        sl = s.lower()
+        if sl in exact_noise or s in exact_noise:
+            continue
+        if disclaimer_re.search(s):
+            continue
+        if len(s) <= 36 and model_badge_re.match(s):
+            continue
+        out.append(line.rstrip())
+    return "\n".join(out).strip()
+
+
+def _strip_prompt_fragments(raw_text, prompt_text=""):
+    t = str(raw_text or "").strip()
+    if not t:
+        return ""
+    prompt_header_re = re.compile(
+        r'^【(?:作成方針（自動選定）|キャラ設定|ターゲット層|投稿の目的|口調・文体ルール|プロンプト|お手本サンプル|NGルール|出力ルール|今回の個別作成指示・テーマ)】'
+    )
+    compact_p = re.sub(r'\s+', '', str(prompt_text or ""))
+    if prompt_text:
+        end_marker = "選んだ1つのポストの本文のみを出力してください。"
+        prompt_lines = [ln.strip() for ln in str(prompt_text).splitlines() if ln.strip()]
+        cut_pos = -1
+        m_idx = t.rfind(end_marker)
+        if m_idx != -1:
+            p = m_idx + len(end_marker)
+            if len(t[p:].strip()) >= 4:
+                cut_pos = max(cut_pos, p)
+        for pl in prompt_lines[-4:]:
+            if len(pl) >= 8:
+                p_idx = t.rfind(pl)
+                if p_idx != -1:
+                    p = p_idx + len(pl)
+                    if len(t[p:].strip()) >= 4:
+                        cut_pos = max(cut_pos, p)
+        if cut_pos > 0:
+            t = t[cut_pos:].strip()
+    out_lines = []
+    for ln in t.splitlines():
+        s = ln.strip()
+        if not s:
+            if out_lines and out_lines[-1] != "":
+                out_lines.append("")
+            continue
+        if prompt_header_re.match(s):
+            continue
+        s_comp = re.sub(r'\s+', '', s)
+        if compact_p and len(s_comp) >= 6 and s_comp in compact_p:
+            continue
+        if "※出力は投稿するメッセージ本文のみ" in s or "選んだ1つのポストの本文のみを出力してください" in s:
+            continue
+        out_lines.append(ln.rstrip())
+    res = "\n".join(out_lines).strip()
+    if not res:
+        return ""
+    res_comp = re.sub(r'\s+', '', res)
+    if compact_p and len(res_comp) >= 6 and res_comp in compact_p:
+        return ""
+    return res
+
+
+def _clean_ai_generated_post_text(raw_text, max_len=495, prompt_text=""):
+    t = str(raw_text or "").strip()
+    if not t:
+        return ""
+    t = re.sub(r'^```[a-zA-Z0-9_-]*\s*', '', t)
+    t = re.sub(r'\s*```$', '', t).strip()
+    t = _strip_prompt_fragments(t, prompt_text=prompt_text)
+    t = _strip_ai_ui_noise_lines(t)
+    if not t:
+        return ""
+    lines = t.splitlines()
+    while len(lines) > 1 and any(lines[0].strip().startswith(prefix) for prefix in [
+        "以下に", "ご提案", "投稿案", "ツイート案", "Threads用", "はい、", "承知しました", "了解しました",
+        "投稿文を作成しました", "投稿を作成しました", "こちらが投稿文", "Sure", "Here is"
+    ]):
+        lines = lines[1:]
+    while len(lines) > 1 and lines[-1].strip() in [
+        "投稿文を作成しました", "投稿文を作成しました。", "投稿を作成しました", "投稿を作成しました。",
+        "以上です", "以上です。", "いかがでしょうか", "いかがでしょうか？", "いかがでしょうか。"
+    ]:
+        lines = lines[:-1]
+    t = "\n".join(lines).strip()
+    t = re.sub(r'^(投稿文|本文|ポスト案|ポスト)\s*[:：]\s*', '', t).strip()
+    if len(t) >= 2 and ((t.startswith("「") and t.endswith("」")) or (t.startswith('"') and t.endswith('"'))):
+        inner = t[1:-1].strip()
+        if inner:
+            t = inner
+    t = expand_spintax_and_placeholders(t)
+    t = re.sub(r'\n{3,}', '\n\n', t).strip()
+    if len(t) > max_len:
+        t = t[:max_len - 1].rstrip() + "…"
+    return t
+
+
+def _http_post_json(url, payload, headers=None, timeout=45):
+    import urllib.request
+    import urllib.error
+    req_headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    }
+    if headers:
+        req_headers.update(headers)
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(url, data=data, headers=req_headers, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as res:
+            body = res.read().decode("utf-8", errors="replace")
+            return json.loads(body)
+    except urllib.error.HTTPError as he:
+        err_body = ""
+        try:
+            err_body = he.read().decode("utf-8", errors="replace")[:240]
+        except Exception:
+            pass
+        raise RuntimeError(f"HTTP {he.code}: {err_body or he.reason}")
+
+
+def _build_ai_generation_prompt(account_name, ai_cfg, prompt_row=None, design_dict=None):
+    blocks = [FIXED_AI_SYSTEM_PROMPT]
+    sections = (ai_cfg or {}).get("prompt_sections") or {}
+
+    has_any_section = False
+    for sec_key, sec_label, _def_val, _desc in AI_PROMPT_SECTION_META:
+        s_val = str(sections.get(sec_key) or "").strip()
+        if s_val:
+            has_any_section = True
+            blocks.append(f"【{sec_label}】\n{s_val}")
+
+    custom_inst = ""
+    if isinstance(prompt_row, dict):
+        custom_inst = str(prompt_row.get("prompt") or "").strip()
+
+    if custom_inst and custom_inst != str(sections.get("prompt") or "").strip():
+        blocks.append(f"【今回の個別作成指示・テーマ】\n{custom_inst}")
+    elif not has_any_section:
+        blocks.append("【プロンプト】\n自然な日本語のThreads投稿文を1つ作成してください。")
+
+    return "\n\n".join(blocks)
+
+
+_AI_WINDOW_DOMAIN_MATCHERS = {
+    "duckai": ("duck.ai", "duckduckgo.com"),
+    "talkai": ("talkai.info",),
+    "deepai": ("deepai.org",),
+    "venice": ("venice.ai",),
+    "chatgpt": ("chatgpt.com", "chat.openai.com"),
+    "gemini": ("gemini.google.com",),
+    "claude": ("claude.ai",),
+    "grok": ("grok.com", "x.com/i/grok"),
+    "deepseek": ("chat.deepseek.com", "deepseek.com"),
+    "qwen": ("chat.qwen.ai", "qwen.ai"),
+    "mistral": ("chat.mistral.ai",),
+    "perplexity": ("perplexity.ai",),
+    "copilot": ("copilot.microsoft.com",),
+}
+
+
+def _dismiss_ai_window_modals(page, engine):
+    consent_selectors = [
+        'button:has-text("Get Started")',
+        'button:has-text("Get started")',
+        'button:has-text("Start chatting")',
+        'button:has-text("Start")',
+        'button:has-text("はじめる")',
+        'button:has-text("チャットを開始")',
+        'button:has-text("同意して続ける")',
+        'button:has-text("Agree and Continue")',
+        'button:has-text("Accept all")',
+        'button:has-text("Accept All")',
+        'button:has-text("Consent")',
+        'button:has-text("I agree")',
+        'button:has-text("I Agree")',
+        'button:has-text("Agree")',
+        'button:has-text("同意")',
+        'button:has-text("承諾")',
+        'button:has-text("続行")',
+        'button:has-text("Accept")',
+        'button:has-text("Continue")',
+        'button:has-text("Next")',
+        'button:has-text("次へ")',
+        'button:has-text("Got it")',
+        'button:has-text("OK")',
+        'button:has-text("閉じる")',
+    ]
+    for _pass in range(3 if engine == "duckai" else 2):
+        clicked_any = False
+        for ok_sel in consent_selectors:
+            try:
+                loc = page.locator(ok_sel).first
+                if loc.is_visible(timeout=400):
+                    loc.click(force=True)
+                    clicked_any = True
+                    time.sleep(0.5)
+            except Exception:
+                pass
+        if not clicked_any:
+            break
+
+
+def _generate_via_fixed_ai_window(playwright_obj, engine, prompt_text, model_name="", base_dir=BASE_DIR, log_func=print):
+    """
+    固定AI専用ウィンドウ (chrome_profiles/_ai_window, CDP:9333) に接続してAI生成を実行する。
+    ※ Before/After DOM・ShadowDOM・ページ本文差分の多層抽出により、Duck.ai / TalkAI / DeepAI / ChatGPT 等から確実に出力を回収する。
+    ※ 処理完了後は browser.close() のみ呼び（CDP切断のみ）、固定AIウィンドウ自体は閉じずにそのまま常駐維持する。
+    """
+    ensure_fixed_ai_window_launched(
+        base_dir=base_dir,
+        cdp_port=AI_WINDOW_CDP_PORT,
+        initial_url=AI_ENGINE_DEFAULTS.get(engine, {}).get("web_url") or "https://duckduckgo.com/?q=DuckDuckGo+AI+Chat&ia=chat",
+        log_func=log_func,
+    )
+    if not playwright_obj:
+        raise RuntimeError("Playwrightインスタンスが未初期化のためAI専用ウィンドウへ接続できません。")
+
+    browser = playwright_obj.chromium.connect_over_cdp(f"http://127.0.0.1:{AI_WINDOW_CDP_PORT}")
+    try:
+        ctx = browser.contexts[0] if browser.contexts else browser.new_context()
+        if engine == "chrome_builtin":
+            page = ctx.pages[0] if ctx.pages else ctx.new_page()
+            result_txt = page.evaluate("""async (prompt) => {
+                const lmApi = window.LanguageModel || (window.ai && window.ai.languageModel);
+                if (!lmApi || typeof lmApi.create !== 'function') {
+                    throw new Error('Chrome組み込みAI (LanguageModel API) がこのChromeで有効になっていません');
+                }
+                const sess = await lmApi.create();
+                const out = await sess.prompt(prompt);
+                return String(out || '').trim();
+            }""", prompt_text)
+            if result_txt:
+                if log_func:
+                    log_func(f"[INFO] 🤖 [AI専用Window] {engine} の出力を取得しました ({len(result_txt)}文字)")
+                return result_txt
+            raise RuntimeError("chrome_builtin から空の結果が返されました")
+
+        target_url = AI_ENGINE_DEFAULTS.get(engine, {}).get("web_url") or "https://chatgpt.com/"
+        domain_keys = _AI_WINDOW_DOMAIN_MATCHERS.get(engine) or (
+            (target_url.split("/")[2].replace("www.", ""),) if "://" in target_url else ()
+        )
+        page = None
+        blank_page = None
+        for existing_p in ctx.pages:
+            try:
+                cur_u = (existing_p.url or "").lower()
+                if any(dk in cur_u for dk in domain_keys if dk):
+                    page = existing_p
+                    break
+                if blank_page is None and cur_u in ("", "about:blank", "chrome://newtab/", "edge://newtab/"):
+                    blank_page = existing_p
+            except Exception:
+                pass
+        if page is None:
+            page = blank_page if blank_page is not None else ctx.new_page()
+            try:
+                page.bring_to_front()
+            except Exception:
+                pass
+            page.goto(target_url, timeout=45000, wait_until="domcontentloaded")
+            time.sleep(2.0)
+        else:
+            try:
+                page.bring_to_front()
+            except Exception:
+                pass
+            time.sleep(0.8)
+
+        input_selectors = [
+            'textarea[name="prompt"]',
+            'textarea[name="user-prompt"]',
+            'textarea#prompt-textarea',
+            'div#prompt-textarea[contenteditable="true"]',
+            'div[contenteditable="true"][role="textbox"]',
+            '[contenteditable="plaintext-only"][role="textbox"]',
+            'rich-textarea div[contenteditable="true"]',
+            'textarea[placeholder]',
+            'textarea',
+            '[contenteditable="true"]',
+            '[contenteditable="plaintext-only"]',
+            '[role="textbox"]',
+            'input[type="text"]:not([readonly]):not([disabled])',
+            'input:not([type]):not([readonly]):not([disabled])',
+        ]
+
+        target_ctx = page
+
+        def _find_input_box():
+            nonlocal target_ctx
+            search_targets = [page]
+            try:
+                for fr in page.frames:
+                    if fr != page.main_frame:
+                        search_targets.append(fr)
+            except Exception:
+                pass
+            for ctx_node in search_targets:
+                for sel in input_selectors:
+                    try:
+                        cand = ctx_node.locator(sel).last
+                        if cand.is_visible(timeout=400):
+                            target_ctx = ctx_node
+                            return cand
+                    except Exception:
+                        pass
+            return None
+
+        def _is_login_wall():
+            try:
+                cur_u_low = (page.url or "").lower()
+                if any(ak in cur_u_low for ak in ("accounts.google.com", "login.microsoftonline.com", "appleid.apple.com", "/auth/", "/signin", "/login")):
+                    return True
+                if engine in ("chatgpt", "gemini", "claude", "grok", "deepseek", "qwen", "mistral", "perplexity"):
+                    for l_sel in ['button:has-text("Log in")', 'button:has-text("Sign in")', 'a:has-text("Log in")', 'a:has-text("Sign in")', 'button:has-text("ログイン")', 'a:has-text("ログイン")']:
+                        try:
+                            if page.locator(l_sel).first.is_visible(timeout=250):
+                                return True
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+            return False
+
+        _dismiss_ai_window_modals(page, engine)
+        input_box = _find_input_box()
+        if not input_box:
+            for _wait_inp in range(6):
+                if _wait_inp >= 2 and _is_login_wall():
+                    raise RuntimeError(f"AI専用ウィンドウ ({engine}) はログインが必要な画面のため自動スキップします。")
+                time.sleep(1.0)
+                _dismiss_ai_window_modals(page, engine)
+                input_box = _find_input_box()
+                if input_box:
+                    break
+
+        if not input_box:
+            raise RuntimeError(f"AI専用ウィンドウ ({engine}: {page.url}) でプロンプト入力欄が見つかりません。固定AI専用Windowで画面状態を確認してください。")
+
+        try:
+            ctx.grant_permissions(["clipboard-read", "clipboard-write"])
+        except Exception:
+            pass
+        for hook_ctx in ([page] if target_ctx == page else [target_ctx, page]):
+            try:
+                hook_ctx.evaluate("""() => {
+                    window.__aiAutoCapturedText = '';
+                    if (window.__aiAutoClipboardHooked) return;
+                    window.__aiAutoClipboardHooked = true;
+                    try {
+                        const clipProto = (typeof Clipboard !== 'undefined' && Clipboard.prototype) ? Clipboard.prototype : null;
+                        const origProtoWrite = clipProto && clipProto.writeText ? clipProto.writeText : null;
+                        if (clipProto && origProtoWrite) {
+                            clipProto.writeText = async function(text) {
+                                window.__aiAutoCapturedText = String(text || '');
+                                try { return await origProtoWrite.call(this, text); } catch (e) {}
+                            };
+                        } else if (navigator.clipboard && navigator.clipboard.writeText) {
+                            const origWrite = navigator.clipboard.writeText.bind(navigator.clipboard);
+                            navigator.clipboard.writeText = async function(text) {
+                                window.__aiAutoCapturedText = String(text || '');
+                                try { return await origWrite(text); } catch (e) {}
+                            };
+                        }
+                        const origProtoWriteItems = clipProto && clipProto.write ? clipProto.write : null;
+                        if (clipProto && origProtoWriteItems) {
+                            clipProto.write = async function(items) {
+                                try {
+                                    for (const item of (items || [])) {
+                                        if (item && item.types && item.types.includes('text/plain')) {
+                                            const blob = await item.getType('text/plain');
+                                            window.__aiAutoCapturedText = await blob.text();
+                                            break;
+                                        }
+                                    }
+                                } catch (e) {}
+                                try { return await origProtoWriteItems.call(this, items); } catch (e) {}
+                            };
+                        }
+                    } catch (e) {}
+                }""")
+            except Exception:
+                pass
+
+        before_snap = target_ctx.evaluate("""() => {
+            const SELS = [
+                '[data-message-author-role="assistant"] .markdown',
+                '[data-message-author-role="assistant"] .prose',
+                '[data-message-author-role="assistant"]',
+                '[data-content="ai-message"]',
+                '.ds-markdown',
+                '.response-content-markdown',
+                '.model-response-text',
+                'model-response .markdown',
+                'model-response',
+                'message-content',
+                '.markdown-body',
+                '.markdown',
+                '.prose',
+                '.outputBox',
+                '.bot-message',
+                '.ai-response',
+                '[data-testid*="assistant"]',
+                '[data-testid*="response"]',
+                '[data-testid="chat-message"]',
+                '[data-testid*="message"]',
+                '[class*="assistant"]',
+                '[class*="response"]',
+                '[class*="answer"]',
+                'article',
+                '[role="article"]'
+            ];
+            const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'SVG', 'TEXTAREA', 'INPUT', 'SELECT', 'OPTION', 'CANVAS', 'IFRAME']);
+            const BLOCK_TAGS = new Set(['P', 'DIV', 'LI', 'BR', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'BLOCKQUOTE', 'PRE', 'SECTION', 'ARTICLE', 'TR', 'DT', 'DD']);
+
+            function extractLiveText(rootNode) {
+                if (!rootNode) return '';
+                const parts = [];
+                function walk(node, inPre) {
+                    if (!node) return;
+                    const nt = node.nodeType;
+                    if (nt === 3) {
+                        const rawVal = node.nodeValue || '';
+                        const v = inPre ? rawVal : rawVal.replace(/[\\r\\n\\t ]+/g, ' ');
+                        if (v && (inPre || v.trim())) parts.push(v);
+                        return;
+                    }
+                    if (nt !== 1 && nt !== 11) return;
+                    if (nt === 1) {
+                        const tag = (node.tagName || '').toUpperCase();
+                        if (SKIP_TAGS.has(tag)) return;
+                        if (tag === 'BUTTON' || tag === 'NAV' || tag === 'HEADER' || tag === 'FOOTER' || tag === 'ASIDE') return;
+                        if (node.hidden || (node.getAttribute && node.getAttribute('aria-hidden') === 'true')) return;
+                        const cls = node.classList;
+                        if (cls && (cls.contains('sr-only') || cls.contains('visually-hidden'))) return;
+                        const role = node.getAttribute ? (node.getAttribute('role') || '').toLowerCase() : '';
+                        if (role === 'button' && !(node.querySelector && node.querySelector('p, article, .markdown, .prose, blockquote'))) return;
+                        try {
+                            const cs = window.getComputedStyle(node);
+                            if (cs && (cs.display === 'none' || cs.visibility === 'hidden')) return;
+                        } catch (e) {}
+                        const isBlock = BLOCK_TAGS.has(tag);
+                        const childPre = inPre || tag === 'PRE';
+                        if (isBlock) parts.push('\\n');
+                        if (node.shadowRoot) walk(node.shadowRoot, childPre);
+                        for (let c = node.firstChild; c; c = c.nextSibling) {
+                            walk(c, childPre);
+                        }
+                        if (isBlock) parts.push('\\n');
+                        return;
+                    }
+                    for (let c = node.firstChild; c; c = c.nextSibling) {
+                        walk(c, inPre);
+                    }
+                }
+                walk(rootNode, false);
+                let res = parts.join('').replace(/[ \\t\\r\\f\\v]+/g, ' ').replace(/ *\\n */g, '\\n').replace(/\\n{3,}/g, '\\n\\n').trim();
+                if (!res && rootNode.innerText) {
+                    res = String(rootNode.innerText || '').trim();
+                }
+                return res;
+            }
+
+            function collectNodes(root) {
+                const texts = [];
+                for (const s of SELS) {
+                    try {
+                        root.querySelectorAll(s).forEach(el => {
+                            const role = (el.getAttribute && (el.getAttribute('data-message-author-role') || '').toLowerCase()) || '';
+                            if (role === 'user') return;
+                            if (el.querySelector && el.querySelector('textarea, input')) return;
+                            const t = extractLiveText(el);
+                            if (t) texts.push(t);
+                        });
+                    } catch (e) {}
+                }
+                try {
+                    root.querySelectorAll('*').forEach(el => {
+                        if (el.shadowRoot) texts.push(...collectNodes(el.shadowRoot));
+                    });
+                } catch (e) {}
+                return texts;
+            }
+            function countCopyBtns(root) {
+                let cnt = 0;
+                const copySel = 'button[aria-label*="Copy" i], button[aria-label*="コピー"], button[aria-label*="クリップボード"], button[aria-label*="clipboard" i], button[title*="Copy" i], button[title*="コピー"], button[data-testid*="copy" i]';
+                try { cnt += root.querySelectorAll(copySel).length; } catch (e) {}
+                try {
+                    root.querySelectorAll('*').forEach(el => {
+                        if (el.shadowRoot) cnt += countCopyBtns(el.shadowRoot);
+                    });
+                } catch (e) {}
+                return cnt;
+            }
+            const bodyTxt = document.body ? extractLiveText(document.body) : '';
+            const bodyLines = bodyTxt.split(/\\r?\\n/).map(x => x.trim()).filter(Boolean);
+            return { selTexts: collectNodes(document), bodyLines, copyBtnCount: countCopyBtns(document) };
+        }""")
+
+        input_box.click()
+        time.sleep(0.25)
+        try:
+            tag_name = input_box.evaluate("el => (el.tagName || '').toLowerCase()")
+        except Exception:
+            tag_name = "textarea"
+
+        if tag_name in ("textarea", "input"):
+            try:
+                input_box.fill(prompt_text)
+                cur_val = input_box.input_value()
+                if not cur_val or len(cur_val.strip()) < 10:
+                    raise ValueError("empty after fill")
+            except Exception:
+                input_box.click()
+                page.keyboard.press("Control+A")
+                page.keyboard.press("Backspace")
+                page.keyboard.insert_text(prompt_text)
+        else:
+            page.keyboard.press("Control+A")
+            page.keyboard.press("Backspace")
+            page.keyboard.insert_text(prompt_text)
+        time.sleep(0.6)
+
+        submitted = False
+        for send_sel in [
+            'button[data-testid="send-button"]',
+            'button[aria-label*="Send" i]',
+            'button[aria-label*="送信"]',
+            'button[title*="Send" i]',
+            'button[title*="送信"]',
+            'button[type="submit"]',
+            'button:has-text("送信")',
+            'button:has-text("Send")',
+        ]:
+            try:
+                sb = target_ctx.locator(send_sel).last
+                if sb.is_visible(timeout=500) and sb.is_enabled(timeout=500):
+                    sb.click()
+                    submitted = True
+                    break
+            except Exception:
+                pass
+        if not submitted:
+            page.keyboard.press("Enter")
+            time.sleep(0.5)
+            try:
+                still_val = input_box.input_value() if tag_name in ("textarea", "input") else input_box.inner_text()
+                if still_val and len(still_val.strip()) > 20:
+                    page.keyboard.press("Control+Enter")
+            except Exception:
+                pass
+
+        def _evaluate_ai_output(allow_body_diff=False):
+            return target_ctx.evaluate("""(args) => {
+                const beforeSelCounts = Object.create(null);
+                for (const t of (args.beforeSelTexts || [])) {
+                    beforeSelCounts[t] = (beforeSelCounts[t] || 0) + 1;
+                }
+                const beforeBodyCounts = Object.create(null);
+                for (const ln of (args.beforeBodyLines || [])) {
+                    beforeBodyCounts[ln] = (beforeBodyCounts[ln] || 0) + 1;
+                }
+                const promptFull = String(args.promptText || '');
+                const promptCompact = promptFull.replace(/\\s+/g, '');
+                const promptLines = promptFull.split(/\\r?\\n/).map(x => x.trim()).filter(Boolean);
+                const promptLineSet = new Set(promptLines);
+                const promptHeaderRe = /^【(?:作成方針（自動選定）|キャラ設定|ターゲット層|投稿の目的|口調・文体ルール|プロンプト|お手本サンプル|NGルール|出力ルール|今回の個別作成指示・テーマ)】/;
+                const endMarker = '選んだ1つのポストの本文のみを出力してください。';
+                const uiNoise = new Set([
+                    'copy', 'コピー', 'コピーしました', 'copied', 'regenerate', '再生成',
+                    'like', 'dislike', 'share', '共有', 'edit', '編集', 'send', '送信',
+                    'stop', '停止', '中止', 'new chat', '新しいチャット',
+                    '他のaiモデルに質問', 'ask another ai model', 'ask another model',
+                    'ダウンロード', 'download', 'やり直す', 'retry',
+                    'duck.ai', 'duck.aiの発言', 'duck.ai said', 'chatgptの発言', 'chatgpt said',
+                    'geminiの回答', 'claudeの回答', 'grokの発言', 'deepseekの発言',
+                    'aiの発言', 'aiの回答', 'アシスタント', 'assistant',
+                    'talkai', 'deepai', 'venice', 'chatgpt', 'gemini', 'claude', 'grok',
+                    'read aloud', '音声で読み上げる', '読み上げる',
+                    '良い回答', '悪い回答', 'good response', 'bad response',
+                    '下書き', 'draft', '思考中', '考え中', '生成中', '検索中',
+                    'thinking', 'thinking...', 'generating', 'generating...', 'searching', 'searching...',
+                    '最新の回答へ移動', '下にスクロール', 'トップへ戻る',
+                    'scroll to bottom', 'jump to latest response',
+                    '投稿文を作成しました', '投稿文を作成しました。',
+                    '投稿を作成しました', '投稿を作成しました。'
+                ]);
+                const modelBadgeRe = /^(?:gpt-[\\w.-]+|claude[\\s-][\\w.-]+|gemini[\\s-][\\w.-]+|llama[\\s-][\\w.-]+|mixtral[\\s-][\\w.-]+|mistral[\\s-][\\w.-]+|qwen[\\s-]?[\\w.-]+|deepseek[\\s-]?[\\w.-]+|o[134](?:-[\\w.-]+)?)(?:\\s+[a-z0-9._-]+){0,3}$/i;
+                const disclaimerRe = /すべてのチャットは非公開|aiは間違える可能性|all chats are private|ai can make mistakes|check important info/i;
+
+                const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'SVG', 'TEXTAREA', 'INPUT', 'SELECT', 'OPTION', 'CANVAS', 'IFRAME']);
+                const BLOCK_TAGS = new Set(['P', 'DIV', 'LI', 'BR', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'BLOCKQUOTE', 'PRE', 'SECTION', 'ARTICLE', 'TR', 'DT', 'DD']);
+
+                function extractLiveText(rootNode) {
+                    if (!rootNode) return '';
+                    const parts = [];
+                    function walk(node, inPre) {
+                        if (!node) return;
+                        const nt = node.nodeType;
+                        if (nt === 3) {
+                            const rawVal = node.nodeValue || '';
+                            const v = inPre ? rawVal : rawVal.replace(/[\\r\\n\\t ]+/g, ' ');
+                            if (v && (inPre || v.trim())) parts.push(v);
+                            return;
+                        }
+                        if (nt !== 1 && nt !== 11) return;
+                        if (nt === 1) {
+                            const tag = (node.tagName || '').toUpperCase();
+                            if (SKIP_TAGS.has(tag)) return;
+                            if (tag === 'BUTTON' || tag === 'NAV' || tag === 'HEADER' || tag === 'FOOTER' || tag === 'ASIDE') return;
+                            if (node.hidden || (node.getAttribute && node.getAttribute('aria-hidden') === 'true')) return;
+                            const cls = node.classList;
+                            if (cls && (cls.contains('sr-only') || cls.contains('visually-hidden'))) return;
+                            const role = node.getAttribute ? (node.getAttribute('role') || '').toLowerCase() : '';
+                            if (role === 'button' && !(node.querySelector && node.querySelector('p, article, .markdown, .prose, blockquote'))) return;
+                            try {
+                                const cs = window.getComputedStyle(node);
+                                if (cs && (cs.display === 'none' || cs.visibility === 'hidden')) return;
+                            } catch (e) {}
+                            const isBlock = BLOCK_TAGS.has(tag);
+                            const childPre = inPre || tag === 'PRE';
+                            if (isBlock) parts.push('\\n');
+                            if (node.shadowRoot) walk(node.shadowRoot, childPre);
+                            for (let c = node.firstChild; c; c = c.nextSibling) {
+                                walk(c, childPre);
+                            }
+                            if (isBlock) parts.push('\\n');
+                            return;
+                        }
+                        for (let c = node.firstChild; c; c = c.nextSibling) {
+                            walk(c, inPre);
+                        }
+                    }
+                    walk(rootNode, false);
+                    let res = parts.join('').replace(/[ \\t\\r\\f\\v]+/g, ' ').replace(/ *\\n */g, '\\n').replace(/\\n{3,}/g, '\\n\\n').trim();
+                    if (!res && rootNode.innerText) {
+                        res = String(rootNode.innerText || '').trim();
+                    }
+                    return res;
+                }
+
+                function cleanCandidate(raw) {
+                    let t = String(raw || '').trim();
+                    if (!t) return '';
+                    const tCompact = t.replace(/\\s+/g, '');
+                    if (tCompact.length >= 6 && promptCompact.includes(tCompact)) return '';
+                    let cutPos = -1;
+                    const markerIdx = t.lastIndexOf(endMarker);
+                    if (markerIdx !== -1) {
+                        const p = markerIdx + endMarker.length;
+                        cutPos = Math.max(cutPos, p);
+                    }
+                    for (let k = promptLines.length - 1; k >= Math.max(0, promptLines.length - 6); k--) {
+                        const pl = promptLines[k];
+                        if (pl && pl.length >= 8) {
+                            const lpIdx = t.lastIndexOf(pl);
+                            if (lpIdx !== -1) {
+                                const p = lpIdx + pl.length;
+                                cutPos = Math.max(cutPos, p);
+                            }
+                        }
+                    }
+                    if (cutPos > 0) {
+                        const after = t.slice(cutPos).trim();
+                        if (after.length < 4) return '';
+                        t = after;
+                    }
+                    const outLines = [];
+                    let promptHits = 0;
+                    let nonEmptyCount = 0;
+                    for (const line of t.split(/\\r?\\n/)) {
+                        const s = line.trim();
+                        if (!s) {
+                            if (outLines.length > 0 && outLines[outLines.length - 1] !== '') outLines.push('');
+                            continue;
+                        }
+                        nonEmptyCount++;
+                        const sCompact = s.replace(/\\s+/g, '');
+                        if (promptLineSet.has(s) || (sCompact.length >= 6 && promptCompact.includes(sCompact)) || promptHeaderRe.test(s) || s.includes('※出力は投稿するメッセージ本文のみ')) {
+                            promptHits++;
+                            continue;
+                        }
+                        if (uiNoise.has(s.toLowerCase()) || uiNoise.has(s)) continue;
+                        if (disclaimerRe.test(s)) continue;
+                        if (s.length <= 36 && modelBadgeRe.test(s)) continue;
+                        outLines.push(line.trimEnd());
+                    }
+                    const joined = outLines.join('\\n').trim();
+                    if (!joined || (nonEmptyCount > 0 && outLines.length === 0)) return '';
+                    const jCompact = joined.replace(/\\s+/g, '');
+                    if (jCompact.length >= 6 && promptCompact.includes(jCompact)) return '';
+                    return joined;
+                }
+
+                const SPECIFIC_SELS = [
+                    '[data-message-author-role="assistant"] .markdown',
+                    '[data-message-author-role="assistant"] .prose',
+                    '[data-content="ai-message"]',
+                    '.ds-markdown',
+                    '.response-content-markdown',
+                    '.model-response-text',
+                    'model-response .markdown',
+                    'message-content',
+                    '.markdown-body',
+                    '.markdown',
+                    '.prose',
+                    '.outputBox',
+                    '.bot-message',
+                    '.ai-response',
+                    '[data-message-author-role="assistant"]',
+                    '[data-testid*="assistant"]',
+                    '[data-testid*="response"]',
+                    '[data-testid="chat-message"]',
+                    '[data-testid*="message"]',
+                    '[class*="assistant"]',
+                    '[class*="response"]',
+                    '[class*="answer"]',
+                    'article',
+                    '[role="article"]'
+                ];
+
+                function getSearchRoots() {
+                    const roots = [document];
+                    const seen = new Set(roots);
+                    for (let i = 0; i < roots.length; i++) {
+                        try {
+                            const r = roots[i];
+                            const all = r.querySelectorAll('*');
+                            for (let j = 0; j < all.length; j++) {
+                                const sr = all[j].shadowRoot;
+                                if (sr && !seen.has(sr)) {
+                                    seen.add(sr);
+                                    roots.push(sr);
+                                }
+                            }
+                        } catch (e) {}
+                    }
+                    return roots;
+                }
+                const searchRoots = getSearchRoots();
+
+                function queryAllDeep(root, sel, out) {
+                    const rootsToScan = (root === document) ? searchRoots : [root];
+                    for (const r of rootsToScan) {
+                        try {
+                            r.querySelectorAll(sel).forEach(el => out.push(el));
+                        } catch (e) {}
+                    }
+                }
+
+                let bestText = '';
+                for (const sel of SPECIFIC_SELS) {
+                    const els = [];
+                    queryAllDeep(document, sel, els);
+                    const candList = [];
+                    for (const el of els) {
+                        const role = (el.getAttribute && (el.getAttribute('data-message-author-role') || '').toLowerCase()) || '';
+                        const tid = (el.getAttribute && (el.getAttribute('data-testid') || '').toLowerCase()) || '';
+                        if (role === 'user' || (tid.includes('user') && !tid.includes('assistant'))) continue;
+                        if (el.querySelector && el.querySelector('textarea, input')) continue;
+                        const raw = extractLiveText(el);
+                        if (!raw) continue;
+                        if (beforeSelCounts[raw] && beforeSelCounts[raw] > 0) continue;
+                        const cleaned = cleanCandidate(raw);
+                        if (cleaned.length >= 10) candList.push(cleaned);
+                    }
+                    if (candList.length > 0) {
+                        bestText = candList[candList.length - 1];
+                        break;
+                    }
+                }
+
+                if (!bestText && args.allowBodyDiff) {
+                    let combinedBody = '';
+                    if (document.body) {
+                        combinedBody = extractLiveText(document.body);
+                    }
+                    for (const r of searchRoots) {
+                        if (r !== document) {
+                            combinedBody += '\\n' + extractLiveText(r);
+                        }
+                    }
+                    const curLines = combinedBody.split(/\\r?\\n/).map(x => x.trim()).filter(Boolean);
+                    const usedBefore = Object.assign(Object.create(null), beforeBodyCounts);
+                    const diffLines = [];
+                    for (const ln of curLines) {
+                        if (usedBefore[ln] && usedBefore[ln] > 0) {
+                            usedBefore[ln] -= 1;
+                            continue;
+                        }
+                        diffLines.push(ln);
+                    }
+                    const diffClean = cleanCandidate(diffLines.join('\\n'));
+                    if (diffClean.length >= 10) {
+                        bestText = diffClean;
+                    }
+                }
+
+                function isTrulyActiveStop(el) {
+                    try {
+                        if (el.disabled || el.getAttribute('aria-disabled') === 'true') return false;
+                        if (el.closest && el.closest('[aria-hidden="true"], [hidden], [inert], nav, header, aside')) return false;
+                        const cs = window.getComputedStyle(el);
+                        if (!cs || cs.display === 'none' || cs.visibility === 'hidden' || parseFloat(cs.opacity || '1') <= 0.05) return false;
+                        const rect = el.getBoundingClientRect();
+                        return !!(rect && rect.width > 2 && rect.height > 2);
+                    } catch (e) {
+                        return false;
+                    }
+                }
+
+                let isGenerating = false;
+                const stopEls = [];
+                queryAllDeep(document, 'button[aria-label*="Stop" i], button[aria-label*="停止"], button[aria-label*="中止"], button[title*="Stop" i], button[title*="停止"], button[data-testid="stop-button"], button[data-testid*="stop" i], [role="button"][data-testid*="stop" i], [data-streaming="true"], [data-is-streaming="true"], .typing-indicator', stopEls);
+                for (const se of stopEls) {
+                    if (isTrulyActiveStop(se)) {
+                        isGenerating = true;
+                        break;
+                    }
+                }
+                if (!isGenerating) {
+                    const btns = [];
+                    queryAllDeep(document, 'button', btns);
+                    for (const b of btns) {
+                        try {
+                            const bt = (b.innerText || '').trim().toLowerCase();
+                            if (bt === 'stop' || bt === 'stop generating' || bt === '停止' || bt === '中止' || bt === '生成を停止') {
+                                if (isTrulyActiveStop(b)) {
+                                    isGenerating = true;
+                                    break;
+                                }
+                            }
+                        } catch (e) {}
+                    }
+                }
+
+                function isUserMessageCopyBtn(b) {
+                    try {
+                        let p = b.parentElement;
+                        for (let d = 0; d < 4 && p; d++, p = p.parentElement) {
+                            const rAttr = (p.getAttribute && (p.getAttribute('data-message-author-role') || '')).toLowerCase();
+                            const tAttr = (p.getAttribute && (p.getAttribute('data-testid') || '')).toLowerCase();
+                            if (rAttr === 'user' || (tAttr.includes('user') && !tAttr.includes('assistant'))) return true;
+                            if (p.querySelector && p.querySelector('button[aria-label*="Edit" i], button[aria-label*="編集"]')) {
+                                // 同一ブロック内にAssistant要素・他モデル質問ボタンがなければユーザーバブル側のCopyと判定
+                                const hasReplyMarker = p.querySelector('[data-message-author-role="assistant"], button[aria-label*="Bad" i], button[aria-label*="Thumbs" i], button[aria-label*="Good" i]');
+                                if (!hasReplyMarker && !String(p.innerText || '').includes('他のAIモデル')) return true;
+                            }
+                        }
+                    } catch (e) {}
+                    return false;
+                }
+
+                const copyBtns = [];
+                queryAllDeep(document, 'button[aria-label*="Copy" i], button[aria-label*="コピー"], button[aria-label*="クリップボード"], button[aria-label*="clipboard" i], button[title*="Copy" i], button[title*="コピー"], button[data-testid*="copy" i]', copyBtns);
+                const visibleCopyBtns = copyBtns.filter(b => {
+                    try {
+                        if (b.disabled || b.getAttribute('aria-disabled') === 'true') return false;
+                        const cs = window.getComputedStyle(b);
+                        if (!cs || cs.display === 'none' || cs.visibility === 'hidden' || parseFloat(cs.opacity || '1') <= 0.05) return false;
+                        const r = b.getBoundingClientRect();
+                        if (!r || r.width <= 0 || r.height <= 0) return false;
+                        if (isUserMessageCopyBtn(b)) return false;
+                        return true;
+                    } catch (e) { return false; }
+                });
+                const hasNewCopyBtn = visibleCopyBtns.length > (args.beforeCopyBtnCount || 0);
+
+                return { text: bestText, isGenerating, hasNewCopyBtn, copyBtnCount: visibleCopyBtns.length };
+            }""", {
+                "beforeSelTexts": before_snap.get("selTexts", []) if isinstance(before_snap, dict) else [],
+                "beforeBodyLines": before_snap.get("bodyLines", []) if isinstance(before_snap, dict) else [],
+                "beforeCopyBtnCount": before_snap.get("copyBtnCount", 0) if isinstance(before_snap, dict) else 0,
+                "promptText": prompt_text,
+                "allowBodyDiff": allow_body_diff,
+            })
+
+        def _filter_prompt_echo(raw_copied, fallback_text):
+            clean_fb = _strip_ai_ui_noise_lines(_strip_prompt_fragments(fallback_text or "", prompt_text=prompt_text))
+            c_txt = _strip_ai_ui_noise_lines(_strip_prompt_fragments(raw_copied or "", prompt_text=prompt_text))
+            if not c_txt or len(c_txt) < 10:
+                return clean_fb
+            return c_txt
+
+        def _try_copy_via_button(fallback_text):
+            clean_fb = _strip_ai_ui_noise_lines(_strip_prompt_fragments(fallback_text or "", prompt_text=prompt_text))
+            try:
+                copied_raw = target_ctx.evaluate("""async () => {
+                    window.__aiAutoCapturedText = '';
+                    const copySel = 'button[aria-label*="Copy" i], button[aria-label*="コピー"], button[aria-label*="クリップボード"], button[aria-label*="clipboard" i], button[title*="Copy" i], button[title*="コピー"], button[data-testid*="copy" i]';
+                    function collectCopyBtns(root, out) {
+                        try { root.querySelectorAll(copySel).forEach(el => out.push(el)); } catch (e) {}
+                        try { root.querySelectorAll('*').forEach(el => { if (el.shadowRoot) collectCopyBtns(el.shadowRoot, out); }); } catch (e) {}
+                    }
+                    function isUserCopyBtn(b) {
+                        try {
+                            let p = b.parentElement;
+                            for (let d = 0; d < 4 && p; d++, p = p.parentElement) {
+                                const rAttr = (p.getAttribute && (p.getAttribute('data-message-author-role') || '')).toLowerCase();
+                                const tAttr = (p.getAttribute && (p.getAttribute('data-testid') || '')).toLowerCase();
+                                if (rAttr === 'user' || (tAttr.includes('user') && !tAttr.includes('assistant'))) return true;
+                                if (p.querySelector && p.querySelector('button[aria-label*="Edit" i], button[aria-label*="編集"]')) {
+                                    const hasReply = p.querySelector('[data-message-author-role="assistant"], button[aria-label*="Bad" i], button[aria-label*="Thumbs" i], button[aria-label*="Good" i]');
+                                    if (!hasReply && !String(p.innerText || '').includes('他のAIモデル')) return true;
+                                }
+                            }
+                        } catch (e) {}
+                        return false;
+                    }
+                    const allBtns = [];
+                    collectCopyBtns(document, allBtns);
+                    const visBtns = allBtns.filter(b => {
+                        try {
+                            if (b.disabled || b.getAttribute('aria-disabled') === 'true') return false;
+                            const cs = window.getComputedStyle(b);
+                            if (!cs || cs.display === 'none' || cs.visibility === 'hidden' || parseFloat(cs.opacity || '1') <= 0.05) return false;
+                            const r = b.getBoundingClientRect();
+                            if (!r || r.width <= 0 || r.height <= 0) return false;
+                            if (b.closest && b.closest('pre, code, [data-message-author-role="user"]')) return false;
+                            if (isUserCopyBtn(b)) return false;
+                            return true;
+                        } catch (e) { return false; }
+                    });
+                    const targetBtn = visBtns.length > 0 ? visBtns[visBtns.length - 1] : null;
+                    if (!targetBtn) return '';
+                    targetBtn.scrollIntoView({ block: 'center' });
+                    targetBtn.click();
+                    await new Promise(res => setTimeout(res, 220));
+                    if (window.__aiAutoCapturedText && window.__aiAutoCapturedText.trim()) {
+                        return window.__aiAutoCapturedText.trim();
+                    }
+                    try {
+                        if (navigator.clipboard && navigator.clipboard.readText) {
+                            const clipTxt = await Promise.race([
+                                navigator.clipboard.readText(),
+                                new Promise(res => setTimeout(() => res(''), 500))
+                            ]);
+                            if (clipTxt && String(clipTxt).trim()) return String(clipTxt).trim();
+                        }
+                    } catch (e) {}
+                    return '';
+                }""")
+                resolved = _filter_prompt_echo(copied_raw, clean_fb)
+                if resolved and len(resolved) >= 10:
+                    return resolved
+            except Exception:
+                pass
+            return clean_fb
+
+        # 応答テキストが生成完了するまで最大120秒待機し、完了確認後即座にコピー/取得する（停滞誤検知なし）
+        last_txt = ""
+        clean_stable_ticks = 0
+        unchanged_ticks = 0
+        eval_err_logged = False
+        copy_probe_ticks = 0
+        time.sleep(0.35)
+        for tick in range(240):
+            time.sleep(0.5)
+            try:
+                ext = _evaluate_ai_output(allow_body_diff=(tick >= 4))
+            except Exception as e_eval:
+                if not eval_err_logged and log_func:
+                    log_func(f"[WARN] [AI専用Window:{engine}] 応答監視中に一時エラー: {e_eval}")
+                    eval_err_logged = True
+                ext = {"text": "", "isGenerating": False, "hasNewCopyBtn": False, "copyBtnCount": 0}
+
+            cur_txt = _strip_ai_ui_noise_lines(str((ext or {}).get("text") or "").strip()) if isinstance(ext, dict) else ""
+            is_gen = bool((ext or {}).get("isGenerating")) if isinstance(ext, dict) else False
+            has_new_copy = bool((ext or {}).get("hasNewCopyBtn")) if isinstance(ext, dict) else False
+
+            if (not cur_txt or len(cur_txt) < 10) and not is_gen and has_new_copy and tick >= 10:
+                copy_probe_ticks += 1
+                if copy_probe_ticks in (1, 6, 14):
+                    probed = _try_copy_via_button("")
+                    if probed and len(probed) >= 10:
+                        if log_func:
+                            log_func(f"[INFO] 🤖 [AI専用Window] {engine} のコピーボタンから本文を取得しました ({len(probed)}文字)")
+                        return probed
+
+            if cur_txt and len(cur_txt) >= 10:
+                if cur_txt == last_txt:
+                    unchanged_ticks += 1
+                    clean_stable_ticks = 0 if is_gen else (clean_stable_ticks + 1)
+                    ready_clean = (not is_gen) and (
+                        (has_new_copy and clean_stable_ticks >= 2) or (clean_stable_ticks >= 4)
+                    )
+                    ready_cap = (has_new_copy and unchanged_ticks >= 5) or (unchanged_ticks >= 10)
+                    if ready_clean or ready_cap:
+                        # 長文ストリーミング途中の小休止誤検知を防ぐため、コピー前に最終完了確認を実施
+                        time.sleep(0.35)
+                        try:
+                            ext2 = _evaluate_ai_output(allow_body_diff=(tick >= 4))
+                        except Exception:
+                            ext2 = ext
+                        cur_txt2 = _strip_ai_ui_noise_lines(str((ext2 or {}).get("text") or "").strip()) if isinstance(ext2, dict) else cur_txt
+                        is_gen2 = bool((ext2 or {}).get("isGenerating")) if isinstance(ext2, dict) else False
+                        if cur_txt2 == cur_txt and (not is_gen2 or ready_cap):
+                            final_txt = _try_copy_via_button(cur_txt2)
+                            if final_txt:
+                                if log_func:
+                                    log_func(f"[INFO] 🤖 [AI専用Window] {engine} の出力完了を確認し本文のみを取得しました ({len(final_txt)}文字)")
+                                return final_txt
+                        else:
+                            if cur_txt2:
+                                last_txt = cur_txt2
+                            clean_stable_ticks = 0
+                            unchanged_ticks = 0
+                else:
+                    last_txt = cur_txt
+                    clean_stable_ticks = 0
+                    unchanged_ticks = 0
+
+        if last_txt and len(last_txt) >= 10:
+            final_txt = _try_copy_via_button(last_txt) or last_txt
+            if log_func:
+                log_func(f"[INFO] 🤖 [AI専用Window] {engine} の出力を取得しました ({len(final_txt)}文字)")
+            return final_txt
+        raise RuntimeError(f"{engine} (固定AIウィンドウ) の応答取得がタイムアウトしました")
+    finally:
+        try:
+            # CDPクライアント接続だけ切り離す（固定AI Chromeウィンドウ自体は開いたまま保持！）
+            browser.close()
+        except Exception:
+            pass
+
+
+def _generate_with_single_engine(engine, prompt_text, ai_cfg, playwright_obj=None, base_dir=BASE_DIR, log_func=print):
+    meta = AI_ENGINE_DEFAULTS.get(engine, {})
+    model_name = str(ai_cfg.get("model_name") or "").strip() or meta.get("model", "")
+    api_key, base_url = _parse_api_key_or_url(ai_cfg.get("api_key_or_url"), default_url=meta.get("api_url", ""))
+    ai_win_sync = bool(ai_cfg.get("ai_window_sync", True))
+    mode = meta.get("mode", "web")
+
+    if engine == "chrome_builtin":
+        return _generate_via_fixed_ai_window(playwright_obj, engine, prompt_text, model_name=model_name, base_dir=base_dir, log_func=log_func)
+
+    # 1. Gemini REST
+    if engine == "gemini":
+        if api_key or (base_url and base_url != meta.get("api_url", "")):
+            url = base_url or f"https://generativelanguage.googleapis.com/v1beta/models/{model_name or 'gemini-2.5-flash'}:generateContent?key={api_key}"
+            if api_key and "key=" not in url and url.startswith("https://generativelanguage.googleapis.com"):
+                sep = "&" if "?" in url else "?"
+                url = f"{url}{sep}key={api_key}"
+            data = _http_post_json(url, {
+                "contents": [{"parts": [{"text": prompt_text}]}],
+                "generationConfig": {"temperature": 0.9, "maxOutputTokens": 700},
+            })
+            cands = data.get("candidates") or []
+            if cands:
+                parts = ((cands[0].get("content") or {}).get("parts")) or []
+                txt = "".join(str(pt.get("text") or "") for pt in parts).strip()
+                if txt:
+                    return txt
+            raise RuntimeError("Gemini APIから本文を取得できませんでした")
+        elif ai_win_sync:
+            return _generate_via_fixed_ai_window(playwright_obj, engine, prompt_text, model_name=model_name, base_dir=base_dir, log_func=log_func)
+        raise RuntimeError("gemini: APIキー/URL未設定かつAI専用ウィンドウ連携=0")
+
+    # 2. Anthropic Claude REST
+    if engine == "claude":
+        if api_key:
+            url = base_url or "https://api.anthropic.com/v1/messages"
+            data = _http_post_json(
+                url,
+                {
+                    "model": model_name or "claude-3-5-haiku-latest",
+                    "max_tokens": 700,
+                    "messages": [{"role": "user", "content": prompt_text}],
+                },
+                headers={"x-api-key": api_key, "anthropic-version": "2023-06-01"},
+            )
+            content = data.get("content") or []
+            txt = "".join(str(b.get("text") or "") for b in content if isinstance(b, dict)).strip()
+            if txt:
+                return txt
+            raise RuntimeError("Claude APIから本文を取得できませんでした")
+        elif ai_win_sync:
+            return _generate_via_fixed_ai_window(playwright_obj, engine, prompt_text, model_name=model_name, base_dir=base_dir, log_func=log_func)
+        raise RuntimeError("claude: APIキー未設定かつAI専用ウィンドウ連携=0")
+
+    # 3. Ollama REST (キー不要ローカル接続)
+    if engine == "ollama":
+        url = base_url or "http://127.0.0.1:11434/api/chat"
+        if url.endswith("/"):
+            url = url[:-1]
+        if not url.endswith("/api/chat") and not url.endswith("/v1/chat/completions"):
+            url = url + "/api/chat"
+        hdrs = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+        if url.endswith("/v1/chat/completions"):
+            data = _http_post_json(url, {
+                "model": model_name or "llama3.2",
+                "messages": [{"role": "user", "content": prompt_text}],
+                "temperature": 0.9,
+            }, headers=hdrs, timeout=60)
+            choices = data.get("choices") or []
+            txt = (((choices[0].get("message") or {}).get("content")) if choices else "") or ""
+            if txt.strip():
+                return txt.strip()
+        else:
+            data = _http_post_json(url, {
+                "model": model_name or "llama3.2",
+                "messages": [{"role": "user", "content": prompt_text}],
+                "stream": False,
+            }, headers=hdrs, timeout=60)
+            txt = str(((data.get("message") or {}).get("content")) or data.get("response") or "").strip()
+            if txt:
+                return txt
+        raise RuntimeError("Ollamaから本文を取得できませんでした")
+
+    # 4. OpenAI互換REST API系（キー必須系 / ローカル不要系）または Web AI Window連携
+    if mode in ("openai", "openai_nokey", "web_or_openai"):
+        is_custom_url = bool(base_url and base_url != meta.get("api_url", ""))
+        can_call_http = bool(api_key or mode == "openai_nokey" or is_custom_url)
+        if can_call_http and (base_url or meta.get("api_url")):
+            url = base_url or meta["api_url"]
+            if url.endswith("/v1"):
+                url = url + "/chat/completions"
+            hdrs = {}
+            if api_key:
+                hdrs["Authorization"] = f"Bearer {api_key}"
+            if engine == "openrouter":
+                hdrs["HTTP-Referer"] = "https://threads.net/"
+                hdrs["X-Title"] = "ThreadsAutoPoster"
+            data = _http_post_json(
+                url,
+                {
+                    "model": model_name or meta.get("model") or "gpt-4o-mini",
+                    "messages": [{"role": "user", "content": prompt_text}],
+                    "temperature": 0.9,
+                    "max_tokens": 700,
+                },
+                headers=hdrs,
+                timeout=45,
+            )
+            choices = data.get("choices") or []
+            txt = (((choices[0].get("message") or {}).get("content")) if choices else "") or ""
+            if txt.strip():
+                return txt.strip()
+            raise RuntimeError(f"{engine} APIから本文を取得できませんでした")
+        if mode == "web_or_openai" and ai_win_sync:
+            return _generate_via_fixed_ai_window(playwright_obj, engine, prompt_text, model_name=model_name, base_dir=base_dir, log_func=log_func)
+        raise RuntimeError(f"{engine}: APIキーまたは接続URLが未設定です")
+
+    # 5. 無料Webチャット系 (duckai / venice / deepai / talkai / copilot)
+    if base_url and base_url != meta.get("api_url", "") and base_url.startswith(("http://127.", "http://localhost")) or api_key:
+        url = base_url or meta.get("api_url")
+        if url:
+            hdrs = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+            data = _http_post_json(url, {
+                "model": model_name or meta.get("model") or "gpt-4o-mini",
+                "messages": [{"role": "user", "content": prompt_text}],
+                "temperature": 0.9,
+            }, headers=hdrs, timeout=45)
+            choices = data.get("choices") or []
+            txt = (((choices[0].get("message") or {}).get("content")) if choices else "") or ""
+            if txt.strip():
+                return txt.strip()
+
+    if ai_win_sync:
+        return _generate_via_fixed_ai_window(playwright_obj, engine, prompt_text, model_name=model_name, base_dir=base_dir, log_func=log_func)
+
+    raise RuntimeError(f"{engine}: AI専用ウィンドウ連携(1=ON)を有効にするか、APIキー/接続URLを指定してください")
+
+
+def generate_ai_post_text(account_name, ai_cfg, prompt_row=None, design_dict=None, playwright_obj=None, base_dir=BASE_DIR, log_func=print):
+    """指定エンジン(カンマ複数指定対応)＆フォールバック候補でThreads投稿文章を生成する（API優先＋必要時は固定_ai_window利用）"""
+    prompt_text = _build_ai_generation_prompt(account_name, ai_cfg, prompt_row=prompt_row, design_dict=design_dict)
+    primaries = _parse_engine_list(ai_cfg.get("engine", "duckai"), default_fallback="duckai")
+    raw_fallback = str(ai_cfg.get("fallback_candidates") or "").strip()
+    chain = _resolve_ai_engine_chain(ai_cfg.get("engine", "duckai"), raw_fallback)
+    model_map = _resolve_engine_models_for_chain(ai_cfg.get("model_name", ""), primaries, chain)
+    cred_map = _resolve_engine_credentials_for_chain(ai_cfg.get("api_key_or_url", ""), primaries, chain)
+
+    # フォールバック候補が空欄の場合は「指定エンジン + ログイン不要無料Web(duckai/talkai/deepai/venice) + APIキー/URL設定済エンジン」のみに絞り込み、未ログインサイト巡回で数分ハングするのを防止
+    if not raw_fallback:
+        login_free_webs = {"duckai", "talkai", "deepai", "venice"}
+        filtered_chain = []
+        for e in chain:
+            has_cred = any(str(c or "").strip() for c in (cred_map.get(e) or []))
+            if e in primaries or e in login_free_webs or has_cred:
+                filtered_chain.append(e)
+        chain = filtered_chain or primaries
+
+    errors = []
+
+    owned_pw = None
+    try:
+        pw_to_use = playwright_obj
+        for eng_idx, eng in enumerate(chain):
+            eng_models = model_map.get(eng) or [""]
+            eng_creds = cred_map.get(eng) or [""]
+            for mod_val in eng_models:
+                for cred_val in eng_creds:
+                    try:
+                        local_cfg = dict(ai_cfg)
+                        local_cfg["model_name"] = mod_val
+                        local_cfg["api_key_or_url"] = cred_val
+
+                        parsed_key, parsed_url = _parse_api_key_or_url(cred_val, default_url=AI_ENGINE_DEFAULTS.get(eng, {}).get("api_url", ""))
+                        is_custom_url = bool(parsed_url and parsed_url != AI_ENGINE_DEFAULTS.get(eng, {}).get("api_url", ""))
+                        eng_mode = AI_ENGINE_DEFAULTS.get(eng, {}).get("mode", "")
+                        if eng_mode == "openai" and not parsed_key and not is_custom_url:
+                            continue
+                        needs_pw = (
+                            eng in ("duckai", "deepai", "talkai", "copilot", "chrome_builtin")
+                            or (bool(local_cfg.get("ai_window_sync", True)) and not parsed_key and not is_custom_url and eng_mode not in ("openai", "ollama", "openai_nokey"))
+                        )
+                        if needs_pw and pw_to_use is None and bool(local_cfg.get("ai_window_sync", True)):
+                            from playwright.sync_api import sync_playwright
+                            owned_pw = sync_playwright().start()
+                            pw_to_use = owned_pw
+
+                        raw_out = _generate_with_single_engine(
+                            eng, prompt_text, local_cfg, playwright_obj=pw_to_use, base_dir=base_dir, log_func=log_func
+                        )
+                        cleaned = _clean_ai_generated_post_text(raw_out, prompt_text=prompt_text)
+                        if cleaned:
+                            if eng_idx > 0 and log_func:
+                                log_func(f"[INFO] [{account_name}] 🔄 自動切替エンジン ({eng}) で投稿文を生成しました")
+                            return cleaned, eng, None
+                        errors.append(f"{eng}: 空の応答")
+                    except Exception as e_eng:
+                        errors.append(f"{eng}: {e_eng}")
+                        if log_func:
+                            next_hint = f" ➔ 次({chain[eng_idx + 1]})へ自動切替" if eng_idx + 1 < len(chain) else ""
+                            log_func(f"[WARN] [{account_name}] AI生成試行 ({eng}) 失敗: {e_eng}{next_hint}")
+        return "", chain[0] if chain else "duckai", " / ".join(errors[:4])
+    finally:
+        if owned_pw is not None:
+            try:
+                owned_pw.stop()
+            except Exception:
+                pass
+
+
+def _is_new_layout_ai_sheet(ws):
+    r3_txt = " ".join(str(ws.cell(row=3, column=c).value or "") for c in range(1, 6))
+    r7_txt = " ".join(str(ws.cell(row=7, column=c).value or "") for c in range(1, 6))
+    return ("AIエンジン" in r3_txt) or ("プロンプト項目" in r7_txt)
+
+
+def _clear_stale_ai_merges_and_cols(ws):
+    for rng in list(ws.merged_cells.ranges):
+        try:
+            ws.unmerge_cells(str(rng))
+        except Exception:
+            pass
+    max_c = max(ws.max_column or 5, 14)
+    if max_c >= 6:
+        from openpyxl.styles import PatternFill, Border
+        no_fill = PatternFill(fill_type=None)
+        no_border = Border()
+        for r in range(1, max(ws.max_row or 25, 25) + 1):
+            for c in range(6, max_c + 1):
+                cell = ws.cell(row=r, column=c)
+                cell.value = None
+                cell.fill = no_fill
+                cell.border = no_border
+    try:
+        from openpyxl.utils import get_column_letter
+        for c in range(6, 15):
+            ws.column_dimensions[get_column_letter(c)].width = None
+    except Exception:
+        pass
+
+
+def style_ai_post_worksheet(ws):
+    """「AIポスト」シートを画像仕様(A1:E15＋Row17履歴ログ、F列以降空白)として配色整形"""
+    try:
+        from openpyxl.styles import PatternFill, Font, Border, Side, Alignment
+        from openpyxl.formatting.rule import CellIsRule
+    except Exception:
+        return
+
+    try:
+        try:
+            ws.views.sheetView[0].showGridLines = True
+        except Exception:
+            pass
+        ws.freeze_panes = "A8"
+
+        _clear_stale_ai_merges_and_cols(ws)
+
+        purple_side = Side(style="thin", color="4C1D95")
+        indigo_side = Side(style="thin", color="312E81")
+        data_side = Side(style="thin", color="CBD5E1")
+        dashed_side = Side(style="dashed", color="4338CA")
+
+        border_top_purple = Border(left=purple_side, right=purple_side, top=purple_side, bottom=purple_side)
+        border_top_indigo = Border(left=indigo_side, right=indigo_side, top=indigo_side, bottom=indigo_side)
+        border_data = Border(left=data_side, right=data_side, top=data_side, bottom=data_side)
+
+        fill_purple_hdr = PatternFill("solid", start_color="432889", end_color="432889")
+        fill_navy_hdr = PatternFill("solid", start_color="231F5E", end_color="231F5E")
+        fill_tbl_hdr = PatternFill("solid", start_color="312E81", end_color="312E81")
+        fill_top_val = PatternFill("solid", start_color="EDE9FE", end_color="EDE9FE")
+        fill_dashed_box = PatternFill("solid", start_color="FAF9FF", end_color="FAF9FF")
+        fill_white = PatternFill("solid", start_color="FFFFFF", end_color="FFFFFF")
+        fill_even = PatternFill("solid", start_color="F8FAFC", end_color="F8FAFC")
+        fill_green = PatternFill("solid", start_color="DCFCE7", end_color="DCFCE7")
+        fill_amber = PatternFill("solid", start_color="FEF3C7", end_color="FEF3C7")
+        fill_red = PatternFill("solid", start_color="FEE2E2", end_color="FEE2E2")
+        fill_id_col = PatternFill("solid", start_color="F1F5F9", end_color="F1F5F9")
+
+        font_hdr = Font(name="Meiryo UI", size=10, bold=True, color="FFFFFF")
+        font_top_val = Font(name="Meiryo UI", size=10, bold=False, color="3B0764")
+        font_memo = Font(name="Meiryo UI", size=8, bold=False, color="334155")
+        font_guide_b = Font(name="Meiryo UI", size=9, bold=True, color="1E1B4B")
+        font_guide_s = Font(name="Meiryo UI", size=9, bold=False, color="312E81")
+        font_sec_lbl = Font(name="Meiryo UI", size=10, bold=True, color="0F172A")
+        font_body = Font(name="Meiryo UI", size=9, bold=False, color="0F172A")
+        font_desc = Font(name="Meiryo UI", size=9, bold=False, color="334155")
+        font_green = Font(name="Meiryo UI", size=10, bold=True, color="166534")
+        font_amber = Font(name="Meiryo UI", size=10, bold=True, color="92400E")
+        font_red = Font(name="Meiryo UI", size=10, bold=True, color="991B1B")
+        font_id = Font(name="Meiryo UI", size=9, bold=True, color="334155")
+
+        align_c = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        align_l = Alignment(horizontal="left", vertical="center", wrap_text=True)
+        align_lt = Alignment(horizontal="left", vertical="top", wrap_text=True)
+
+        col_widths = {"A": 22, "B": 26, "C": 30, "D": 22, "E": 38}
+        for c_let, c_w in col_widths.items():
+            ws.column_dimensions[c_let].width = c_w
+
+        # Row 1 & Row 2: 実行時間 / 曜日 / ポスト間隔 / 有効/無効 / メモ
+        ws.row_dimensions[1].height = 28
+        ws.row_dimensions[2].height = 42
+        for c in range(1, 6):
+            c1 = ws.cell(row=1, column=c)
+            c1.fill = fill_purple_hdr
+            c1.font = font_hdr
+            c1.border = border_top_purple
+            c1.alignment = align_c
+
+            c2 = ws.cell(row=2, column=c)
+            v2 = str(c2.value or "").strip()
+            c2.border = border_top_purple
+            if c == 4:
+                is_off = v2 in ["無効", "停止", "OFF", "off", "0", "false"]
+                c2.fill = fill_red if is_off else fill_green
+                c2.font = font_red if is_off else font_green
+                c2.alignment = align_c
+            elif c == 5:
+                c2.fill = fill_white
+                c2.font = font_memo
+                c2.alignment = align_l
+            else:
+                c2.fill = fill_top_val
+                c2.font = font_top_val
+                c2.alignment = align_c
+            if c in (1, 2, 3):
+                c2.number_format = "@"
+
+        # Row 3 & Row 4: AIエンジン / モデル名 / フォールバック / ウィンドウ連携 / APIキー・URL
+        ws.row_dimensions[3].height = 32
+        ws.row_dimensions[4].height = 30
+        for c in range(1, 6):
+            c3 = ws.cell(row=3, column=c)
+            c3.fill = fill_navy_hdr
+            c3.font = font_hdr
+            c3.border = border_top_indigo
+            c3.alignment = align_c
+
+            c4 = ws.cell(row=4, column=c)
+            c4.border = border_top_indigo
+            c4.fill = fill_white if c in (2, 3, 4, 5) else fill_top_val
+            c4.font = Font(name="Meiryo UI", size=10, bold=False, color="0F172A") if c == 4 else (
+                font_top_val if c == 1 else font_body
+            )
+            c4.alignment = align_l if c == 5 else align_c
+            c4.number_format = "@"
+
+        # Row 5 & Row 6: 破線ガイド枠 (A5:E5 & A6:E6)
+        ws.merge_cells("A5:E5")
+        ws.merge_cells("A6:E6")
+        ws.row_dimensions[5].height = 24
+        ws.row_dimensions[6].height = 22
+        ws.cell(
+            row=5,
+            column=1,
+            value="【ログイン不要(優先): duckai / talkai / deepai / venice】 ｜ 【API・要ログイン(14種): groq / gemini / chatgpt / grok / claude / copilot / perplexity / deepseek / qwen / mistral / openrouter / ollama / lmstudio / chrome_builtin】",
+        )
+        ws.cell(
+            row=6,
+            column=1,
+            value="【カンマ(,)複数指定・自動切替】例) エンジン: duckai, talkai, deepai ／ 失敗時はログイン不要サイト優先で自動切替（モデル・APIも「,」複数指定可）",
+        )
+        for c in range(1, 6):
+            c5 = ws.cell(row=5, column=c)
+            c5.fill = fill_dashed_box
+            c5.font = font_guide_b
+            c5.alignment = align_l
+            c5.border = Border(
+                top=dashed_side,
+                left=dashed_side if c == 1 else None,
+                right=dashed_side if c == 5 else None,
+            )
+            c6 = ws.cell(row=6, column=c)
+            c6.fill = fill_dashed_box
+            c6.font = font_guide_s
+            c6.alignment = align_l
+            c6.border = Border(
+                bottom=dashed_side,
+                left=dashed_side if c == 1 else None,
+                right=dashed_side if c == 5 else None,
+            )
+
+        # Row 7: 構造化プロンプト見出し
+        ws.merge_cells("B7:C7")
+        ws.merge_cells("D7:E7")
+        ws.row_dimensions[7].height = 26
+        ws.cell(row=7, column=1, value="プロンプト項目 (【】付送信)")
+        ws.cell(row=7, column=2, value="AIへ送る設定内容 (ここを編集)")
+        ws.cell(row=7, column=4, value="各項目の説明")
+        for c in range(1, 6):
+            c7 = ws.cell(row=7, column=c)
+            c7.fill = fill_tbl_hdr
+            c7.font = font_hdr
+            c7.border = border_top_indigo
+            c7.alignment = align_l
+
+        # Rows 8-15: 8項目プロンプトテーブル (パステル行)
+        sec_palette = [
+            ("E0EAFF", "F5F8FF"),
+            ("E0F2FE", "F0F9FF"),
+            ("DCFCE7", "F0FDF4"),
+            ("FEF3C7", "FFFBEB"),
+            ("EDE9FE", "F5F3FF"),
+            ("FCE7F3", "FDF2F8"),
+            ("FFE4E6", "FFF1F2"),
+            ("F1F5F9", "F8FAFC"),
+        ]
+        for idx_s, (s_key, s_lbl, s_def, s_desc) in enumerate(AI_PROMPT_SECTION_META):
+            r_num = 8 + idx_s
+            ws.merge_cells(f"B{r_num}:C{r_num}")
+            ws.merge_cells(f"D{r_num}:E{r_num}")
+            pal_l, pal_m = sec_palette[idx_s]
+            fill_l = PatternFill("solid", start_color=pal_l, end_color=pal_l)
+            fill_m = PatternFill("solid", start_color=pal_m, end_color=pal_m)
+
+            ca = ws.cell(row=r_num, column=1)
+            ca.value = s_lbl
+            ca.fill = fill_l
+            ca.font = font_sec_lbl
+            ca.border = border_data
+            ca.alignment = align_lt
+
+            cb = ws.cell(row=r_num, column=2)
+            cur_v = "" if cb.value is None else str(cb.value)
+            cb.font = font_body
+            cb.alignment = align_lt
+            for col_bc in (2, 3):
+                cc = ws.cell(row=r_num, column=col_bc)
+                cc.fill = fill_m
+                cc.border = border_data
+
+            cd = ws.cell(row=r_num, column=4)
+            cd.value = s_desc
+            cd.font = font_desc
+            cd.alignment = align_lt
+            for col_de in (4, 5):
+                ce = ws.cell(row=r_num, column=col_de)
+                ce.fill = fill_white
+                ce.border = border_data
+
+            line_cnt = max(2, len(cur_v.splitlines()), int(len(cur_v) / 38) + 1)
+            ws.row_dimensions[r_num].height = max(42, min(130, 14 + line_cnt * 15))
+
+        # Row 16 spacer & Row 17+: 実行履歴ログ
+        ws.row_dimensions[16].height = 12
+        ws.row_dimensions[17].height = 24
+        for idx_h, h_txt in enumerate(AI_HISTORY_HEADERS, start=1):
+            c17 = ws.cell(row=17, column=idx_h, value=h_txt)
+            c17.fill = fill_tbl_hdr
+            c17.font = font_hdr
+            c17.border = border_top_indigo
+            c17.alignment = align_c
+
+        end_r = max(ws.max_row + 8, 32)
+        for r_h in range(18, end_r + 1):
+            row_fill = fill_even if (r_h % 2 == 0) else fill_white
+            has_txt = False
+            for c_h in range(1, 6):
+                cell = ws.cell(row=r_h, column=c_h)
+                v = str(cell.value or "").strip()
+                if v:
+                    has_txt = True
+                cell.border = border_data
+                cell.alignment = align_c if c_h in (1, 3, 4) else align_lt
+                if c_h == 4 and v:
+                    if "完了" in v or "削除" in v:
+                        cell.fill = fill_green
+                        cell.font = font_green
+                    elif "エラー" in v:
+                        cell.fill = fill_red
+                        cell.font = font_red
+                    else:
+                        cell.fill = fill_amber
+                        cell.font = font_amber
+                elif c_h == 1:
+                    cell.fill = fill_id_col
+                    cell.font = font_id
+                else:
+                    cell.fill = row_fill
+                    cell.font = font_body
+            ws.row_dimensions[r_h].height = 34 if has_txt else 22
+
+        try:
+            ws.conditional_formatting._cf_rules.clear()
+        except Exception:
+            pass
+        ws.conditional_formatting.add("D2", CellIsRule(operator="equal", formula=['"有効"'], fill=fill_green, font=font_green))
+        ws.conditional_formatting.add("D2", CellIsRule(operator="equal", formula=['"無効"'], fill=fill_red, font=font_red))
+        ws.conditional_formatting.add(f"D18:D{max(end_r + 100, 300)}", CellIsRule(operator="equal", formula=['"投稿完了"'], fill=fill_green, font=font_green))
+        ws.conditional_formatting.add(f"D18:D{max(end_r + 100, 300)}", CellIsRule(operator="equal", formula=['"投稿完了(削除済)"'], fill=fill_green, font=font_green))
+        ws.conditional_formatting.add(f"D18:D{max(end_r + 100, 300)}", CellIsRule(operator="equal", formula=['"指示待機"'], fill=fill_amber, font=font_amber))
+        ws.conditional_formatting.add(f"D18:D{max(end_r + 100, 300)}", CellIsRule(operator="equal", formula=['"エラー"'], fill=fill_red, font=font_red))
+    except Exception:
+        pass
+
+
+def _write_new_layout_ai_defaults(ws, cfg=None, sections=None, history_rows=None):
+    _clear_stale_ai_merges_and_cols(ws)
+    for r_clr in range(1, max(ws.max_row or 20, 20) + 1):
+        for c_clr in range(1, 6):
+            ws.cell(row=r_clr, column=c_clr, value=None)
+
+    cfg = cfg or {}
+    sec_map = dict(sections or {})
+
+    for c_i, h_lbl in enumerate(AI_TOP_ROW1_HEADERS, start=1):
+        ws.cell(row=1, column=c_i, value=h_lbl)
+    ws.cell(row=2, column=1, value=str(cfg.get("time_slot") or "0:00-0:00").strip())
+    ws.cell(row=2, column=2, value=str(cfg.get("weekdays") or "毎日").strip())
+    ws.cell(row=2, column=3, value=str(cfg.get("interval_str") or "120〜360分").strip())
+    ws.cell(row=2, column=4, value=("有効" if cfg.get("enabled") else "無効"))
+    ws.cell(row=2, column=5, value=(cfg.get("memo") if cfg.get("memo") is not None else AI_DEFAULT_MEMO))
+
+    for c_i, h_lbl in enumerate(AI_TOP_ROW3_HEADERS, start=1):
+        ws.cell(row=3, column=c_i, value=h_lbl)
+    ws.cell(row=4, column=1, value=_normalize_engine_list_str(cfg.get("engine") or "duckai", default_fallback="duckai"))
+    ws.cell(row=4, column=2, value=str(cfg.get("model_name") or "").strip())
+    ws.cell(row=4, column=3, value=str(cfg.get("fallback_candidates") or "").strip())
+    ws.cell(row=4, column=4, value=("1" if cfg.get("ai_window_sync", True) else "0"))
+    ws.cell(row=4, column=5, value=str(cfg.get("api_key_or_url") or "").strip())
+
+    for idx_s, (s_key, s_lbl, s_def, s_desc) in enumerate(AI_PROMPT_SECTION_META):
+        r_num = 8 + idx_s
+        ws.cell(row=r_num, column=1, value=s_lbl)
+        val_s = sec_map[s_key] if (s_key in sec_map and sec_map[s_key] is not None) else s_def
+        ws.cell(row=r_num, column=2, value=val_s)
+        ws.cell(row=r_num, column=4, value=s_desc)
+
+    for c_i, h_lbl in enumerate(AI_HISTORY_HEADERS, start=1):
+        ws.cell(row=17, column=c_i, value=h_lbl)
+
+    if history_rows:
+        for idx_h, item in enumerate(history_rows, start=1):
+            r_dst = 17 + idx_h
+            ws.cell(row=r_dst, column=1, value=item.get("id") or idx_h)
+            ws.cell(row=r_dst, column=2, value=str(item.get("generated_text") or item.get("prompt") or "").strip())
+            ws.cell(row=r_dst, column=3, value=str(item.get("engine_used") or "").strip())
+            ws.cell(row=r_dst, column=4, value=str(item.get("status") or "指示待機").strip())
+            meta_str = " / ".join(
+                x for x in [
+                    str(item.get("posted_at") or "").strip(),
+                    (f"削除:{item['delete_after']}" if str(item.get("delete_after") or "").strip() else ""),
+                    str(item.get("error_msg") or "").strip(),
+                ] if x
+            )
+            ws.cell(row=r_dst, column=5, value=meta_str)
+
+
+def ensure_ai_post_sheet_in_wb(wb):
+    """ワークブック内に『AIポスト』シートがなければ標準構成で追加し、旧10列形式なら新形式(A1:E15+履歴)へ自動変換する"""
+    for sname in wb.sheetnames:
+        if _is_ai_post_sheet_name(sname):
+            ws = wb[sname]
+            if not _is_new_layout_ai_sheet(ws):
+                # 旧10列シートから新レイアウトへ値と履歴を引き継いで移行
+                legacy_cfg = {
+                    "time_slot": "0:00-0:00",
+                    "weekdays": "毎日",
+                    "interval_str": "120〜360分",
+                    "enabled": False,
+                    "memo": AI_DEFAULT_MEMO,
+                    "engine": "duckai",
+                    "model_name": "",
+                    "fallback_candidates": "",
+                    "ai_window_sync": True,
+                    "api_key_or_url": "",
+                }
+                all_r = list(ws.iter_rows(values_only=True))
+                if len(all_r) >= 2:
+                    hdr1 = [str(c or "").strip() for c in (all_r[0] or [])[:10]]
+                    val2 = all_r[1] or []
+                    for idx, lbl in enumerate(hdr1):
+                        v = "" if idx >= len(val2) or val2[idx] is None else str(val2[idx]).strip()
+                        if "実行時間" in lbl and v:
+                            legacy_cfg["time_slot"] = v
+                        elif "曜日" in lbl and v:
+                            legacy_cfg["weekdays"] = v
+                        elif "間隔" in lbl and v:
+                            legacy_cfg["interval_str"] = v
+                        elif "有効" in lbl:
+                            legacy_cfg["enabled"] = bool(v) and v not in ["無効", "停止", "OFF", "off", "0", "false"]
+                        elif "メモ" in lbl and v:
+                            legacy_cfg["memo"] = v
+                        elif "エンジン" in lbl and v:
+                            legacy_cfg["engine"] = _normalize_engine_list_str(v, default_fallback="duckai")
+                        elif "モデル" in lbl:
+                            legacy_cfg["model_name"] = v
+                        elif "フォールバック" in lbl:
+                            legacy_cfg["fallback_candidates"] = v
+                        elif "ウィンドウ" in lbl:
+                            legacy_cfg["ai_window_sync"] = v.lower() not in ["0", "off", "false", "無効", "なし"]
+                        elif "API" in lbl.upper() or "URL" in lbl.upper():
+                            legacy_cfg["api_key_or_url"] = v
+                _write_new_layout_ai_defaults(ws, cfg=legacy_cfg)
+            else:
+                for c_i, h_lbl in enumerate(AI_TOP_ROW1_HEADERS, start=1):
+                    ws.cell(row=1, column=c_i, value=h_lbl)
+                for c_i, h_lbl in enumerate(AI_TOP_ROW3_HEADERS, start=1):
+                    ws.cell(row=3, column=c_i, value=h_lbl)
+                for idx_s, (s_key, s_lbl, s_def, _desc) in enumerate(AI_PROMPT_SECTION_META):
+                    r_n = 8 + idx_s
+                    if not str(ws.cell(row=r_n, column=1).value or "").strip():
+                        ws.cell(row=r_n, column=1, value=s_lbl)
+            style_ai_post_worksheet(ws)
+            return ws, False
+
+    ws = wb.create_sheet(title="AIポスト")
+    _write_new_layout_ai_defaults(ws)
+    style_ai_post_worksheet(ws)
+    return ws, True
+
+
+def read_ai_post_config_from_xlsx(filepath):
+    """<アカウント名>.xlsx の『AIポスト』シートからAI設定・8項目プロンプト・履歴ログを読み取る"""
+    default_sections = {k: d for k, _lbl, d, _desc in AI_PROMPT_SECTION_META}
+    cfg = {
+        "exists": False,
+        "sheet_name": "AIポスト",
+        "time_slot": "0:00-0:00",
+        "weekdays": "毎日",
+        "interval_str": "120〜360分",
+        "min_interval_sec": 7200,
+        "max_interval_sec": 21600,
+        "status": "無効",
+        "enabled": False,
+        "memo": "",
+        "engine": "duckai",
+        "model_name": "",
+        "fallback_candidates": "",
+        "ai_window_sync": True,
+        "ai_window_sync_raw": "1",
+        "api_key_or_url": "",
+        "prompt_sections": dict(default_sections),
+        "rows": [],
+        "is_new_layout": True,
+    }
+    if not filepath or not os.path.exists(filepath):
+        return cfg
+
+    wb = None
+    try:
+        with open(filepath, "rb") as f_in:
+            import io
+            content_bytes = f_in.read()
+        wb = openpyxl.load_workbook(io.BytesIO(content_bytes), data_only=True)
+    except Exception:
+        try:
+            wb = openpyxl.load_workbook(filepath, data_only=True)
+        except Exception:
+            return cfg
+
+    try:
+        ws = None
+        for sname in wb.sheetnames:
+            if _is_ai_post_sheet_name(sname):
+                ws = wb[sname]
+                break
+        if ws is None:
+            return cfg
+
+        cfg["exists"] = True
+        cfg["sheet_name"] = ws.title
+        all_rows = list(ws.iter_rows(values_only=True))
+
+        def _apply_header_pair(h_row, v_row):
+            hdr_list = [str(c or "").strip() for c in (h_row or [])[:10]]
+            for idx, lbl in enumerate(hdr_list):
+                raw_v = v_row[idx] if v_row and idx < len(v_row) else ""
+                val = raw_v.strftime("%H:%M") if hasattr(raw_v, "strftime") else ("" if raw_v is None else str(raw_v).strip())
+                if not lbl:
+                    continue
+                if "実行時間" in lbl or "時間帯" in lbl:
+                    if val:
+                        cfg["time_slot"] = val
+                elif "曜日" in lbl:
+                    if val:
+                        cfg["weekdays"] = val
+                elif "間隔" in lbl:
+                    mn, mx, disp = parse_interval_range(val)
+                    if mn is not None:
+                        cfg["min_interval_sec"] = mn
+                        cfg["max_interval_sec"] = mx
+                        cfg["interval_str"] = disp
+                elif "有効" in lbl or "状態" in lbl:
+                    en = bool(val) and (val not in ["無効", "停止", "OFF", "off", "0", "false"])
+                    cfg["enabled"] = en
+                    cfg["status"] = "有効" if en else "無効"
+                elif "メモ" in lbl or "備考" in lbl:
+                    cfg["memo"] = val
+                elif "エンジン" in lbl or lbl.upper() == "AI":
+                    if val:
+                        cfg["engine"] = _normalize_engine_list_str(val, default_fallback="duckai")
+                elif "モデル" in lbl:
+                    cfg["model_name"] = val
+                elif "フォールバック" in lbl:
+                    cfg["fallback_candidates"] = val
+                elif "ウィンドウ" in lbl or "window" in lbl.lower():
+                    sync_off = val.lower() in ["0", "off", "false", "無効", "なし"]
+                    cfg["ai_window_sync"] = not sync_off
+                    cfg["ai_window_sync_raw"] = "0" if sync_off else "1"
+                elif "API" in lbl.upper() or "URL" in lbl.upper() or "キー" in lbl:
+                    cfg["api_key_or_url"] = val
+
+        if len(all_rows) >= 2:
+            _apply_header_pair(all_rows[0], all_rows[1])
+        row3_str = " ".join(str(c or "") for c in (all_rows[2] or [])) if len(all_rows) >= 4 else ""
+        if len(all_rows) >= 4 and ("AIエンジン" in row3_str or "AIモデル" in row3_str):
+            _apply_header_pair(all_rows[2], all_rows[3])
+
+        label_to_key = {s_lbl: s_key for s_key, s_lbl, _d, _ds in AI_PROMPT_SECTION_META}
+        found_sections = False
+        for r_cand in all_rows[4:20]:
+            if not r_cand:
+                continue
+            k_lbl = str(r_cand[0] or "").strip()
+            s_key = label_to_key.get(k_lbl)
+            if s_key:
+                found_sections = True
+                v_txt = "" if len(r_cand) < 2 or r_cand[1] is None else str(r_cand[1]).strip()
+                cfg["prompt_sections"][s_key] = v_txt
+        cfg["is_new_layout"] = found_sections or ("AIエンジン" in row3_str)
+
+        tbl_hdr_idx = None
+        for r_i, row in enumerate(all_rows[:25], start=1):
+            row_txt = " ".join(str(c or "") for c in (row or []))
+            if "生成されたポスト" in row_txt or "AI指示プロンプト・テーマ" in row_txt:
+                tbl_hdr_idx = r_i
+                break
+
+        if tbl_hdr_idx and tbl_hdr_idx < len(all_rows):
+            th = [str(c or "").strip() for c in all_rows[tbl_hdr_idx - 1]]
+            col_id = next((i for i, h in enumerate(th) if h.upper() == "ID"), 0)
+            col_pr = next((i for i, h in enumerate(th) if "プロンプト" in h or "指示" in h), -1)
+            col_tp = next((i for i, h in enumerate(th) if "トピック" in h), -1)
+            col_dl = next((i for i, h in enumerate(th) if "削除時間" in h), -1)
+            col_gn = next((i for i, h in enumerate(th) if "生成された" in h), 1)
+            col_eg = next((i for i, h in enumerate(th) if "使用AI" in h or "エンジン" in h), 2)
+            col_st = next((i for i, h in enumerate(th) if "ステータス" in h or "状態" in h), 3)
+            col_dt = next((i for i, h in enumerate(th) if "完了日時" in h), 4)
+            col_er = next((i for i, h in enumerate(th) if "エラー" in h), 4)
+
+            for r_num, row in enumerate(all_rows[tbl_hdr_idx:], start=tbl_hdr_idx + 1):
+                if not row:
+                    continue
+                pr_val = str(row[col_pr] or "").strip() if col_pr != -1 and col_pr < len(row) else ""
+                gn_val = str(row[col_gn] or "").strip() if col_gn != -1 and col_gn < len(row) else ""
+                tp_val = str(row[col_tp] or "").strip() if col_tp != -1 and col_tp < len(row) else ""
+                dl_val = str(row[col_dl] or "").strip() if col_dl != -1 and col_dl < len(row) else ""
+                st_val = str(row[col_st] or "").strip() if col_st != -1 and col_st < len(row) else ""
+                if not pr_val and not gn_val:
+                    continue
+                cfg["rows"].append({
+                    "_row_idx": r_num,
+                    "id": (str(row[col_id]).strip() if col_id < len(row) and row[col_id] is not None else str(r_num - tbl_hdr_idx)),
+                    "prompt": pr_val,
+                    "topic": tp_val,
+                    "delete_after": dl_val,
+                    "generated_text": gn_val,
+                    "engine_used": str(row[col_eg] or "").strip() if col_eg != -1 and col_eg < len(row) else "",
+                    "status": st_val or "指示待機",
+                    "posted_at": str(row[col_dt] or "").strip() if col_dt != -1 and col_dt < len(row) else "",
+                    "error_msg": str(row[col_er] or "").strip() if col_er != -1 and col_er < len(row) else "",
+                })
+        return cfg
+    finally:
+        try:
+            wb.close()
+        except Exception:
+            pass
+
+
+def save_ai_post_config_to_xlsx(filepath, account_id, ai_cfg, prompt_rows=None):
+    """<アカウント名>.xlsx の『AIポスト』シートに新レイアウト(A1:E15＋履歴)で保存"""
+    wb = ensure_account_workbook(filepath, account_id)
+    ws, _ = ensure_ai_post_sheet_in_wb(wb)
+
+    _, _, norm_iv = parse_interval_range(ai_cfg.get("interval_str", "120〜360分"))
+    iv_val = norm_iv or str(ai_cfg.get("interval_str") or "120〜360分").strip()
+    norm_cfg = dict(ai_cfg)
+    norm_cfg["interval_str"] = iv_val
+    norm_cfg["engine"] = _normalize_engine_list_str(ai_cfg.get("engine") or "duckai", default_fallback="duckai")
+
+    sections = ai_cfg.get("prompt_sections")
+    if not isinstance(sections, dict):
+        sections = {}
+        for idx_s, (s_key, _s_lbl, s_def, _desc) in enumerate(AI_PROMPT_SECTION_META):
+            cur_v = ws.cell(row=8 + idx_s, column=2).value
+            sections[s_key] = s_def if cur_v is None else str(cur_v)
+
+    existing_hist = prompt_rows
+    if existing_hist is None:
+        existing_hist = read_ai_post_config_from_xlsx(filepath).get("rows") or []
+
+    _write_new_layout_ai_defaults(ws, cfg=norm_cfg, sections=sections, history_rows=existing_hist)
+    style_ai_post_worksheet(ws)
+    wb.save(filepath)
+    wb.close()
+    return True
+
+
+def record_ai_post_result_in_xlsx(filepath, row_idx=None, prompt_text="", topic="", delete_after="", generated_text="", engine_used="", status="投稿完了", finish_time=None, error_msg=""):
+    """『AIポスト』シートにAI生成＆投稿実績を安全に記録する（新形式はRow18〜へ追記しRows1〜15を保護）"""
+    if not filepath or not os.path.exists(filepath):
+        return None
+    try:
+        wb = openpyxl.load_workbook(filepath)
+        ws, _ = ensure_ai_post_sheet_in_wb(wb)
+        last_used = 17
+        max_id = 0
+        for r in range(18, ws.max_row + 1):
+            g_v = str(ws.cell(row=r, column=2).value or "").strip()
+            s_v = str(ws.cell(row=r, column=4).value or "").strip()
+            id_v = ws.cell(row=r, column=1).value
+            if g_v or s_v:
+                last_used = r
+                try:
+                    max_id = max(max_id, int(str(id_v).strip()))
+                except Exception:
+                    pass
+        target_row = row_idx if (row_idx and row_idx >= 18) else (last_used + 1)
+        if not row_idx or row_idx < 18:
+            ws.cell(row=target_row, column=1, value=max_id + 1)
+        ws.cell(row=target_row, column=2, value=generated_text or prompt_text)
+        ws.cell(row=target_row, column=3, value=engine_used)
+        ws.cell(row=target_row, column=4, value=status)
+        meta_parts = [
+            x for x in [
+                finish_time or "",
+                (f"削除:{delete_after}" if delete_after else ""),
+                (error_msg or ""),
+            ] if x
+        ]
+        ws.cell(row=target_row, column=5, value=" / ".join(meta_parts))
+        style_ai_post_worksheet(ws)
+        wb.save(filepath)
+        wb.close()
+        return target_row
+    except Exception:
+        return None
+
+
+def reset_ai_post_rows_silent(filepath):
+    """『AIポスト』シート内の個別指示待機行（18行目以降）のみ必要時にリセット"""
+    if not filepath or not os.path.exists(filepath):
+        return 0
+    cnt = 0
+    try:
+        wb = openpyxl.load_workbook(filepath)
+        for sname in wb.sheetnames:
+            if _is_ai_post_sheet_name(sname):
+                ws = wb[sname]
+                start_r = 18 if _is_new_layout_ai_sheet(ws) else 5
+                for r in range(start_r, ws.max_row + 1):
+                    st_col = 4 if start_r == 18 else 7
+                    p_v = str(ws.cell(row=r, column=2).value or "").strip()
+                    st_v = str(ws.cell(row=r, column=st_col).value or "").strip()
+                    if p_v and st_v == "エラー":
+                        ws.cell(row=r, column=st_col, value="指示待機")
+                        cnt += 1
+                style_ai_post_worksheet(ws)
+                break
+        if cnt:
+            wb.save(filepath)
+        wb.close()
+    except Exception:
+        pass
+    return cnt
+
+
 def ensure_account_workbook(xlsx_path, account_id):
-    """<account_id>.xlsx が存在しない場合に標準シート構成（基本(テーマ別シート)）で自動作成して開く。不要な『設定』『アカウント設計』『日常ポスト』シートは除去・移行する"""
+    """<account_id>.xlsx が存在しない場合に標準シート構成（基本(テーマ別シート)＋AIポスト(固定別)）で自動作成して開く。不要な『設定』『アカウント設計』『日常ポスト』シートは除去・移行する"""
     if os.path.exists(xlsx_path):
         wb = openpyxl.load_workbook(xlsx_path)
         changed = False
@@ -7213,7 +10465,7 @@ def ensure_account_workbook(xlsx_path, account_id):
         setting_sheets = [
             s for s in wb.sheetnames
             if any(k in s.lower() for k in ["設定", "config", "setting", "基本設定"])
-            and not any(ex in s for ex in ["テーマ", "日常", "投稿", "post", "Post", "リスト"])
+            and not any(ex in s for ex in ["テーマ", "日常", "投稿", "post", "Post", "リスト", "AI", "ai"])
         ]
         legacy_set = {}
         if setting_sheets:
@@ -7283,6 +10535,10 @@ def ensure_account_workbook(xlsx_path, account_id):
                     del wb[ds_name]
                     changed = True
 
+        _, created_ai = ensure_ai_post_sheet_in_wb(wb)
+        if created_ai:
+            changed = True
+
         if changed:
             try:
                 wb.save(xlsx_path)
@@ -7302,6 +10558,7 @@ def ensure_account_workbook(xlsx_path, account_id):
         status="有効",
         memo="投稿モード: 0=上から順 / 1=ランダム (数字だけでもOK) ｜ 下のシートを追加・複製するとテーマ別に管理できます",
     )
+    ensure_ai_post_sheet_in_wb(wb)
 
     wb.save(xlsx_path)
     return wb
@@ -8250,6 +11507,12 @@ class ThreadsPosterGUI:
         btn_theme_editor = tk.Button(toolbar2, text="🎨 テーマ別 投稿＆画像編集", font=("Segoe UI", 9, "bold"), bg="#db2777", fg="#ffffff", padx=10, pady=4, relief="flat", cursor="hand2", command=self.open_theme_and_post_editor)
         btn_theme_editor.pack(side="left", padx=3)
 
+        btn_ai_post_mgr = tk.Button(toolbar2, text="🤖 AIポスト設定 (固定別)", font=("Segoe UI", 9, "bold"), bg="#7c3aed", fg="#ffffff", padx=10, pady=4, relief="flat", cursor="hand2", command=self.open_ai_post_manager)
+        btn_ai_post_mgr.pack(side="left", padx=3)
+
+        btn_ai_fixed_win = tk.Button(toolbar2, text="🧠 AI専用Window起動(固定)", font=("Segoe UI", 9, "bold"), bg="#4338ca", fg="#e0e7ff", padx=10, pady=4, relief="flat", cursor="hand2", command=self.open_fixed_ai_window_action)
+        btn_ai_fixed_win.pack(side="left", padx=3)
+
         btn_design_gen = tk.Button(toolbar2, text="✨ 設計・投稿＆画像自動生成", font=("Segoe UI", 9, "bold"), bg="#059669", fg="#ffffff", padx=10, pady=4, relief="flat", cursor="hand2", command=self.open_account_design_generator)
         btn_design_gen.pack(side="left", padx=3)
 
@@ -8662,11 +11925,24 @@ class ThreadsPosterGUI:
             mode_txt = "ランダム" if mode_val == 1 else "上から順"
         prof_txt = f"chrome_profiles/{first_prof}"
 
+        ai_cfg_info = read_ai_post_config_from_xlsx(posts_file)
+        ai_rows_all = ai_cfg_info.get("rows") or []
+        ai_pending_cnt = sum(
+            1 for r in ai_rows_all
+            if not any(x in str(r.get("status") or "").strip() for x in ("完了", "投稿済", "削除"))
+        )
+        ai_badge = (
+            f"AIポスト: 有効({ai_cfg_info.get('engine', 'gemini')} / 待機{ai_pending_cnt}件)"
+            if ai_cfg_info.get("enabled")
+            else f"AIポスト: 無効({ai_cfg_info.get('engine', 'gemini')})"
+        )
+
         theme_names_disp = [str(t.get("name") or "").strip() for t in theme_map.values() if str(t.get("name") or "").strip()]
         theme_names_txt = ", ".join(theme_names_disp) if theme_names_disp else "基本"
         setting_parts = []
         if theme_map:
             setting_parts.append(f"テーマ: {theme_names_txt} ({len(theme_map)}種)")
+        setting_parts.append(ai_badge)
         if interval_txt:
             setting_parts.append(f"間隔: {interval_txt}")
         if mode_txt:
@@ -8676,11 +11952,11 @@ class ThreadsPosterGUI:
         setting_disp = (" | " + " / ".join(setting_parts)) if setting_parts else ""
 
         self.lbl_posts_info.config(
-            text=f"📝 投稿ファイル: {os.path.basename(posts_file)} (全 {len(posts)} 件 | 未投稿: {len(unposted)} 件 | 投稿完了: {len(completed)} 件){setting_disp}",
+            text=f"📝 投稿ファイル: {os.path.basename(posts_file)} (固定全 {len(posts)} 件 | 未投稿: {len(unposted)} 件 | 完了: {len(completed)} 件){setting_disp}",
             fg="#38bdf8"
         )
         if not silent:
-            self.log(f"[INFO] 投稿ファイル '{os.path.basename(posts_file)}' 読み込み完了: 未投稿 {len(unposted)} 件 / テーマシート({len(theme_map)}種): [{theme_names_txt}]")
+            self.log(f"[INFO] 投稿ファイル '{os.path.basename(posts_file)}' 読み込み完了: 固定未投稿 {len(unposted)} 件 / {ai_badge} / テーマシート({len(theme_map)}種): [{theme_names_txt}]")
             if interval_txt or mode_txt:
                 self.log(f"[INFO] [{first_id}] {os.path.basename(posts_file)} から設定を適用: 間隔={interval_txt or 'デフォルト'}, モード={mode_txt}, プロファイル={prof_txt}")
 
@@ -8892,10 +12168,19 @@ class ThreadsPosterGUI:
                     return val
         return ""
 
+    def _extract_delete_after(self, post_item):
+        if not isinstance(post_item, dict):
+            return ""
+        for k in ["削除時間", "自動削除時間", "自動削除", "削除タイマー", "削除まで", "delete_after", "deleteAfter"]:
+            if k in post_item and post_item[k] is not None:
+                val = str(post_item[k]).strip()
+                if val and val.lower() not in ["none", "nan"]:
+                    return val
+        return ""
 
     def _is_unposted_item(self, post_item):
         st = str(post_item.get("ステータス", "")).strip()
-        if "完了" in st or "投稿済" in st:
+        if "完了" in st or "投稿済" in st or "削除" in st:
             return False
         if st in ["未投稿", "未", "待機", "pending"]:
             return True
@@ -10293,24 +13578,26 @@ class ThreadsPosterGUI:
 
         post_tree_wrap = tk.Frame(right_pane, bg="#09090b")
         post_tree_wrap.pack(fill="both", expand=True)
-        p_cols = ("id", "theme", "text", "slot", "weekdays", "image", "topic", "status")
+        p_cols = ("id", "theme", "text", "slot", "weekdays", "del", "image", "topic", "status")
         post_tree = ttk.Treeview(post_tree_wrap, columns=p_cols, show="headings", height=9)
         post_tree.heading("id", text="ID")
         post_tree.heading("theme", text="シート/テーマ")
         post_tree.heading("text", text="ポスト文章")
         post_tree.heading("slot", text="投稿時間")
         post_tree.heading("weekdays", text="曜日")
+        post_tree.heading("del", text="削除時間")
         post_tree.heading("image", text="指定画像")
         post_tree.heading("topic", text="トピック")
         post_tree.heading("status", text="状態")
         post_tree.column("id", width=34, anchor="center")
-        post_tree.column("theme", width=76)
-        post_tree.column("text", width=180)
-        post_tree.column("slot", width=80, anchor="center")
-        post_tree.column("weekdays", width=58)
-        post_tree.column("image", width=98)
-        post_tree.column("topic", width=72)
-        post_tree.column("status", width=54, anchor="center")
+        post_tree.column("theme", width=74)
+        post_tree.column("text", width=160)
+        post_tree.column("slot", width=76, anchor="center")
+        post_tree.column("weekdays", width=56)
+        post_tree.column("del", width=76, anchor="center")
+        post_tree.column("image", width=84)
+        post_tree.column("topic", width=68)
+        post_tree.column("status", width=64, anchor="center")
         p_scroll = ttk.Scrollbar(post_tree_wrap, orient="vertical", command=post_tree.yview)
         post_tree.configure(yscrollcommand=p_scroll.set)
         post_tree.pack(side="left", fill="both", expand=True)
@@ -10322,6 +13609,7 @@ class ThreadsPosterGUI:
         var_p_theme = tk.StringVar(value="基本")
         var_p_slot = tk.StringVar()
         var_p_weekdays = tk.StringVar()
+        var_p_delete_after = tk.StringVar()
         var_p_topic = tk.StringVar()
         var_p_status = tk.StringVar(value="未投稿")
         var_p_image = tk.StringVar()
@@ -10335,10 +13623,16 @@ class ThreadsPosterGUI:
         tk.Entry(pf_r1, textvariable=var_p_slot, bg="#09090b", fg="#ffffff", insertbackground="#ffffff", font=("Segoe UI", 9), width=12, relief="solid", bd=1).pack(side="left", padx=(3, 6))
         tk.Label(pf_r1, text="曜日(上より優先):", font=("Segoe UI", 8), fg="#fbbf24", bg="#18181b").pack(side="left")
         tk.Entry(pf_r1, textvariable=var_p_weekdays, bg="#09090b", fg="#ffffff", insertbackground="#ffffff", font=("Segoe UI", 9), width=10, relief="solid", bd=1).pack(side="left", padx=(3, 6))
-        tk.Label(pf_r1, text="トピック:", font=("Segoe UI", 8), fg="#a1a1aa", bg="#18181b").pack(side="left")
-        tk.Entry(pf_r1, textvariable=var_p_topic, bg="#09090b", fg="#ffffff", insertbackground="#ffffff", font=("Segoe UI", 9), width=10, relief="solid", bd=1).pack(side="left", padx=(3, 6))
         tk.Label(pf_r1, text="状態:", font=("Segoe UI", 8), fg="#a1a1aa", bg="#18181b").pack(side="left")
-        ttk.Combobox(pf_r1, textvariable=var_p_status, values=["未投稿", "投稿完了", "エラー"], state="readonly", width=7).pack(side="left", padx=(3, 0))
+        ttk.Combobox(pf_r1, textvariable=var_p_status, values=["未投稿", "投稿完了", "投稿完了(削除済)", "エラー"], state="readonly", width=11).pack(side="left", padx=(3, 0))
+
+        pf_r1b = tk.Frame(p_form, bg="#18181b")
+        pf_r1b.pack(fill="x", pady=2)
+        tk.Label(pf_r1b, text="削除時間(ランダム):", font=("Segoe UI", 8, "bold"), fg="#fb7185", bg="#18181b").pack(side="left")
+        tk.Entry(pf_r1b, textvariable=var_p_delete_after, bg="#09090b", fg="#ffffff", insertbackground="#ffffff", font=("Segoe UI", 9), width=15, relief="solid", bd=1).pack(side="left", padx=(4, 6))
+        tk.Label(pf_r1b, text="例: 30～60 / 1～3時間 / 10～30秒 (空欄で削除しない)", font=("Segoe UI", 8), fg="#94a3b8", bg="#18181b").pack(side="left", padx=(0, 8))
+        tk.Label(pf_r1b, text="トピック:", font=("Segoe UI", 8), fg="#a1a1aa", bg="#18181b").pack(side="left")
+        tk.Entry(pf_r1b, textvariable=var_p_topic, bg="#09090b", fg="#ffffff", insertbackground="#ffffff", font=("Segoe UI", 9), width=12, relief="solid", bd=1).pack(side="left", padx=(3, 0))
 
         pf_r2 = tk.Frame(p_form, bg="#18181b")
         pf_r2.pack(fill="x", pady=3)
@@ -10422,13 +13716,14 @@ class ThreadsPosterGUI:
                 pid = p_it.get("ID") or p_it.get("id") or (row_idx - 1 if row_idx else "")
                 slot_s = self._extract_time_slot(p_it) or "(空白:通常)"
                 wd_s = self._extract_weekdays(p_it) or "(シート継承)"
+                del_s = self._extract_delete_after(p_it) or "(残す)"
                 txt_s = self._extract_post_text(p_it).replace("\n", " ")
-                if len(txt_s) > 36:
-                    txt_s = txt_s[:36] + "…"
+                if len(txt_s) > 34:
+                    txt_s = txt_s[:34] + "…"
                 img_s = self._extract_raw_image(p_it) or "なし"
                 top_s = self._extract_topic_or_community(p_it) or "なし"
                 st_s = str(p_it.get("ステータス") or "未投稿").strip()
-                post_tree.insert("", "end", iid=iid, values=(pid, p_theme or "(未設定)", txt_s, slot_s, wd_s, img_s, top_s, st_s))
+                post_tree.insert("", "end", iid=iid, values=(pid, p_theme or "(未設定)", txt_s, slot_s, wd_s, del_s, img_s, top_s, st_s))
 
         def load_account_view(*_args):
             acc_id, p_file = _cur_acc_and_xlsx()
@@ -10512,10 +13807,11 @@ class ThreadsPosterGUI:
             var_p_theme.set(self._extract_theme_name(target) or "基本")
             var_p_slot.set(self._extract_time_slot(target))
             var_p_weekdays.set(self._extract_weekdays(target))
+            var_p_delete_after.set(self._extract_delete_after(target))
             var_p_topic.set(self._extract_topic_or_community(target))
             var_p_image.set(self._extract_raw_image(target))
             st_raw = str(target.get("ステータス") or "未投稿").strip()
-            var_p_status.set(st_raw if st_raw in ["未投稿", "投稿完了", "エラー"] else "未投稿")
+            var_p_status.set(st_raw if st_raw in ["未投稿", "投稿完了", "投稿完了(削除済)", "エラー"] else "未投稿")
             txt_p_body.delete("1.0", "end")
             txt_p_body.insert("1.0", self._extract_post_text(target))
             update_img_resolve_label()
@@ -10627,6 +13923,7 @@ class ThreadsPosterGUI:
             post_tree.selection_remove(post_tree.selection())
             var_p_slot.set("")
             var_p_weekdays.set("")
+            var_p_delete_after.set("")
             var_p_topic.set("")
             var_p_image.set("")
             var_p_status.set("未投稿")
@@ -10663,6 +13960,7 @@ class ThreadsPosterGUI:
                 "image": var_p_image.get().strip(),
                 "time_slot": var_p_slot.get().strip(),
                 "weekdays": var_p_weekdays.get().strip(),
+                "delete_after": var_p_delete_after.get().strip(),
                 "status": var_p_status.get() or "未投稿",
             }
             saved_row, saved_sheet = save_or_update_post_row_in_xlsx(p_file, acc_id, post_payload, row_idx=row_target, sheet_name=sheet_target)
@@ -10919,8 +14217,17 @@ class ThreadsPosterGUI:
             messagebox.showerror("エラー", "Google Chrome (chrome.exe) が見つかりませんでした。")
             return
 
+        detect_and_mark_host_migration(prof_dir, account_name=prof_name, log_func=self.log)
+        chrome_cmd = [chrome_exe, f"--user-data-dir={prof_dir}"]
+        sel_proxy_str = extract_proxy_from_account(sel_acc) if sel_acc else ""
+        sel_proxy_cfg = parse_playwright_proxy(sel_proxy_str)
+        if sel_proxy_cfg and not sel_proxy_cfg.get("username"):
+            chrome_cmd.append(f"--proxy-server={sel_proxy_cfg['server']}")
+        elif sel_proxy_cfg and sel_proxy_cfg.get("username"):
+            self.log("[INFO] ℹ️ 認証付きプロキシは純正Chrome手動起動のコマンド引数非対応のため、プロファイル起動後はアプリ内の「ブラウザでログイン」をご利用ください。")
+
         try:
-            subprocess.Popen([chrome_exe, f"--user-data-dir={prof_dir}"], cwd=BASE_DIR)
+            subprocess.Popen(chrome_cmd, cwd=BASE_DIR)
             self.log("=" * 60)
             self.log(f"[INFO] 🛠️ 【Chrome手動起動】プロファイル『{prof_name}』を起動しました。")
             self.log(f"[INFO] 📂 保存先: {prof_dir}")
@@ -10957,8 +14264,9 @@ class ThreadsPosterGUI:
                 _, clean_acc_id, _, profile_dir = _resolve_profile_dir_for_account(first_acc, custom_settings=cs_login)
                 os.makedirs(profile_dir, exist_ok=True)
 
+                proxy_str = extract_proxy_from_account(first_acc)
                 with sync_playwright() as p:
-                    context = safe_launch_persistent_context(p, profile_dir, headless=False, log_func=self.log)
+                    context = safe_launch_persistent_context(p, profile_dir, headless=False, log_func=self.log, proxy_str=proxy_str)
                     self.current_context = context
                     
                     token = str(first_acc.get("auth_token") or first_acc.get("Authトークン_sessionid") or first_acc.get("sessionid") or "").strip()
@@ -11101,8 +14409,9 @@ class ThreadsPosterGUI:
         def _worker():
             try:
                 from playwright.sync_api import sync_playwright
+                proxy_str = extract_proxy_from_account(target_acc)
                 with sync_playwright() as p:
-                    context = safe_launch_persistent_context(p, prof_dir, headless=False, log_func=self.log)
+                    context = safe_launch_persistent_context(p, prof_dir, headless=False, log_func=self.log, proxy_str=proxy_str)
                     self.current_context = context
                     page = context.pages[0] if context.pages else context.new_page()
                     self.current_page = page
@@ -11182,6 +14491,523 @@ class ThreadsPosterGUI:
                 auto_refresh_and_save_session(context, account_name, profile_dir, self.account_config_path, log_func=self.log)
         except Exception:
             pass
+
+    def open_fixed_ai_window_action(self):
+        """AI生成専用の固定Chromeウィンドウ (chrome_profiles/_ai_window, CDP:9333) を起動または再利用表示する"""
+        sel_rec = self._get_selected_account_record()
+        initial_url = AI_ENGINE_DEFAULTS["duckai"]["web_url"]
+        engine_used = "duckai"
+        if sel_rec:
+            cid = str(sel_rec.get("アカウントID") or sel_rec.get("アカウント名") or "").strip().lstrip("@")
+            pf = self._find_posts_file(cid)
+            if pf and os.path.exists(pf):
+                ai_cfg = read_ai_post_config_from_xlsx(pf)
+                eng_list = _parse_engine_list(ai_cfg.get("engine") or "duckai", default_fallback="duckai")
+                eng = eng_list[0] if eng_list else "duckai"
+                engine_used = eng
+                w_url = (AI_ENGINE_DEFAULTS.get(eng) or {}).get("web_url")
+                if w_url and w_url != "about:blank":
+                    initial_url = w_url
+
+        def _bg():
+            try:
+                already_open = is_ai_cdp_port_open(AI_WINDOW_CDP_PORT)
+                ok, prof_dir = ensure_fixed_ai_window_launched(
+                    base_dir=BASE_DIR,
+                    cdp_port=AI_WINDOW_CDP_PORT,
+                    initial_url=initial_url,
+                    log_func=self.log,
+                )
+                if ok:
+                    msg = (
+                        f"AI専用ウィンドウ（固定）は既に起動中です！\n\n"
+                        if already_open else
+                        f"AI専用ウィンドウ（固定）を起動しました！\n\n"
+                    ) + (
+                        f"・固定プロファイル: chrome_profiles/{AI_WINDOW_PROFILE_NAME}\n"
+                        f"・CDP連携ポート: {AI_WINDOW_CDP_PORT}\n"
+                        f"・初期エンジンURL ({engine_used}): {initial_url}\n\n"
+                        "※ Threads投稿用アカウントのブラウザ窓（chrome_profiles/<アカウント名>）とは完全に分離されており、"
+                        "投稿完了後もこのAI専用ウィンドウは固定されたまま残ります。\n"
+                        "Web AI（ChatGPT / Gemini / Claude / Grok / DeepSeek 等）を使う場合は、このウィンドウ内で事前にログインしてください。"
+                    )
+                    self.root.after(0, lambda: messagebox.showinfo("🧠 AI専用ウィンドウ (固定)", msg, parent=self.root))
+                else:
+                    self.root.after(0, lambda: messagebox.showwarning("確認", f"Chrome (chrome_profiles/{AI_WINDOW_PROFILE_NAME}) を起動しましたが、CDP応答待機がタイムアウトしました。", parent=self.root))
+            except Exception as e_aiw:
+                self.log(f"[ERROR] AI専用ウィンドウ起動エラー: {e_aiw}")
+                self.root.after(0, lambda err=e_aiw: messagebox.showerror("起動エラー", f"AI専用ウィンドウを起動できませんでした:\n{err}", parent=self.root))
+
+        threading.Thread(target=_bg, daemon=True).start()
+
+    def open_ai_post_manager(self):
+        """固定ポストとは完全独立したアカウント別『AIポスト』設定・プロンプト・テスト生成ダイアログ"""
+        all_accounts = read_excel_records(self.account_config_path) if os.path.exists(self.account_config_path) else []
+        valid_accounts = [
+            str(acc.get("アカウントID") or acc.get("アカウント名") or "").strip().lstrip("@")
+            for acc in all_accounts
+            if str(acc.get("アカウントID") or acc.get("アカウント名") or "").strip() not in ("", "nan", "None")
+        ]
+        if not valid_accounts:
+            messagebox.showwarning("警告", "アカウント情報.xlsx にアカウントが見つかりません。")
+            return
+
+        sel_rec = self._get_selected_account_record()
+        default_acc = str(sel_rec.get("アカウントID") or sel_rec.get("アカウント名") or "").strip().lstrip("@") if sel_rec else valid_accounts[0]
+        if default_acc not in valid_accounts:
+            default_acc = valid_accounts[0]
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title("🤖 AIポスト設定・プロンプト管理 (固定ポストとは完全別枠)")
+        dialog.geometry("1180x780")
+        dialog.minsize(960, 620)
+        dialog.configure(bg="#18181b")
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        hdr = tk.Frame(dialog, bg="#09090b", padx=16, pady=10)
+        hdr.pack(side="top", fill="x")
+        tk.Label(hdr, text="🤖 アカウント別 AIポスト設定 (固定ポストとは完全別スケジュール・別シート)", font=("Segoe UI", 12, "bold"), fg="#ffffff", bg="#09090b").pack(side="left")
+
+        banner = tk.Frame(dialog, bg="#1e1b4b", padx=14, pady=6)
+        banner.pack(side="top", fill="x", padx=16, pady=(6, 0))
+        tk.Label(
+            banner,
+            text=f"🪟 ウィンドウ完全分離仕様: AI生成用Windowは『chrome_profiles/{AI_WINDOW_PROFILE_NAME} (CDP:{AI_WINDOW_CDP_PORT})』に固定 / 投稿実行は各アカウント別Window『chrome_profiles/<アカウント名>』で独立起動します。",
+            font=("Segoe UI", 8, "bold"),
+            fg="#c7d2fe",
+            bg="#1e1b4b",
+            anchor="w",
+        ).pack(side="left", fill="x", expand=True)
+        tk.Button(
+            banner,
+            text="🧠 AI専用Window起動(固定)",
+            font=("Segoe UI", 8, "bold"),
+            bg="#4338ca",
+            fg="#ffffff",
+            padx=10,
+            pady=2,
+            relief="flat",
+            cursor="hand2",
+            command=self.open_fixed_ai_window_action,
+        ).pack(side="right")
+
+        acc_bar = tk.Frame(dialog, bg="#18181b", padx=16, pady=6)
+        acc_bar.pack(side="top", fill="x")
+        tk.Label(acc_bar, text="対象アカウント:", font=("Segoe UI", 9, "bold"), fg="#facc15", bg="#18181b").pack(side="left")
+        var_acc = tk.StringVar(value=default_acc)
+        cmb_acc = ttk.Combobox(acc_bar, textvariable=var_acc, values=valid_accounts, state="readonly", width=22)
+        cmb_acc.pack(side="left", padx=(6, 12))
+        lbl_xlsx = tk.Label(acc_bar, text="", font=("Segoe UI", 9), fg="#38bdf8", bg="#18181b")
+        lbl_xlsx.pack(side="left")
+
+        btm_bar = tk.Frame(dialog, bg="#09090b", padx=16, pady=10)
+        btm_bar.pack(side="bottom", fill="x")
+        lbl_msg = tk.Label(btm_bar, text="設定は <アカウント名>.xlsx の『AIポスト』シートに保存されます。", font=("Segoe UI", 9), fg="#94a3b8", bg="#09090b")
+        lbl_msg.pack(side="left")
+        tk.Button(btm_bar, text="閉じる", bg="#27272a", fg="#ffffff", font=("Segoe UI", 9, "bold"), padx=16, pady=5, relief="flat", cursor="hand2", command=dialog.destroy).pack(side="right")
+
+        body = tk.Frame(dialog, bg="#18181b", padx=16, pady=4)
+        body.pack(side="top", fill="both", expand=True)
+
+        # 上段: 2段スケジュール & AIエンジン設定 (AIポストシート 1〜4行目)
+        cfg_box = tk.LabelFrame(body, text=" ⚙️ AIポスト 上段設定 (1〜2行目: スケジュール / 3〜4行目: AIエンジン・モデル・API) ", font=("Segoe UI", 9, "bold"), fg="#c4b5fd", bg="#18181b", padx=12, pady=8)
+        cfg_box.pack(fill="x", pady=(0, 8))
+
+        var_time = tk.StringVar(value="0:00-0:00")
+        var_wd = tk.StringVar(value="毎日")
+        var_iv = tk.StringVar(value="120〜360分")
+        var_enabled = tk.StringVar(value="無効")
+        var_memo = tk.StringVar(value=AI_DEFAULT_MEMO)
+        var_engine = tk.StringVar(value="duckai")
+        var_model = tk.StringVar(value="")
+        var_fb = tk.StringVar(value="")
+        var_winsync = tk.StringVar(value="1")
+        var_apikey = tk.StringVar(value="")
+
+        def _mk_entry(parent, r, c, label, var, width=22, is_combo=False, values=None, readonly=True):
+            tk.Label(parent, text=label, font=("Segoe UI", 8, "bold"), fg="#e4e4e7", bg="#18181b", anchor="w").grid(row=r * 2, column=c, sticky="w", padx=6, pady=(2, 1))
+            if is_combo:
+                w = ttk.Combobox(parent, textvariable=var, values=values or [], state="readonly" if readonly else "normal", width=width)
+            else:
+                w = tk.Entry(parent, textvariable=var, width=width, bg="#27272a", fg="#ffffff", insertbackground="#ffffff", relief="flat", font=("Segoe UI", 9))
+            w.grid(row=r * 2 + 1, column=c, sticky="ew", padx=6, pady=(0, 4))
+            return w
+
+        for ci in range(5):
+            cfg_box.columnconfigure(ci, weight=1)
+
+        _mk_entry(cfg_box, 0, 0, "1. 実行時間 (例: 0:00-0:00)", var_time, 18)
+        _mk_entry(cfg_box, 0, 1, "2. 曜日 (例: 毎日 / 月～金)", var_wd, 18)
+        _mk_entry(cfg_box, 0, 2, "3. ポスト間隔 (例: 120〜360分)", var_iv, 18)
+        _mk_entry(cfg_box, 0, 3, "4. 有効/無効", var_enabled, 14, is_combo=True, values=["有効", "無効"])
+        _mk_entry(cfg_box, 0, 4, "5. メモ (全体方針・注意点)", var_memo, 26)
+
+        _mk_entry(cfg_box, 1, 0, "6. AIエンジン (, で複数選択可)", var_engine, 22, is_combo=True, values=list(AI_ENGINE_CHOICES), readonly=False)
+        _mk_entry(cfg_box, 1, 1, "7. AIモデル名 (空欄=自動 / , 可)", var_model, 24)
+        _mk_entry(cfg_box, 1, 2, "8. フォールバック (空欄=ログイン不要優先自動 / off=無)", var_fb, 26)
+        _mk_entry(cfg_box, 1, 3, "9. AI専用ウィンドウ連携 (1=ON/0=OFF)", var_winsync, 14, is_combo=True, values=["1", "0"])
+        _mk_entry(cfg_box, 1, 4, "10. AI APIキー / 接続URL (, で複数可)", var_apikey, 28)
+
+        eng_bar = tk.Frame(cfg_box, bg="#18181b")
+        eng_bar.grid(row=4, column=0, columnspan=5, sticky="ew", padx=6, pady=(2, 0))
+        tk.Label(eng_bar, text="ログイン不要優先(緑) / その他クリックで複数追加:", font=("Segoe UI", 8, "bold"), fg="#a5b4fc", bg="#18181b").pack(side="left", padx=(0, 6))
+
+        def _toggle_eng_chip(eid):
+            cur = _parse_engine_list(var_engine.get(), default_fallback=None)
+            if eid in cur:
+                nxt = [x for x in cur if x != eid]
+                if not nxt:
+                    nxt = [eid]
+            else:
+                nxt = cur + [eid]
+            var_engine.set(", ".join(nxt))
+
+        login_free_set = {"duckai", "talkai", "deepai", "venice"}
+        for eid in ["duckai", "talkai", "deepai", "venice", "groq", "gemini", "chatgpt", "grok", "claude", "copilot", "perplexity", "deepseek", "qwen", "mistral", "openrouter", "ollama", "lmstudio", "chrome_builtin"]:
+            tk.Button(
+                eng_bar,
+                text=eid,
+                font=("Consolas", 8, "bold" if eid in login_free_set else "normal"),
+                bg="#065f46" if eid in login_free_set else "#27272a",
+                fg="#ecfdf5" if eid in login_free_set else "#e4e4e7",
+                activebackground="#4338ca",
+                activeforeground="#ffffff",
+                padx=5,
+                pady=1,
+                relief="flat",
+                cursor="hand2",
+                command=lambda e_val=eid: _toggle_eng_chip(e_val),
+            ).pack(side="left", padx=1, pady=1)
+
+        # 下段: 左(タブ: 8項目プロンプト表 & 生成履歴) + 右(固定プロンプト & テスト生成)
+        split = tk.Frame(body, bg="#18181b")
+        split.pack(fill="both", expand=True)
+        split.columnconfigure(0, weight=3)
+        split.columnconfigure(1, weight=2)
+        split.rowconfigure(0, weight=1)
+
+        nb_left = ttk.Notebook(split)
+        nb_left.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+
+        tab_sec = tk.Frame(nb_left, bg="#18181b")
+        tab_hist = tk.Frame(nb_left, bg="#18181b", padx=6, pady=6)
+        nb_left.add(tab_sec, text="📝 8項目プロンプト設定 (【】付送信 / 8〜15行目)")
+        nb_left.add(tab_hist, text="📜 生成ポスト履歴 / 個別指示 (17行目〜)")
+
+        sec_canvas = tk.Canvas(tab_sec, bg="#18181b", highlightthickness=0)
+        sec_scroll = ttk.Scrollbar(tab_sec, orient="vertical", command=sec_canvas.yview)
+        sec_inner = tk.Frame(sec_canvas, bg="#18181b", padx=8, pady=8)
+        sec_inner.bind("<Configure>", lambda e: sec_canvas.configure(scrollregion=sec_canvas.bbox("all")))
+        sec_win = sec_canvas.create_window((0, 0), window=sec_inner, anchor="nw")
+        sec_canvas.bind("<Configure>", lambda e: sec_canvas.itemconfigure(sec_win, width=e.width))
+        sec_canvas.configure(yscrollcommand=sec_scroll.set)
+        sec_canvas.pack(side="left", fill="both", expand=True)
+        sec_scroll.pack(side="right", fill="y")
+
+        section_widgets = {}
+        for s_key, s_lbl, s_def, s_desc in AI_PROMPT_SECTION_META:
+            row_f = tk.Frame(sec_inner, bg="#27272a", padx=8, pady=6)
+            row_f.pack(fill="x", pady=(0, 6))
+            hdr_r = tk.Frame(row_f, bg="#27272a")
+            hdr_r.pack(fill="x")
+            tk.Label(hdr_r, text=f"【{s_lbl}】", font=("Segoe UI", 9, "bold"), fg="#a5b4fc", bg="#27272a").pack(side="left")
+            tk.Label(hdr_r, text=f"  {s_desc[:54]}{'…' if len(s_desc) > 54 else ''}", font=("Segoe UI", 8), fg="#a1a1aa", bg="#27272a").pack(side="left")
+            tw = scrolledtext.ScrolledText(row_f, height=3, wrap="word", bg="#09090b", fg="#ffffff", insertbackground="#ffffff", font=("Segoe UI", 9), relief="flat")
+            tw.insert("1.0", s_def)
+            tw.pack(fill="x", pady=(4, 0))
+            section_widgets[s_key] = tw
+
+        cols = ("id", "status", "prompt", "engine", "posted_at")
+        tree = ttk.Treeview(tab_hist, columns=cols, show="headings", height=12)
+        for cid, ctxt, cw in [
+            ("id", "ID", 42),
+            ("status", "ステータス", 95),
+            ("prompt", "生成文章 / 指示", 300),
+            ("engine", "使用AI", 85),
+            ("posted_at", "完了日時 / 備考", 145),
+        ]:
+            tree.heading(cid, text=ctxt)
+            tree.column(cid, width=cw, anchor="w" if cid in ("prompt", "posted_at") else "center")
+        ys = ttk.Scrollbar(tab_hist, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=ys.set)
+        tree.pack(side="left", fill="both", expand=True)
+        ys.pack(side="right", fill="y")
+
+        right_f = tk.LabelFrame(split, text=" 🔒 固定プロンプト & 🧪 AI生成テスト ", font=("Segoe UI", 9, "bold"), fg="#34d399", bg="#18181b", padx=10, pady=8)
+        right_f.grid(row=0, column=1, sticky="nsew")
+
+        tk.Label(right_f, text="先頭固定プロンプト (編集不要・自動送信):", font=("Segoe UI", 8, "bold"), fg="#c4b5fd", bg="#18181b").pack(anchor="w")
+        txt_fixed_info = scrolledtext.ScrolledText(right_f, height=5, wrap="word", bg="#09090b", fg="#c7d2fe", font=("Segoe UI", 8), relief="flat")
+        txt_fixed_info.insert("1.0", FIXED_AI_SYSTEM_PROMPT)
+        txt_fixed_info.configure(state="disabled")
+        txt_fixed_info.pack(fill="x", pady=(2, 6))
+
+        tk.Label(right_f, text="任意の追加スポット指示 (空欄可):", font=("Segoe UI", 8, "bold"), fg="#e4e4e7", bg="#18181b").pack(anchor="w")
+        txt_prompt = scrolledtext.ScrolledText(right_f, height=2, wrap="word", bg="#27272a", fg="#ffffff", insertbackground="#ffffff", font=("Segoe UI", 9), relief="flat")
+        txt_prompt.pack(fill="x", pady=(2, 6))
+
+        sub_row = tk.Frame(right_f, bg="#18181b")
+        sub_row.pack(fill="x", pady=(0, 6))
+        sub_row.columnconfigure(0, weight=1)
+        sub_row.columnconfigure(1, weight=1)
+        tk.Label(sub_row, text="トピック (任意):", font=("Segoe UI", 8, "bold"), fg="#e4e4e7", bg="#18181b").grid(row=0, column=0, sticky="w", padx=(0, 4))
+        tk.Label(sub_row, text="削除時間 (例: 30-60分):", font=("Segoe UI", 8, "bold"), fg="#e4e4e7", bg="#18181b").grid(row=0, column=1, sticky="w", padx=(4, 0))
+        var_row_topic = tk.StringVar()
+        var_row_del = tk.StringVar()
+        tk.Entry(sub_row, textvariable=var_row_topic, bg="#27272a", fg="#ffffff", insertbackground="#ffffff", relief="flat").grid(row=1, column=0, sticky="ew", padx=(0, 4), pady=2)
+        tk.Entry(sub_row, textvariable=var_row_del, bg="#27272a", fg="#ffffff", insertbackground="#ffffff", relief="flat").grid(row=1, column=1, sticky="ew", padx=(4, 0), pady=2)
+
+        row_btns = tk.Frame(right_f, bg="#18181b")
+        row_btns.pack(fill="x", pady=(2, 6))
+
+        state_store = {"rows": [], "sel_idx": None, "xlsx_path": ""}
+
+        def _refresh_tree():
+            tree.delete(*tree.get_children())
+            for idx_r, r_it in enumerate(state_store["rows"]):
+                disp_txt = r_it.get("generated_text") or r_it.get("prompt") or ""
+                meta_txt = " / ".join(x for x in [r_it.get("posted_at") or "", r_it.get("error_msg") or ""] if x)
+                tree.insert(
+                    "",
+                    "end",
+                    iid=str(idx_r),
+                    values=(
+                        r_it.get("id") or (idx_r + 1),
+                        r_it.get("status") or "指示待機",
+                        disp_txt[:50],
+                        r_it.get("engine_used") or "",
+                        meta_txt,
+                    ),
+                )
+
+        def _collect_cfg():
+            collected_sections = {}
+            for s_key, tw in section_widgets.items():
+                collected_sections[s_key] = tw.get("1.0", "end").strip()
+            return {
+                "time_slot": var_time.get().strip() or "0:00-0:00",
+                "weekdays": var_wd.get().strip() or "毎日",
+                "interval_str": var_iv.get().strip() or "120〜360分",
+                "enabled": var_enabled.get().strip() == "有効",
+                "memo": var_memo.get().strip(),
+                "engine": var_engine.get().strip() or "duckai",
+                "model_name": var_model.get().strip(),
+                "fallback_candidates": var_fb.get().strip(),
+                "ai_window_sync": var_winsync.get().strip() != "0",
+                "api_key_or_url": var_apikey.get().strip(),
+                "prompt_sections": collected_sections,
+            }
+
+        def _load_account():
+            acc_id = var_acc.get().strip().lstrip("@")
+            pf = self._find_posts_file(acc_id)
+            if not pf:
+                pf = os.path.join(BASE_DIR, f"{acc_id}.xlsx")
+            try:
+                wb_e = ensure_account_workbook(pf, acc_id)
+                wb_e.close()
+            except Exception:
+                pass
+            state_store["xlsx_path"] = pf
+            lbl_xlsx.config(text=f"📄 Excel: {os.path.basename(pf)} [AIポストシート]")
+            cfg = read_ai_post_config_from_xlsx(pf)
+            var_time.set(cfg.get("time_slot") or "0:00-0:00")
+            var_wd.set(cfg.get("weekdays") or "毎日")
+            var_iv.set(cfg.get("interval_str") or "120〜360分")
+            var_enabled.set("有効" if cfg.get("enabled") else "無効")
+            var_memo.set(cfg.get("memo") or "")
+            var_engine.set(cfg.get("engine") or "duckai")
+            var_model.set(cfg.get("model_name") or "")
+            var_fb.set(cfg.get("fallback_candidates") or "")
+            var_winsync.set("1" if cfg.get("ai_window_sync", True) else "0")
+            var_apikey.set(cfg.get("api_key_or_url") or "")
+            sec_map = cfg.get("prompt_sections") or {}
+            for s_key, _s_lbl, s_def, _desc in AI_PROMPT_SECTION_META:
+                tw = section_widgets[s_key]
+                tw.delete("1.0", "end")
+                val_s = sec_map.get(s_key)
+                tw.insert("1.0", s_def if val_s is None else val_s)
+            state_store["rows"] = [dict(r) for r in (cfg.get("rows") or [])]
+            state_store["sel_idx"] = None
+            _refresh_tree()
+
+        def _on_tree_select(event=None):
+            sel = tree.selection()
+            if not sel:
+                return
+            idx_r = int(sel[0])
+            if 0 <= idx_r < len(state_store["rows"]):
+                state_store["sel_idx"] = idx_r
+                item = state_store["rows"][idx_r]
+                txt_prompt.delete("1.0", "end")
+                txt_prompt.insert("1.0", item.get("prompt") or "")
+                var_row_topic.set(item.get("topic") or "")
+                var_row_del.set(item.get("delete_after") or "")
+                if item.get("generated_text"):
+                    txt_preview.delete("1.0", "end")
+                    txt_preview.insert("1.0", item.get("generated_text") or "")
+
+        tree.bind("<<TreeviewSelect>>", _on_tree_select)
+
+        def _add_or_update_row(as_new=False):
+            p_txt = txt_prompt.get("1.0", "end").strip()
+            if not p_txt:
+                messagebox.showwarning("入力不足", "追加スポット指示を入力してください。", parent=dialog)
+                return
+            idx_r = None if as_new else state_store.get("sel_idx")
+            if idx_r is not None and 0 <= idx_r < len(state_store["rows"]):
+                state_store["rows"][idx_r]["prompt"] = p_txt
+                state_store["rows"][idx_r]["topic"] = var_row_topic.get().strip()
+                state_store["rows"][idx_r]["delete_after"] = var_row_del.get().strip()
+            else:
+                new_id = len(state_store["rows"]) + 1
+                state_store["rows"].append({
+                    "id": new_id,
+                    "prompt": p_txt,
+                    "topic": var_row_topic.get().strip(),
+                    "delete_after": var_row_del.get().strip(),
+                    "generated_text": "",
+                    "engine_used": "",
+                    "status": "指示待機",
+                    "posted_at": "",
+                    "error_msg": "",
+                })
+                state_store["sel_idx"] = len(state_store["rows"]) - 1
+            _refresh_tree()
+
+        def _delete_row():
+            idx_r = state_store.get("sel_idx")
+            if idx_r is None or not (0 <= idx_r < len(state_store["rows"])):
+                return
+            state_store["rows"].pop(idx_r)
+            for i_n, r_it in enumerate(state_store["rows"], start=1):
+                r_it["id"] = i_n
+            state_store["sel_idx"] = None
+            txt_prompt.delete("1.0", "end")
+            var_row_topic.set("")
+            var_row_del.set("")
+            _refresh_tree()
+
+        def _reset_sections_defaults():
+            for s_key, _s_lbl, s_def, _desc in AI_PROMPT_SECTION_META:
+                tw = section_widgets[s_key]
+                tw.delete("1.0", "end")
+                tw.insert("1.0", s_def)
+
+        def _save_all():
+            acc_id = var_acc.get().strip().lstrip("@")
+            pf = state_store["xlsx_path"]
+            cfg = _collect_cfg()
+            save_ai_post_config_to_xlsx(pf, acc_id, cfg, prompt_rows=state_store["rows"])
+            self.load_excel_data(silent=True)
+            lbl_msg.config(text=f"✅ {os.path.basename(pf)} の『AIポスト』シートへ保存しました ({datetime.now().strftime('%H:%M:%S')})", fg="#34d399")
+            self.log(f"[SUCCESS] [{acc_id}] AIポスト設定を {os.path.basename(pf)} に保存しました (エンジン={cfg['engine']}, {'有効' if cfg['enabled'] else '無効'})")
+
+        tk.Button(row_btns, text="➕ スポット追加", bg="#2563eb", fg="#ffffff", font=("Segoe UI", 8, "bold"), padx=8, pady=4, relief="flat", cursor="hand2", command=lambda: _add_or_update_row(as_new=True)).pack(side="left", padx=(0, 4))
+        tk.Button(row_btns, text="🗑 履歴行削除", bg="#991b1b", fg="#ffffff", font=("Segoe UI", 8, "bold"), padx=8, pady=4, relief="flat", cursor="hand2", command=_delete_row).pack(side="left", padx=(0, 4))
+        tk.Button(row_btns, text="↺ 8項目を標準へ", bg="#4f46e5", fg="#ffffff", font=("Segoe UI", 8, "bold"), padx=8, pady=4, relief="flat", cursor="hand2", command=_reset_sections_defaults).pack(side="left")
+
+        tk.Label(right_f, text="生成プレビュー / テスト結果:", font=("Segoe UI", 8, "bold"), fg="#e4e4e7", bg="#18181b").pack(anchor="w", pady=(2, 0))
+        txt_preview = scrolledtext.ScrolledText(right_f, height=6, wrap="word", bg="#0a0a0a", fg="#34d399", insertbackground="#ffffff", font=("Segoe UI", 9), relief="flat")
+        txt_preview.pack(fill="both", expand=True, pady=(2, 6))
+
+        act_btns = tk.Frame(right_f, bg="#18181b")
+        act_btns.pack(fill="x")
+
+        def _test_generate():
+            acc_id = var_acc.get().strip().lstrip("@")
+            cfg = _collect_cfg()
+            p_txt = txt_prompt.get("1.0", "end").strip()
+            row_dict = {
+                "prompt": p_txt,
+                "topic": var_row_topic.get().strip(),
+            }
+            pf = state_store["xlsx_path"]
+            design = load_account_design_from_xlsx(pf, account_id=acc_id) if pf and os.path.exists(pf) else {}
+            txt_preview.delete("1.0", "end")
+            txt_preview.insert("1.0", f"⏳ [{cfg['engine']}] でAI文章を生成中です...\n")
+            lbl_msg.config(text=f"⏳ [{cfg['engine']}] でテスト生成実行中...", fg="#facc15")
+
+            def _bg_gen():
+                try:
+                    out_txt, used_eng, err = generate_ai_post_text(
+                        acc_id, cfg, prompt_row=row_dict, design_dict=design, base_dir=BASE_DIR, log_func=self.log
+                    )
+                    def _done():
+                        if not dialog.winfo_exists():
+                            return
+                        txt_preview.delete("1.0", "end")
+                        if out_txt:
+                            txt_preview.insert("1.0", out_txt)
+                            lbl_msg.config(text=f"✅ テスト生成成功 ({used_eng} / {len(out_txt)}文字) ※プレビューのみ。投稿するには『🚀 即1件投稿』またはメイン画面の『開始』を使用", fg="#34d399")
+                        else:
+                            txt_preview.insert("1.0", f"❌ 生成失敗 ({used_eng}): {err or '詳細不明'}")
+                            lbl_msg.config(text=f"❌ テスト生成失敗: {err}", fg="#f87171")
+                    self.root.after(0, _done)
+                except Exception as eg:
+                    self.root.after(0, lambda e_v=eg: dialog.winfo_exists() and lbl_msg.config(text=f"❌ 生成エラー: {e_v}", fg="#f87171"))
+
+            threading.Thread(target=_bg_gen, daemon=True).start()
+
+        def _post_one_now_with_account_window():
+            if self.is_running:
+                messagebox.showinfo("実行中", "メイン画面で自動投稿が稼働中のため、停止してからお試しください。", parent=dialog)
+                return
+            acc_id = var_acc.get().strip().lstrip("@")
+            pf = state_store["xlsx_path"]
+            cfg = _collect_cfg()
+            save_ai_post_config_to_xlsx(pf, acc_id, cfg, prompt_rows=state_store["rows"])
+            self.load_excel_data(silent=True)
+
+            all_accs = read_excel_records(self.account_config_path) if os.path.exists(self.account_config_path) else []
+            acc_rec = next(
+                (a for a in all_accs if str(a.get("アカウントID") or a.get("アカウント名") or "").strip().lstrip("@").lower() == acc_id.lower()),
+                {"アカウントID": acc_id, "アカウント名": acc_id},
+            )
+            txt_preview.delete("1.0", "end")
+            txt_preview.insert("1.0", f"⏳ [{cfg['engine']}] でAI文章生成 ➔ @{acc_id} アカウント別Windowを起動して投稿します...\n")
+            lbl_msg.config(text=f"🚀 @{acc_id} AI生成＋アカウント別Window投稿を実行中...", fg="#38bdf8")
+
+            def _bg_post():
+                try:
+                    from playwright.sync_api import sync_playwright
+                    prev_run = self.is_running
+                    prev_stop = self.stop_requested
+                    self.is_running = True
+                    self.stop_requested = False
+                    try:
+                        # 一時的に有効扱いで1件即投稿できるようExcel設定を一貫保持
+                        if not cfg.get("enabled"):
+                            cfg_enabled = dict(cfg)
+                            cfg_enabled["enabled"] = True
+                            save_ai_post_config_to_xlsx(pf, acc_id, cfg_enabled, prompt_rows=state_store["rows"])
+                        with sync_playwright() as p_one:
+                            acc_st = {"account": acc_rec, "name": acc_id, "posts_file": pf}
+                            self._execute_single_ai_post(acc_st, p_one)
+                        ok_flag = bool(acc_st.get("last_post_ok"))
+                        self.root.after(0, lambda ok=ok_flag: dialog.winfo_exists() and (
+                            _load_account(),
+                            lbl_msg.config(
+                                text=f"{'✅ アカウント別Windowで投稿完了しました' if ok else '⚠️ 投稿が完了しませんでした（メインログを確認してください）'}",
+                                fg="#34d399" if ok else "#f87171",
+                            ),
+                        ))
+                    finally:
+                        self.is_running = prev_run
+                        self.stop_requested = prev_stop
+                except Exception as ep:
+                    self.log(f"[ERROR] [{acc_id}] AI即投稿エラー: {ep}")
+                    self.root.after(0, lambda err=ep: dialog.winfo_exists() and lbl_msg.config(text=f"❌ 即投稿エラー: {err}", fg="#f87171"))
+
+            threading.Thread(target=_bg_post, daemon=True).start()
+
+        tk.Button(act_btns, text="🧪 AI生成テスト(文章のみ)", bg="#7c3aed", fg="#ffffff", font=("Segoe UI", 8, "bold"), padx=10, pady=6, relief="flat", cursor="hand2", command=_test_generate).pack(side="left", padx=(0, 6))
+        tk.Button(act_btns, text="🚀 即1件投稿(アカウント窓起動)", bg="#0284c7", fg="#ffffff", font=("Segoe UI", 8, "bold"), padx=10, pady=6, relief="flat", cursor="hand2", command=_post_one_now_with_account_window).pack(side="left", padx=(0, 6))
+        tk.Button(act_btns, text="💾 Excel保存", bg="#10b981", fg="#ffffff", font=("Segoe UI", 8, "bold"), padx=12, pady=6, relief="flat", cursor="hand2", command=_save_all).pack(side="right")
+
+        cmb_acc.bind("<<ComboboxSelected>>", lambda e: _load_account())
+        _load_account()
 
     def start_posting(self):
         if not os.path.exists(self.account_config_path):
@@ -11290,6 +15116,158 @@ class ThreadsPosterGUI:
             self.root.after(0, lambda: self.status_lbl.config(text="● 待機中", fg="#10b981"))
             self.root.after(0, lambda: self.load_excel_data(silent=True))
 
+    def _get_profile_dir_for_state(self, acc_state):
+        account = acc_state.get("account") or {}
+        posts_file = acc_state.get("posts_file")
+        custom_settings = read_account_settings_from_post_file(posts_file) if (posts_file and os.path.exists(posts_file)) else {}
+        _, _, _, profile_dir = _resolve_profile_dir_for_account(account, custom_settings=custom_settings)
+        return profile_dir
+
+    def _enqueue_delete_if_configured(self, profile_dir, account_name, posts_file, row_idx, post_item, post_id, text_content):
+        delete_spec = self._extract_delete_after(post_item)
+        if not delete_spec:
+            return None
+        acc_meta_key = sanitize_account_folder_name(account_name)
+        meta = LAST_POSTED_META.get(acc_meta_key, {}) if acc_meta_key else {}
+        job = enqueue_pending_delete_job(
+            profile_dir=profile_dir,
+            account_name=account_name,
+            posts_file=posts_file,
+            row_idx=row_idx,
+            sheet_name=post_item.get("_sheet_name") or "",
+            post_id=post_id,
+            delete_spec=delete_spec,
+            post_url=meta.get("post_url", ""),
+            post_code=meta.get("post_code", ""),
+            profile_handle=meta.get("profile_handle", "") or acc_meta_key,
+            text_content=text_content,
+        )
+        if job:
+            eta_dt = datetime.fromtimestamp(job["delete_at_ts"]).strftime("%H:%M:%S")
+            self.log(f"[INFO] 🗑️ [{account_name}] Post #{post_id} の自動削除を予約: {_format_duration_jp(job['delay_sec'])}後 ({eta_dt} 予定 / 設定値: {job['delete_spec']})")
+        return job
+
+    def _process_due_deletes_in_open_page(self, page, context, acc_state_or_dict, profile_dir, restore_home=False):
+        account_name = acc_state_or_dict.get("name") or acc_state_or_dict.get("アカウントID") or ""
+        due_jobs = get_due_pending_deletes(profile_dir)
+        if not due_jobs:
+            return 0
+        done_cnt = 0
+        for job in due_jobs:
+            if not self.is_running or self.stop_requested:
+                break
+            pid = job.get("post_id") or job.get("row_idx") or "?"
+            self.log(f"[INFO] 🗑️ [{account_name}] Post #{pid} の削除予定時刻に到達したため削除を実行します...")
+            ok_del, detail = delete_threads_post_on_browser(page, context, account_name, job, log_func=self.log)
+            if ok_del:
+                del_ts = datetime.now().strftime("%H:%M:%S")
+                if job.get("posts_file") and job.get("row_idx"):
+                    mark_post_deleted_in_excel(
+                        job["posts_file"],
+                        int(job["row_idx"]),
+                        deleted_time_str=del_ts,
+                        sheet_name=job.get("sheet_name") or None,
+                    )
+                remove_pending_delete_job(profile_dir, job["job_id"])
+                self.log(f"[SUCCESS] 🗑️ [{account_name}] Post #{pid} を自動削除しました！ ({detail})")
+                done_cnt += 1
+            else:
+                if str(detail).startswith("checkpoint:"):
+                    if isinstance(acc_state_or_dict, dict):
+                        acc_state_or_dict["checkpoint_paused"] = True
+                    self.log(f"[WARN] 🚨 [{account_name}] 自動削除中に本人確認/電話番号画面を検知したため停止します ({detail})。")
+                    break
+                attempts = int(job.get("attempts") or 0) + 1
+                if attempts >= 3:
+                    remove_pending_delete_job(profile_dir, job["job_id"])
+                    self.log(f"[WARN] ⚠️ [{account_name}] Post #{pid} の自動削除を {attempts} 回試行しましたが対象が見つからなかったため予約を解除しました ({detail})。")
+                else:
+                    job["attempts"] = attempts
+                    job["delete_at_ts"] = time.time() + 180
+                    update_pending_delete_job(profile_dir, job)
+                    self.log(f"[WARN] ⏳ [{account_name}] Post #{pid} の自動削除を再試行予定(3分後 / {attempts}/3回目): {detail}")
+        if restore_home and self.is_running and not self.stop_requested:
+            try:
+                page.goto("https://www.threads.net/", wait_until="domcontentloaded", timeout=30000)
+                time.sleep(1.5)
+            except Exception:
+                pass
+        if done_cnt > 0:
+            self.root.after(0, lambda: self.load_excel_data(silent=True))
+        return done_cnt
+
+    def _execute_pending_deletes_for_account(self, acc_state, due_jobs, p):
+        account = acc_state["account"]
+        account_name = acc_state["name"]
+        posts_file = acc_state["posts_file"]
+        _THREAD_LOG_LOCAL.account_name = sanitize_account_folder_name(account_name)
+        custom_settings = read_account_settings_from_post_file(posts_file) if (posts_file and os.path.exists(posts_file)) else {}
+        _, _, _, profile_dir = _resolve_profile_dir_for_account(account, custom_settings=custom_settings)
+        os.makedirs(profile_dir, exist_ok=True)
+        for lk in ["SingletonLock", "SingletonCookie", "SingletonSocket"]:
+            try:
+                lk_p = os.path.join(profile_dir, lk)
+                if os.path.exists(lk_p):
+                    os.remove(lk_p)
+            except Exception:
+                pass
+        proxy_str = extract_proxy_from_account(account)
+        context = None
+        page = None
+        try:
+            context = safe_launch_persistent_context(p, profile_dir, headless=False, log_func=self.log, proxy_str=proxy_str)
+            self.current_context = context
+            page = context.pages[0] if context.pages else context.new_page()
+            self.current_page = page
+            self.current_account_name = account_name
+            self.current_profile_dir = profile_dir
+
+            if not self.is_running or self.stop_requested:
+                return
+
+            if not acc_state.get("pure_profile_mode"):
+                session_token = str(account.get("auth_token") or account.get("Authトークン_sessionid") or account.get("sessionid") or "").strip()
+                if session_token:
+                    inject_session_cookies(context, session_token, account_name, log_func=self.log)
+            else:
+                session_token = ""
+
+            safe_goto_threads(page, context, session_token, account_name, log_func=self.log, timeout=60000)
+            time.sleep(2.5)
+
+            is_cp, cp_why = detect_phone_checkpoint_screen(page)
+            if is_cp:
+                acc_state["checkpoint_paused"] = True
+                self.log(f"[WARN] 🚨 [{account_name}] 自動削除起動時に電話番号確認画面を検知したため停止します（{cp_why}）。")
+                return
+
+            is_logged_in = ensure_authenticated_session(
+                page, context, account, self.account_config_path, log_func=self.log, wait_timeout_sec=180, acc_state=acc_state
+            )
+            if not is_logged_in:
+                self.log(f"[WARN] ⚠️ [{account_name}] ログイン未完了のため今回の自動削除を見送ります。")
+                return
+
+            if self.var_block_media.get():
+                setup_media_blocking(context, log_func=self.log)
+
+            self._process_due_deletes_in_open_page(page, context, acc_state, profile_dir, restore_home=False)
+        except Exception as e_del:
+            self.log(f"[ERROR] [{account_name}] 自動削除処理エラー: {e_del}")
+        finally:
+            if context:
+                try:
+                    auto_refresh_and_save_session(context, account_name, profile_dir, self.account_config_path, log_func=self.log)
+                except Exception:
+                    pass
+                try:
+                    context.close()
+                except Exception:
+                    pass
+            self.current_context = None
+            self.current_page = None
+            _THREAD_LOG_LOCAL.account_name = ""
+
     def _run_single_window_rotation_loop(self, active_accounts, p):
         """
         【提案1: 1窓・順番交代ローテーション】
@@ -11298,6 +15276,7 @@ class ThreadsPosterGUI:
         2. 投稿完了後、直ちにブラウザを完全に閉じてメモリを100%解放
         3. 時間が被った別アカウントがあれば、即座に次のブラウザを開いて実行
         4. 全アカウントが待機中の場合は、ブラウザを0窓（完全終了）のまま低スペックPCでも超軽量に待機
+        5. 各ポスト横の『削除時間』予約があれば、期限到達時に1窓で自動削除してExcelを更新
         """
         self.log("=" * 65)
         self.log("[INFO] 🚀 【提案1: 1窓・順番交代ローテーション】システム稼働開始")
@@ -11386,9 +15365,44 @@ class ThreadsPosterGUI:
             except Exception:
                 pass
 
-            # 1. 各アカウントの未投稿ポスト存在確認＆自動ループ周回処理
+            # 0. 自動削除予定時刻に到達した投稿を最優先で処理（1窓で開いて削除し即終了）
+            due_delete_processed = False
+            for a_state in account_states:
+                if not self.is_running:
+                    break
+                if a_state.get("checkpoint_paused"):
+                    continue
+                p_dir_chk = self._get_profile_dir_for_state(a_state)
+                due_jobs = get_due_pending_deletes(p_dir_chk)
+                if due_jobs:
+                    acc_nm_del = a_state["name"]
+                    self.log("-" * 55)
+                    self.log(f"[INFO] 🗑️ 【自動削除タイマー発動】@{acc_nm_del} の期限到達ポスト {len(due_jobs)} 件を削除するためブラウザを1窓のみ起動します。")
+                    self.root.after(0, lambda an=acc_nm_del, cnt=len(due_jobs): self.status_lbl.config(
+                        text=f"● 自動削除中: @{an} ({cnt}件)", fg="#f472b6"
+                    ))
+                    self._execute_pending_deletes_for_account(a_state, due_jobs, p)
+                    due_delete_processed = True
+                    last_wait_log_key = None
+                    break
+            if due_delete_processed:
+                continue
+
+            # 未到達の自動削除予約一覧を収集
+            future_delete_tasks = []
+            for a_state in account_states:
+                if a_state.get("checkpoint_paused"):
+                    continue
+                p_dir_chk = self._get_profile_dir_for_state(a_state)
+                for jb in load_pending_deletes(p_dir_chk):
+                    del_dt = datetime.fromtimestamp(float(jb.get("delete_at_ts") or time.time()))
+                    future_delete_tasks.append((del_dt, a_state["name"], jb.get("post_id") or jb.get("row_idx") or "?"))
+
+            # 1. 各アカウントの未投稿ポスト（固定＋AIポスト独立確認）＆自動ループ周回処理
             active_account_count = 0
             for a_state in account_states:
+                if a_state.get("checkpoint_paused"):
+                    continue
                 pf = a_state["posts_file"]
                 if not pf or not os.path.exists(pf):
                     continue
@@ -11396,82 +15410,157 @@ class ThreadsPosterGUI:
                 unp = [p_it for p_it in all_p if self._is_unposted_item(p_it)]
                 if not unp and self.var_auto_loop.get():
                     reset_cnt = reset_posts_file_silent(pf)
-                    a_state["cycle_num"] += 1
-                    self.log(f"[INFO] 🔁 [{a_state['name']}] 全ポスト完了に伴い『{os.path.basename(pf)}』の全 {reset_cnt} 件を『未投稿』にリセットしました（{a_state['cycle_num']}周目へ）。")
+                    if reset_cnt > 0:
+                        a_state["cycle_num"] += 1
+                        self.log(f"[INFO] 🔁 [{a_state['name']}] 全固定ポスト完了に伴い『{os.path.basename(pf)}』の全 {reset_cnt} 件を『未投稿』にリセットしました（{a_state['cycle_num']}周目へ）。")
                     all_p = read_excel_records(pf)
                     unp = [p_it for p_it in all_p if self._is_unposted_item(p_it)]
-                if unp:
+
+                ai_cfg_chk = read_ai_post_config_from_xlsx(pf)
+                ai_has_work = self._has_pending_ai_post_work(ai_cfg_chk, pf, a_state["name"])
+                if unp or ai_has_work:
                     active_account_count += 1
 
             if active_account_count == 0:
-                self.log("[SUCCESS] 🎉 全アカウントの未投稿ポストがすべて完了しました！")
+                if future_delete_tasks:
+                    del_dt, del_acc, del_pid = min(future_delete_tasks, key=lambda item: item[0])
+                    del_left = max(1.0, (del_dt - datetime.now()).total_seconds())
+                    dm, ds = int(del_left // 60), int(del_left % 60)
+                    del_disp = f"{dm:02d}分{ds:02d}秒"
+                    wait_key = ("del_only", del_acc, str(del_pid), del_dt.strftime("%H:%M:%S"))
+                    if last_wait_log_key != wait_key:
+                        last_wait_log_key = wait_key
+                        self.log(f"[INFO] 🗑️ 全投稿完了。自動削除予約の到来まで待機中: @{del_acc} Post #{del_pid} (予定 {del_dt.strftime('%H:%M:%S')} / あと約{del_disp})")
+                    self.root.after(0, lambda an=del_acc, pid=del_pid, td=del_disp: self.status_lbl.config(
+                        text=f"● 自動削除待機中: @{an} Post #{pid} (あと {td}) [省メモリ待機]",
+                        fg="#f472b6"
+                    ))
+                    sleep_d = max(1, min(10, int(del_left)))
+                    for _ in range(sleep_d):
+                        if not self.is_running:
+                            break
+                        time.sleep(1)
+                    continue
+
+                if any(s.get("checkpoint_paused") for s in account_states):
+                    self.log("[WARN] 🛑 残りの有効アカウントはすべて電話番号/本人確認ロック保護のため自動停止中です。プロキシ設定または手動ブラウザでの解除後に再開してください。")
+                else:
+                    self.log("[SUCCESS] 🎉 全アカウントの固定ポストおよびAIポストがすべて完了しました！")
                 break
 
-            # 2. 現在実行時間帯に合致する投稿をテーマ単位で抽出し、各テーマ独立タイマー (theme_next_run_time <= now) を判定
+            # 2. 現在実行時間帯に合致する投稿（固定テーマ別＋AIポスト独立枠）を抽出し、各独立タイマーを判定
             eligible_tasks = []
             ready_now_or_later_tasks = []
             waiting_timeslot_count = 0
             for acc_order, a_state in enumerate(account_states):
+                if a_state.get("checkpoint_paused"):
+                    continue
                 pf = a_state["posts_file"]
                 if not pf or not os.path.exists(pf):
                     continue
                 all_p = read_excel_records(pf)
                 unp = [p_it for p_it in all_p if self._is_unposted_item(p_it)]
-                if not unp:
-                    continue
 
                 settings = read_account_settings_from_post_file(pf)
                 theme_map = read_theme_settings_from_xlsx(pf)
                 eligible_themes_for_acc = {}
+                blocked_reasons = []
                 for p_it in unp:
                     ps = resolve_post_theme_schedule(p_it, theme_map, settings, now_dt=now)
                     if ps["is_eligible_now"]:
                         t_key = ps["theme"] or "基本"
                         eligible_themes_for_acc.setdefault(t_key, []).append(p_it)
-
-                if not eligible_themes_for_acc:
-                    waiting_timeslot_count += 1
-                    continue
+                    else:
+                        br = ps.get("block_reason")
+                        if br and br not in blocked_reasons:
+                            blocked_reasons.append(br)
 
                 t_timers = a_state.setdefault("theme_next_run_times", {})
-                for th_idx, t_key in enumerate(eligible_themes_for_acc.keys()):
+                th_idx_cursor = 0
+                for t_key in eligible_themes_for_acc.keys():
                     t_next = t_timers.get(t_key)
                     if t_next is None:
                         t_next = now
                         t_timers[t_key] = t_next
-                    ready_now_or_later_tasks.append((t_next, acc_order, th_idx, a_state, t_key))
+                    ready_now_or_later_tasks.append((t_next, acc_order, th_idx_cursor, a_state, t_key))
                     if t_next <= now:
-                        eligible_tasks.append((t_next, acc_order, th_idx, a_state, t_key))
+                        eligible_tasks.append((t_next, acc_order, th_idx_cursor, a_state, t_key))
+                    th_idx_cursor += 1
 
-            # 3. 待機時間が到達した（または初回・別テーマで時間重複して即実行可能な）タスクがある場合
+                # 完全別枠の『AIポスト』スケジュール判定
+                ai_cfg_run = read_ai_post_config_from_xlsx(pf)
+                ai_eligible = False
+                if self._has_pending_ai_post_work(ai_cfg_run, pf, a_state["name"]):
+                    if is_now_within_weekdays(now, ai_cfg_run.get("weekdays", "毎日")) and is_within_target_hours(ai_cfg_run.get("time_slot", "0:00-0:00")):
+                        ai_eligible = True
+                        ai_next = a_state.get("ai_next_run_time")
+                        if ai_next is None:
+                            ai_next = now
+                            a_state["ai_next_run_time"] = ai_next
+                        ready_now_or_later_tasks.append((ai_next, acc_order, th_idx_cursor, a_state, "__AI_POST__"))
+                        if ai_next <= now:
+                            eligible_tasks.append((ai_next, acc_order, th_idx_cursor, a_state, "__AI_POST__"))
+
+                if ai_eligible and not eligible_themes_for_acc:
+                    skip_sig = f"{len(unp)}:{'|'.join(blocked_reasons[:3])}"
+                    if a_state.get("_logged_fixed_skip_sig") != skip_sig:
+                        a_state["_logged_fixed_skip_sig"] = skip_sig
+                        if not unp:
+                            self.log(f"[INFO] ℹ️ [{a_state['name']}] 固定ポストの未投稿が0件のため今回はAIポストのみ待機/実行対象です。")
+                        else:
+                            self.log(f"[INFO] ℹ️ [{a_state['name']}] 固定ポスト未投稿 {len(unp)} 件は実行条件外のため保留中です（理由: {', '.join(blocked_reasons) or '時間/曜日設定'}）。")
+
+                if not eligible_themes_for_acc and not ai_eligible:
+                    waiting_timeslot_count += 1
+                    continue
+
+            # 3. 待機時間が到達した（または初回・別テーマ/AI枠で即実行可能な）タスクがある場合
             if eligible_tasks:
-                # 最も予定時刻が早く到来している（長く待っている）アカウント＋テーマを優先実行
-                eligible_tasks.sort(key=lambda item: (item[0], item[1], item[2]))
+                # 同時刻到達時は固定テーマポストを優先実行し、その後AIポストを実行する
+                eligible_tasks.sort(key=lambda item: (item[0], 1 if item[4] == "__AI_POST__" else 0, item[1], item[2]))
                 _, _, _, target_state, chosen_theme = eligible_tasks[0]
                 acc_name = target_state["name"]
 
                 rem_queue = len(eligible_tasks) - 1
+                is_ai_task = (chosen_theme == "__AI_POST__")
+                task_disp = "AIポスト(固定別枠)" if is_ai_task else f"テーマ: {chosen_theme}"
                 self.log("-" * 55)
-                self.log(f"[INFO] 🪟 【1窓ローテーション】@{acc_name} [テーマ: {chosen_theme}] の実行番が来ました（他即実行待機: {rem_queue} 件）。ブラウザを1窓のみ起動します。")
-                self.root.after(0, lambda an=acc_name, th=chosen_theme: self.status_lbl.config(text=f"● 実行中: @{an} [{th}] (1窓のみ起動中)", fg="#38bdf8"))
+                self.log(f"[INFO] 🪟 【1窓ローテーション】@{acc_name} [{task_disp}] の実行番が来ました（他即実行待機: {rem_queue} 件）。アカウント窓を1窓のみ起動します。")
+                self.root.after(0, lambda an=acc_name, td=task_disp: self.status_lbl.config(text=f"● 実行中: @{an} [{td}] (1窓のみ起動中)", fg="#38bdf8"))
 
-                # 1アカウント・1テーマ分だけブラウザを起動 ➔ 1件投稿 ➔ ブラウザ完全終了
-                wait_sec = self._execute_single_post(target_state, p, target_theme=chosen_theme)
-                last_wait_log_key = None
-
-                # 次回予定時刻は「今回実行したテーマのみ」に記録（他の重複テーマを待たせない）
-                next_theme_dt = datetime.now() + timedelta(seconds=wait_sec)
-                target_state.setdefault("theme_next_run_times", {})[chosen_theme] = next_theme_dt
-                target_state["next_run_time"] = next_theme_dt
-                rem_min = wait_sec // 60
-                iv_disp = target_state.get("last_interval_label") or "設定値"
-                if target_state.get("last_post_ok", False):
-                    self.log(f"[INFO] 🌿 @{acc_name} [テーマ: {chosen_theme}] の処理完了（ポスト間隔: {iv_disp}）。ブラウザを完全終了しメモリを解放しました。同テーマ次回予定: {next_theme_dt.strftime('%H:%M:%S')} (約{rem_min}分後)")
+                if is_ai_task:
+                    wait_sec = self._execute_single_ai_post(target_state, p)
+                    last_wait_log_key = None
+                    next_ai_dt = datetime.now() + timedelta(seconds=wait_sec)
+                    target_state["ai_next_run_time"] = next_ai_dt
+                    rem_min = wait_sec // 60
+                    iv_disp = target_state.get("last_interval_label") or "設定値"
+                    if target_state.get("last_post_ok", False):
+                        self.log(f"[INFO] 🤖 @{acc_name} [AIポスト] の処理完了（間隔: {iv_disp}）。アカウント窓を完全終了しました（固定AI専用Windowは維持）。次回AI予定: {next_ai_dt.strftime('%H:%M:%S')} (約{rem_min}分後)")
+                    else:
+                        self.log(f"[WARN] ⚠️ @{acc_name} [AIポスト] は今回エラー/未完了のためリトライ待機に入ります。次回予定: {next_ai_dt.strftime('%H:%M:%S')} (約{rem_min}分後)")
                 else:
-                    self.log(f"[WARN] ⚠️ @{acc_name} [テーマ: {chosen_theme}] は今回の投稿でエラー/未確認のためリトライ待機に入ります（通常ポスト間隔: {iv_disp}）。同テーマ再試行予定: {next_theme_dt.strftime('%H:%M:%S')} (約{rem_min}分後)")
+                    # 1アカウント・1テーマ分だけブラウザを起動 ➔ 1件投稿 ➔ ブラウザ完全終了
+                    wait_sec = self._execute_single_post(target_state, p, target_theme=chosen_theme)
+                    last_wait_log_key = None
+
+                    # 次回予定時刻は「今回実行したテーマのみ」に記録（他の重複テーマを待たせない）
+                    next_theme_dt = datetime.now() + timedelta(seconds=wait_sec)
+                    target_state.setdefault("theme_next_run_times", {})[chosen_theme] = next_theme_dt
+                    target_state["next_run_time"] = next_theme_dt
+                    rem_min = wait_sec // 60
+                    iv_disp = target_state.get("last_interval_label") or "設定値"
+                    if target_state.get("last_post_ok", False):
+                        self.log(f"[INFO] 🌿 @{acc_name} [テーマ: {chosen_theme}] の処理完了（ポスト間隔: {iv_disp}）。ブラウザを完全終了しメモリを解放しました。同テーマ次回予定: {next_theme_dt.strftime('%H:%M:%S')} (約{rem_min}分後)")
+                    else:
+                        self.log(f"[WARN] ⚠️ @{acc_name} [テーマ: {chosen_theme}] は今回の投稿でエラー/未確認のためリトライ待機に入ります（通常ポスト間隔: {iv_disp}）。同テーマ再試行予定: {next_theme_dt.strftime('%H:%M:%S')} (約{rem_min}分後)")
                 self.root.after(0, lambda: self.load_excel_data(silent=True))
 
-                # 時間が被った別テーマや別アカウントがあれば、待機せず即座に次のループで連続実行！
+                # Chrome終了後のファイルハンドル解放を少し待ってから次のタスクへ遷移
+                if rem_queue > 0 and self.is_running:
+                    time.sleep(1.2)
+
+                # 時間が被った別テーマやAIポスト・別アカウントがあれば、待機せず即座に次のループで連続実行！
                 continue
 
             # 4. 到達したテーマ/アカウントがない場合（全テーマ待機中 / 時間帯待ち）
@@ -11480,44 +15569,69 @@ class ThreadsPosterGUI:
                 all_valid_pending = [
                     a for a in account_states
                     if a["posts_file"] and os.path.exists(a["posts_file"])
-                    and any(self._is_unposted_item(p_it) for p_it in read_excel_records(a["posts_file"]))
+                    and (
+                        any(self._is_unposted_item(p_it) for p_it in read_excel_records(a["posts_file"]))
+                        or self._has_pending_ai_post_work(read_ai_post_config_from_xlsx(a["posts_file"]), a["posts_file"], a["name"], allow_reset=False)
+                    )
                 ]
-                if not all_valid_pending:
+                if not all_valid_pending and not future_delete_tasks:
                     break
-                slot_wait_key = ("timeslot", waiting_timeslot_count)
+                if future_delete_tasks:
+                    del_dt, del_acc, del_pid = min(future_delete_tasks, key=lambda item: item[0])
+                    del_left = max(1.0, (del_dt - datetime.now()).total_seconds())
+                    sleep_s = max(1, min(20, int(del_left)))
+                else:
+                    sleep_s = 20
+                slot_wait_key = ("timeslot", waiting_timeslot_count, len(future_delete_tasks))
                 if last_wait_log_key != slot_wait_key:
                     last_wait_log_key = slot_wait_key
-                    self.log(f"[INFO] ⏳ テーマ指定の実行時間・曜日の到来待ちのため待機中 ({waiting_timeslot_count} アカウント / ブラウザ完全終了・省メモリ)")
+                    self.log(f"[INFO] ⏳ 指定の実行時間・曜日の到来待ちのため待機中 ({waiting_timeslot_count} アカウント / アカウントブラウザ完全終了・省メモリ)")
                 self.root.after(0, lambda cnt=waiting_timeslot_count: self.status_lbl.config(
-                    text=f"● 待機中: テーマ指定の実行時間・曜日の到来待ち ({cnt} アカウント) [省メモリ待機]",
+                    text=f"● 待機中: 指定の実行時間・曜日の到来待ち ({cnt} アカウント) [省メモリ待機]",
                     fg="#fbbf24"
                 ))
-                for _ in range(20):
+                for _ in range(sleep_s):
                     if not self.is_running:
                         break
                     time.sleep(1)
                 continue
 
             nearest_dt, _, _, nearest_acc, nearest_theme = min(ready_now_or_later_tasks, key=lambda item: item[0])
+            nearest_label = "AIポスト" if nearest_theme == "__AI_POST__" else f"テーマ: {nearest_theme}"
             secs_left = max(1.0, (nearest_dt - datetime.now()).total_seconds())
             mins_left = int(secs_left // 60)
             secs_rem = int(secs_left % 60)
             time_disp = f"{mins_left:02d}分{secs_rem:02d}秒"
 
-            wait_key = (nearest_acc['name'], nearest_theme, nearest_dt.strftime('%H:%M:%S'))
-            if last_wait_log_key != wait_key:
-                last_wait_log_key = wait_key
-                self.log(f"[INFO] ⏳ 次回実行まで待機中: @{nearest_acc['name']} [テーマ: {nearest_theme}] 次回予定 {nearest_dt.strftime('%H:%M:%S')} (あと約{mins_left}分{secs_rem:02d}秒 / 省メモリ待機中)")
+            del_left = None
+            if future_delete_tasks:
+                del_dt, del_acc, del_pid = min(future_delete_tasks, key=lambda item: item[0])
+                del_left = max(1.0, (del_dt - datetime.now()).total_seconds())
+            if del_left is not None and del_left < secs_left:
+                dm, ds = int(del_left // 60), int(del_left % 60)
+                del_disp = f"{dm:02d}分{ds:02d}秒"
+                wait_key = ("del_next", del_acc, str(del_pid), del_dt.strftime('%H:%M:%S'))
+                if last_wait_log_key != wait_key:
+                    last_wait_log_key = wait_key
+                    self.log(f"[INFO] 🗑️ 自動削除予定まで待機中: @{del_acc} Post #{del_pid} 予定 {del_dt.strftime('%H:%M:%S')} (あと約{del_disp}) [省メモリ待機中]")
+                self.root.after(0, lambda an=del_acc, pid=del_pid, td=del_disp: self.status_lbl.config(
+                    text=f"● 自動削除待機中: @{an} Post #{pid} (あと {td}) [省メモリ待機]",
+                    fg="#f472b6"
+                ))
+                sleep_round = max(1, min(10, int(del_left)))
+            else:
+                wait_key = (nearest_acc['name'], nearest_label, nearest_dt.strftime('%H:%M:%S'))
+                if last_wait_log_key != wait_key:
+                    last_wait_log_key = wait_key
+                    self.log(f"[INFO] ⏳ 次回実行まで待機中: @{nearest_acc['name']} [{nearest_label}] 次回予定 {nearest_dt.strftime('%H:%M:%S')} (あと約{mins_left}分{secs_rem:02d}秒 / 省メモリ待機中)")
 
-            self.root.after(0, lambda an=nearest_acc['name'], th=nearest_theme, td=time_disp: self.status_lbl.config(
-                text=f"● 待機中: 次回 @{an} [{th}] (あと {td}) [ブラウザ完全終了・省メモリ]",
-                fg="#10b981"
-            ))
+                self.root.after(0, lambda an=nearest_acc['name'], th=nearest_label, td=time_disp: self.status_lbl.config(
+                    text=f"● 待機中: 次回 @{an} [{th}] (あと {td}) [アカウント窓完全終了・省メモリ]",
+                    fg="#10b981"
+                ))
+                sleep_round = max(1, min(10, int(secs_left)))
 
             # 1秒刻みで停止フラグを監視しながら待機
-            sleep_round = min(10, int(secs_left))
-            if sleep_round <= 0:
-                sleep_round = 1
             for _ in range(sleep_round):
                 if not self.is_running:
                     break
@@ -11546,11 +15660,16 @@ class ThreadsPosterGUI:
             except Exception:
                 pass
 
+        if acc_state.get("checkpoint_paused"):
+            self.log(f"[WARN] 🛑 [{account_name}] 電話番号/本人確認ロック保護により一時停止中のためスキップします。")
+            return 3600
+
         custom_settings = read_account_settings_from_post_file(posts_file) if (posts_file and os.path.exists(posts_file)) else {}
         theme_map = read_theme_settings_from_xlsx(posts_file) if (posts_file and os.path.exists(posts_file)) else {}
         _, clean_acc_id, prof_name, profile_dir = _resolve_profile_dir_for_account(account, custom_settings=custom_settings)
         profile_subpath = f"chrome_profiles/{prof_name}"
         os.makedirs(profile_dir, exist_ok=True)
+        proxy_str = extract_proxy_from_account(account)
 
         if "min_interval_sec" in custom_settings:
             min_delay = custom_settings["min_interval_sec"]
@@ -11638,7 +15757,7 @@ class ThreadsPosterGUI:
         post_id = post_item.get("ID") or post_item.get("id") or row_idx - 1
 
         try:
-            context = safe_launch_persistent_context(p, profile_dir, headless=False, log_func=self.log)
+            context = safe_launch_persistent_context(p, profile_dir, headless=False, log_func=self.log, proxy_str=proxy_str)
             self.current_context = context
             page = context.pages[0] if context.pages else context.new_page()
             self.current_page = page
@@ -11648,10 +15767,6 @@ class ThreadsPosterGUI:
             if not self.is_running or self.stop_requested:
                 self._wait_for_user_in_open_browser(page, context, account_name, profile_dir)
                 return 0
-
-            # 提案2: 画像・動画通信ブロック
-            if self.var_block_media.get():
-                setup_media_blocking(context, log_func=self.log)
 
             if acc_state.get("pure_profile_mode"):
                 session_token = ""
@@ -11671,22 +15786,37 @@ class ThreadsPosterGUI:
 
             is_cp, cp_why = detect_phone_checkpoint_screen(page)
             if is_cp:
+                acc_state["checkpoint_paused"] = True
                 self.log("=" * 60)
-                self.log(f"[WARN] 🚨 [{account_name}] 携帯電話番号（SMS）認証画面を検知しました（{cp_why}）。")
+                self.log(f"[WARN] 🚨 [{account_name}] 携帯電話番号（SMS）確認・本人確認画面を検知しました（{cp_why}）。")
+                self.log("[WARN] 🛡️ アカウント保護のため、このアカウントの自動投稿を安全停止（自動再試行をストップ）します。")
+                self.log("[INFO] 💡 【Hyonix/別PCでの復旧手順】① 元のPC(またはスマホアプリ/同一プロキシ)でSMS認証を解除 ② 「アカウント情報.xlsx」の『プロキシ』列に専用IP(Residential Proxy)を設定 ③ 『🌐 ブラウザでログイン（手動操作）』から再保存してください。")
                 capture_error_diagnostic(page, account_name, "携帯電話番号認証要求", None, self.log)
                 self.log("=" * 60)
-                return 300
+                return 3600
 
             is_logged_in = ensure_authenticated_session(
                 page, context, account, self.account_config_path, log_func=self.log, wait_timeout_sec=300, acc_state=acc_state
             )
             if not is_logged_in:
+                is_cp_after, cp_why_after = detect_phone_checkpoint_screen(page)
+                if is_cp_after or acc_state.get("checkpoint_paused"):
+                    acc_state["checkpoint_paused"] = True
+                    self.log("=" * 60)
+                    self.log(f"[WARN] 🚨 [{account_name}] 認証中に電話番号/本人確認ロックを検知したため、自動停止します（{cp_why_after or 'checkpoint'}）。")
+                    self.log("[INFO] 💡 無理に自動再試行せず、元のPCやプロキシ環境で手動解除してください。")
+                    self.log("=" * 60)
+                    return 3600
                 if acc_state.get("login_cooldown_started"):
                     rem = int(max(60, acc_state.get("login_cooldown_until", 0) - time.time()))
                     self.log(f"[INFO] ⏳ [{account_name}] 15分の安全冷却完了後にID/PW自動ログインを実行します（次回実行予定: 約{rem//60}分後）。")
                     return rem
                 self.log(f"[ERROR] [{account_name}] ログイン認証が完了しなかったため、このアカウントの今回の投稿をスキップします。")
                 return 300
+
+            # 認証完了後にのみ省メモリ通信ブロックを適用（認証・チャレンジ中の画像/スクリプト遮断によるロック誘発を防止）
+            if self.var_block_media.get():
+                setup_media_blocking(context, log_func=self.log)
 
             # Metaが発行・更新した最新セッションIDをメモリおよびアカウント情報.xlsxに双方向自動同期
             fresh_tok = save_context_cookies_to_excel(context, self.account_config_path, account_name, log_func=self.log)
@@ -11730,12 +15860,27 @@ class ThreadsPosterGUI:
             except Exception:
                 pass
 
-            # 提案新機能1: 投稿前のステルス巡回（ウォーミングアップ閲覧）
+            # 提案新機能1: 投稿前のステルス巡回（別PC移行直後は15秒以上の慎重なウォームアップ巡回を自動実施）
             if not self.is_running or self.stop_requested:
                 self._wait_for_user_in_open_browser(page, context, account_name, profile_dir)
                 return 0
 
-            if self.var_stealth_patrol.get():
+            fp_migration = get_or_create_fingerprint(profile_dir)
+            if fp_migration.get("needs_migration_warmup"):
+                self.log(f"[INFO] 🛡️ [{account_name}] 別PC/VPS移行直後のため、Metaロック対策として約15秒間のウォームアップ閲覧を実行します...")
+                perform_stealth_feed_patrol(page, account_name, log_func=self.log, abort_check=lambda: not self.is_running or self.stop_requested)
+                for _wm in range(6):
+                    if not self.is_running or self.stop_requested:
+                        self._wait_for_user_in_open_browser(page, context, account_name, profile_dir)
+                        return 0
+                    time.sleep(1.0)
+                try:
+                    fp_migration["needs_migration_warmup"] = False
+                    with open(os.path.join(profile_dir, "fingerprint.json"), "w", encoding="utf-8") as _fp_w:
+                        json.dump(fp_migration, _fp_w, ensure_ascii=False, indent=2)
+                except Exception:
+                    pass
+            elif self.var_stealth_patrol.get():
                 perform_stealth_feed_patrol(page, account_name, log_func=self.log, abort_check=lambda: not self.is_running or self.stop_requested)
 
             if not self.is_running or self.stop_requested:
@@ -11763,6 +15908,7 @@ class ThreadsPosterGUI:
             update_post_status(posts_file, row_idx, status="投稿完了", finish_time=finish_time, error_msg="", sheet_name=post_item.get("_sheet_name"), applied_topic=target_topic)
             topic_suffix = f" (トピック: 「{target_topic}」)" if target_topic else ""
             self.log(f"[SUCCESS] [{account_name}] Post #{post_id} 投稿成功！Excel更新{topic_suffix}。")
+            self._enqueue_delete_if_configured(profile_dir, account_name, posts_file, row_idx, post_item, post_id, text_content)
             acc_state["consecutive_errors"] = 0
             acc_state["last_post_ok"] = True
 
@@ -11784,7 +15930,7 @@ class ThreadsPosterGUI:
                     account["auth_token"] = ""
                 try:
                     if context:
-                        context.clear_cookies()
+                        clear_auth_cookies_preserve_device(context, log_func=self.log)
                         time.sleep(1.0)
                         context.close()
                 except Exception:
@@ -11835,6 +15981,16 @@ class ThreadsPosterGUI:
                 short_reason = str(post_err)
                 self.log(f"[ERROR] [{account_name}] 投稿処理エラー: {post_err}")
 
+            if 'page' in locals() and page:
+                try:
+                    cp_exc, cp_exc_why = detect_phone_checkpoint_screen(page)
+                    if cp_exc:
+                        acc_state["checkpoint_paused"] = True
+                        self.log(f"[WARN] 🚨 [{account_name}] エラー中に電話番号確認画面({cp_exc_why})を検知したため、自動停止します。")
+                        return 3600
+                except Exception:
+                    pass
+
             if any(wk in str(post_err) for wk in warning_keywords):
                 is_warning = True
 
@@ -11883,6 +16039,7 @@ class ThreadsPosterGUI:
                     context.close()
                 except Exception:
                     pass
+                time.sleep(0.8)
             self.current_context = None
             self.current_page = None
             _THREAD_LOG_LOCAL.account_name = ""
@@ -11920,11 +16077,16 @@ class ThreadsPosterGUI:
             except Exception:
                 pass
 
+        if acc_state.get("checkpoint_paused"):
+            self.log(f"[WARN] 🛑 [{account_name}] 電話番号/本人確認ロック保護により一時停止中のため日常ポストをスキップします。")
+            return False
+
         self.log(f"[{account_name}] 🌅 日常つぶやき【{slot_name}】({time_slot}) 自動投稿を開始（スピンタックス＆動的日付展開済: {post_text[:35]}...）")
+        proxy_str = extract_proxy_from_account(account)
         context = None
         page = None
         try:
-            context = safe_launch_persistent_context(p, profile_dir, headless=False, log_func=self.log)
+            context = safe_launch_persistent_context(p, profile_dir, headless=False, log_func=self.log, proxy_str=proxy_str)
             self.current_context = context
             page = context.pages[0] if context.pages else context.new_page()
             self.current_page = page
@@ -11934,9 +16096,6 @@ class ThreadsPosterGUI:
             if not self.is_running or self.stop_requested:
                 self._wait_for_user_in_open_browser(page, context, account_name, profile_dir)
                 return False
-
-            if self.var_block_media.get():
-                setup_media_blocking(context, log_func=self.log)
 
             if acc_state.get("pure_profile_mode"):
                 session_token = ""
@@ -11953,12 +16112,25 @@ class ThreadsPosterGUI:
                 self._wait_for_user_in_open_browser(page, context, account_name, profile_dir)
                 return False
 
+            is_cp_d, cp_why_d = detect_phone_checkpoint_screen(page)
+            if is_cp_d:
+                acc_state["checkpoint_paused"] = True
+                self.log(f"[WARN] 🚨 [{account_name}] 日常ポスト起動時に電話番号確認画面を検知したため停止します（{cp_why_d}）。")
+                capture_error_diagnostic(page, account_name, "携帯電話番号認証要求(日常)", None, self.log)
+                return False
+
             is_logged_in = ensure_authenticated_session(
                 page, context, account, self.account_config_path, log_func=self.log, wait_timeout_sec=300, acc_state=acc_state
             )
             if not is_logged_in:
+                is_cp_da, _ = detect_phone_checkpoint_screen(page)
+                if is_cp_da or acc_state.get("checkpoint_paused"):
+                    acc_state["checkpoint_paused"] = True
                 self.log(f"[ERROR] [{account_name}] ログイン認証が完了しなかったため日常投稿をスキップします。")
                 return False
+
+            if self.var_block_media.get():
+                setup_media_blocking(context, log_func=self.log)
 
             # Metaが発行・更新した最新セッションIDをメモリおよびアカウント情報.xlsxに双方向自動同期
             fresh_tok = save_context_cookies_to_excel(context, self.account_config_path, account_name, log_func=self.log)
@@ -12051,6 +16223,295 @@ class ThreadsPosterGUI:
             self.current_page = None
             _THREAD_LOG_LOCAL.account_name = ""
 
+    def _is_pending_ai_row(self, row_dict):
+        if not isinstance(row_dict, dict):
+            return False
+        st = str(row_dict.get("status") or "").strip()
+        if any(x in st for x in ("完了", "投稿済", "削除")):
+            return False
+        if st in ("", "指示待機", "未投稿", "待機", "pending"):
+            return bool(str(row_dict.get("prompt") or "").strip())
+        return False
+
+    def _has_pending_ai_post_work(self, ai_cfg, posts_file=None, account_name="", allow_reset=True):
+        if not isinstance(ai_cfg, dict) or not ai_cfg.get("enabled"):
+            return False
+        sections = ai_cfg.get("prompt_sections") or {}
+        if any(str(v or "").strip() for v in sections.values()):
+            return True
+        if str(ai_cfg.get("memo") or "").strip():
+            return True
+        rows = ai_cfg.get("rows") or []
+        if any(self._is_pending_ai_row(r) for r in rows):
+            return True
+        if allow_reset and self.var_auto_loop.get() and posts_file:
+            reset_cnt = reset_ai_post_rows_silent(posts_file)
+            if reset_cnt > 0:
+                self.log(f"[INFO] 🔁 [{account_name}] AIポスト全件完了に伴い指示テーブル {reset_cnt} 件を『指示待機』へ自動リセットしました。")
+                return True
+        return False
+
+    def _execute_single_ai_post(self, acc_state, p):
+        """
+        固定ポストとは完全別枠の『AIポスト』を1件生成＆投稿する。
+        ・AI生成ウィンドウ連携がONの場合は固定『chrome_profiles/_ai_window』(CDP:9333)を使用（そのまま維持）。
+        ・Threads投稿ウィンドウは必ず各アカウント別の『chrome_profiles/<アカウント名>』を起動し投稿後クローズ。
+        """
+        account = acc_state["account"]
+        account_name = acc_state["name"]
+        posts_file = acc_state["posts_file"]
+        acc_state["last_post_ok"] = False
+        _THREAD_LOG_LOCAL.account_name = sanitize_account_folder_name(account_name)
+        get_account_images_dir(account_name, create=True)
+
+        if self.account_config_path and os.path.exists(self.account_config_path):
+            try:
+                for lr in read_excel_records(self.account_config_path):
+                    if str(lr.get("アカウントID") or "").strip().lstrip("@") == account_name.lstrip("@"):
+                        account = lr
+                        acc_state["account"] = lr
+                        break
+            except Exception:
+                pass
+
+        if acc_state.get("checkpoint_paused"):
+            self.log(f"[WARN] 🛑 [{account_name}] 電話番号/本人確認ロック保護により一時停止中のためAIポストをスキップします。")
+            return 3600
+
+        ai_cfg = read_ai_post_config_from_xlsx(posts_file)
+        if not ai_cfg.get("enabled"):
+            return 300
+
+        min_delay = int(ai_cfg.get("min_interval_sec") or 7200)
+        max_delay = int(ai_cfg.get("max_interval_sec") or 21600)
+        interval_label = ai_cfg.get("interval_str") or "120〜360分"
+        acc_state["last_interval_label"] = interval_label
+
+        rows = ai_cfg.get("rows") or []
+        pending_rows = [r for r in rows if self._is_pending_ai_row(r)]
+        sections = ai_cfg.get("prompt_sections") or {}
+        has_sections = any(str(v or "").strip() for v in sections.values()) or bool(str(ai_cfg.get("memo") or "").strip())
+        if rows and not pending_rows and not has_sections:
+            if self.var_auto_loop.get():
+                reset_cnt = reset_ai_post_rows_silent(posts_file)
+                if reset_cnt > 0:
+                    self.log(f"[INFO] 🔁 [{account_name}] AIポスト待機行リセット ({reset_cnt}件)。")
+                    ai_cfg = read_ai_post_config_from_xlsx(posts_file)
+                    rows = ai_cfg.get("rows") or []
+                    pending_rows = [r for r in rows if self._is_pending_ai_row(r)]
+            if not pending_rows:
+                self.log(f"[INFO] [{account_name}] AIポストの設定プロンプトが空です。")
+                return 1800
+
+        chosen_row = pending_rows[0] if pending_rows else None
+        row_idx = chosen_row.get("_row_idx") if chosen_row else None
+        prompt_text_src = (
+            (chosen_row.get("prompt") if chosen_row else "")
+            or str(sections.get("prompt") or "").strip()
+            or str(ai_cfg.get("memo") or "").strip()
+            or "8項目プロンプト設定に沿ったThreads投稿"
+        )
+        raw_topic = (chosen_row.get("topic") if chosen_row else "") or ""
+        del_spec = (chosen_row.get("delete_after") if chosen_row else "") or ""
+        post_id = (chosen_row.get("id") if chosen_row else f"AI-{datetime.now().strftime('%H%M%S')}")
+        text_content = ""
+        used_engine = _parse_engine_list(ai_cfg.get("engine") or "duckai", default_fallback="duckai")[0]
+
+        design_dict = load_account_design_from_xlsx(posts_file, account_id=account_name)
+        custom_settings = read_account_settings_from_post_file(posts_file) if (posts_file and os.path.exists(posts_file)) else {}
+        _, _, prof_name, profile_dir = _resolve_profile_dir_for_account(account, custom_settings=custom_settings)
+        if prof_name == AI_WINDOW_PROFILE_NAME:
+            prof_name = sanitize_account_folder_name(account_name) or "account_default"
+            profile_dir = os.path.join(BASE_DIR, "chrome_profiles", prof_name)
+        os.makedirs(profile_dir, exist_ok=True)
+        proxy_str = extract_proxy_from_account(account)
+
+        # ステップ1: 固定AIウィンドウ(またはAPI)で投稿文章を生成（アカウント窓とは完全に別タイミング・別ウィンドウ）
+        self.log(f"[INFO] 🤖 [{account_name}] AIポスト生成開始: エンジン={ai_cfg.get('engine')} | AI専用Window連携={'ON(固定:_ai_window)' if ai_cfg.get('ai_window_sync', True) else 'OFF(APIのみ)'} | 投稿先プロファイル=chrome_profiles/{prof_name}")
+        gen_text, used_engine, gen_err = generate_ai_post_text(
+            account_name,
+            ai_cfg,
+            prompt_row=chosen_row,
+            design_dict=design_dict,
+            playwright_obj=p,
+            base_dir=BASE_DIR,
+            log_func=self.log,
+        )
+        if not gen_text:
+            err_msg = gen_err or "AI文章生成に失敗しました"
+            self.log(f"[ERROR] [{account_name}] AIポスト生成エラー ({used_engine}): {err_msg}")
+            record_ai_post_result_in_xlsx(
+                posts_file,
+                row_idx=row_idx,
+                prompt_text=prompt_text_src,
+                topic=raw_topic,
+                delete_after=del_spec,
+                generated_text="",
+                engine_used=used_engine,
+                status="エラー",
+                finish_time=None,
+                error_msg=err_msg,
+            )
+            return 300
+
+        text_content = expand_spintax_and_placeholders(gen_text)
+        topic_counter = acc_state.get("ai_topic_rotation_counter", 0)
+        target_topic = select_topic_for_post(
+            raw_topic,
+            account_name,
+            post_counter=topic_counter,
+            enable_ab_test=self.var_topic_ab_test.get(),
+            log_func=self.log,
+        )
+        acc_state["ai_topic_rotation_counter"] = topic_counter + 1
+
+        # ステップ2: アカウント専用Threadsブラウザを起動して投稿（_ai_windowとは完全に分離）
+        self.log(f"[INFO] 🪟 [{account_name}] AI文章生成完了 ({len(text_content)}文字 / 使用AI: {used_engine}) ➔ アカウント別Window (chrome_profiles/{prof_name}) を起動して投稿します...")
+        for lk in ["SingletonLock", "SingletonCookie", "SingletonSocket"]:
+            try:
+                lk_p = os.path.join(profile_dir, lk)
+                if os.path.exists(lk_p):
+                    os.remove(lk_p)
+            except Exception:
+                pass
+
+        context = None
+        page = None
+        try:
+            context = safe_launch_persistent_context(p, profile_dir, headless=False, log_func=self.log, proxy_str=proxy_str)
+            self.current_context = context
+            page = context.pages[0] if context.pages else context.new_page()
+            self.current_page = page
+            self.current_account_name = account_name
+            self.current_profile_dir = profile_dir
+
+            if not self.is_running or self.stop_requested:
+                self._wait_for_user_in_open_browser(page, context, account_name, profile_dir)
+                return 0
+
+            if acc_state.get("pure_profile_mode"):
+                session_token = ""
+            else:
+                session_token = str(account.get("auth_token") or account.get("Authトークン_sessionid") or account.get("sessionid") or "").strip()
+                if session_token:
+                    inject_session_cookies(context, session_token, account_name, log_func=self.log)
+
+            safe_goto_threads(page, context, session_token, account_name, log_func=self.log, timeout=60000)
+            time.sleep(3)
+
+            if not self.is_running or self.stop_requested:
+                self._wait_for_user_in_open_browser(page, context, account_name, profile_dir)
+                return 0
+
+            is_cp, cp_why = detect_phone_checkpoint_screen(page)
+            if is_cp:
+                acc_state["checkpoint_paused"] = True
+                self.log(f"[WARN] 🚨 [{account_name}] AIポスト起動時に電話番号確認画面を検知したため停止します（{cp_why}）。")
+                capture_error_diagnostic(page, account_name, "携帯電話番号認証要求(AI)", None, self.log)
+                return 3600
+
+            is_logged_in = ensure_authenticated_session(
+                page, context, account, self.account_config_path, log_func=self.log, wait_timeout_sec=300, acc_state=acc_state
+            )
+            if not is_logged_in:
+                if acc_state.get("checkpoint_paused"):
+                    return 3600
+                self.log(f"[ERROR] [{account_name}] ログイン認証が完了しなかったため今回のAIポストをスキップします。")
+                return 300
+
+            if self.var_block_media.get():
+                setup_media_blocking(context, log_func=self.log)
+
+            fresh_tok = save_context_cookies_to_excel(context, self.account_config_path, account_name, log_func=self.log)
+            if fresh_tok:
+                account["auth_token"] = fresh_tok
+                acc_state["account"]["auth_token"] = fresh_tok
+
+            if self.var_stealth_patrol.get():
+                perform_stealth_feed_patrol(page, account_name, log_func=self.log, abort_check=lambda: not self.is_running or self.stop_requested)
+
+            if not self.is_running or self.stop_requested:
+                self._wait_for_user_in_open_browser(page, context, account_name, profile_dir)
+                return 0
+
+            self.log(f"[{account_name}] 🤖 AIポスト #{post_id} ({len(text_content)}文字, 使用AI: {used_engine}, トピック: {target_topic or 'なし'}) を投稿中...")
+            posted_ok, post_err_msg = execute_threads_post_with_fallback(
+                page=page,
+                account_name=account_name,
+                text_content=text_content,
+                target_topic=target_topic,
+                resolved_img=None,
+                log_func=self.log,
+                abort_check=lambda: not self.is_running or self.stop_requested,
+            )
+            if not posted_ok:
+                raise Exception(post_err_msg or "AIポスト投稿に失敗しました。")
+
+            finish_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            written_row = record_ai_post_result_in_xlsx(
+                posts_file,
+                row_idx=row_idx,
+                prompt_text=prompt_text_src,
+                topic=target_topic or raw_topic,
+                delete_after=del_spec,
+                generated_text=text_content,
+                engine_used=used_engine,
+                status="投稿完了",
+                finish_time=finish_time,
+                error_msg="",
+            )
+            self.log(f"[SUCCESS] [{account_name}] 🤖 AIポスト #{post_id} 投稿成功！(使用AI: {used_engine} / AIポストシート更新)")
+            if del_spec and (written_row or row_idx):
+                self._enqueue_delete_if_configured(
+                    profile_dir,
+                    account_name,
+                    posts_file,
+                    int(written_row or row_idx),
+                    {"削除時間": del_spec, "_sheet_name": ai_cfg.get("sheet_name") or "AIポスト"},
+                    post_id,
+                    text_content,
+                )
+            acc_state["consecutive_errors"] = 0
+            acc_state["last_post_ok"] = True
+            return random.randint(min_delay, max_delay)
+        except Exception as e_ai_post:
+            diag = capture_error_diagnostic(page, account_name, f"AI Post #{post_id}", e_ai_post, self.log) if page else {"short_reason": str(e_ai_post)}
+            short_r = diag.get("short_reason", str(e_ai_post))
+            self.log(f"[ERROR] [{account_name}] 🤖 AIポスト投稿エラー: {short_r}")
+            record_ai_post_result_in_xlsx(
+                posts_file,
+                row_idx=row_idx,
+                prompt_text=prompt_text_src,
+                topic=target_topic or raw_topic,
+                delete_after=del_spec,
+                generated_text=text_content,
+                engine_used=used_engine,
+                status="エラー",
+                finish_time=None,
+                error_msg=short_r,
+            )
+            return 300
+        finally:
+            if not self.is_running or self.stop_requested:
+                try:
+                    if page and not page.is_closed():
+                        self._wait_for_user_in_open_browser(page, context, account_name, profile_dir)
+                except Exception:
+                    pass
+            if context:
+                try:
+                    auto_refresh_and_save_session(context, account_name, profile_dir, self.account_config_path, log_func=self.log)
+                except Exception:
+                    pass
+                try:
+                    context.close()
+                except Exception:
+                    pass
+                time.sleep(0.8)
+            self.current_context = None
+            self.current_page = None
+            _THREAD_LOG_LOCAL.account_name = ""
+
     def _run_legacy_sequential_loop(self, active_accounts, p):
         cycle_num = 1
         while self.is_running:
@@ -12075,7 +16536,11 @@ class ThreadsPosterGUI:
                     cur_unposted = [p_it for p_it in cur_posts if self._is_unposted_item(p_it)]
                     if not cur_unposted:
                         reset_cnt = reset_posts_file_silent(pf)
-                        self.log(f"[INFO] [{acc_name}] サイクル完了に伴い '{os.path.basename(pf)}' の全 {reset_cnt} 件を『未投稿』にリセットしました。")
+                        if reset_cnt > 0:
+                            self.log(f"[INFO] [{acc_name}] サイクル完了に伴い '{os.path.basename(pf)}' の全 {reset_cnt} 件を『未投稿』にリセットしました。")
+                    ai_cfg_rst = read_ai_post_config_from_xlsx(pf)
+                    if ai_cfg_rst.get("enabled"):
+                        self._has_pending_ai_post_work(ai_cfg_rst, pf, acc_name, allow_reset=True)
 
             cycle_num += 1
             self.root.after(0, self.load_excel_data)
@@ -12088,6 +16553,23 @@ class ThreadsPosterGUI:
         if not posts_file or not os.path.exists(posts_file):
             self.log(f"[{account_name}] '{posts_file}' が見つかりません。")
             return
+
+        # 独立AIポスト設定を事前確認（固定ポスト側のアカウント窓を最優先で起動し、AI失敗等で固定窓を止めない）
+        ai_cfg_seq = read_ai_post_config_from_xlsx(posts_file)
+        ai_should_run_seq = bool(
+            self._has_pending_ai_post_work(ai_cfg_seq, posts_file, account_name)
+            and is_now_within_weekdays(datetime.now(), ai_cfg_seq.get("weekdays", "毎日"))
+            and is_within_target_hours(ai_cfg_seq.get("time_slot", "0:00-0:00"))
+        )
+        ai_executed_seq = {"done": False}
+
+        def _run_seq_ai_once():
+            if ai_should_run_seq and not ai_executed_seq["done"] and self.is_running:
+                ai_executed_seq["done"] = True
+                try:
+                    self._execute_single_ai_post({"account": account, "name": account_name, "posts_file": posts_file}, p)
+                except Exception as e_seq_ai:
+                    self.log(f"[ERROR] [{account_name}] AIポスト処理エラー: {e_seq_ai}")
 
         custom_settings = read_account_settings_from_post_file(posts_file)
         theme_map = read_theme_settings_from_xlsx(posts_file)
@@ -12113,23 +16595,28 @@ class ThreadsPosterGUI:
         if not unposted:
             if self.var_auto_loop.get():
                 reset_cnt = reset_posts_file_silent(posts_file)
-                self.log(f"[INFO] [{account_name}] 未投稿が0件のため、自動ループ機能により全 {reset_cnt} 件を『未投稿』に自動リセットしました！最初から投稿を再開します。")
-                self.root.after(0, self.load_excel_data)
+                if reset_cnt > 0:
+                    self.log(f"[INFO] [{account_name}] 未投稿が0件のため、自動ループ機能により全 {reset_cnt} 件を『未投稿』に自動リセットしました！最初から投稿を再開します。")
+                    self.root.after(0, self.load_excel_data)
                 all_posts = read_excel_records(posts_file)
                 unposted = [p for p in all_posts if self._is_unposted_item(p)]
 
             if not unposted:
-                self.log(f"[WARN] [{account_name}] '{os.path.basename(posts_file)}' に有効な投稿文章がありません（全 {len(all_posts)} 件）。")
-                if not self.var_auto_loop.get():
-                    self.root.after(0, lambda: messagebox.showinfo(
-                        "未投稿のポストが 0 件です",
-                        f"【ウィンドウが開かない原因】\n"
-                        f"投稿リスト '{os.path.basename(posts_file)}' の全ポストが「投稿完了」になっています。\n\n"
-                        "二重投稿・BAN防止のため、未投稿データがない場合はブラウザを開かずに終了します。\n\n"
-                        "【再投稿する方法】\n"
-                        "・画面の『🔁 全ポスト投稿完了後に自動で未投稿にリセットして最初から周回』にチェックを入れる\n"
-                        "・または画面上部の『🔁 未投稿にリセット』を押してください。"
-                    ))
+                if ai_cfg_seq.get("enabled"):
+                    self.log(f"[INFO] [{account_name}] 固定ポストは0件ですが、AIポストは独立稼働対象です。")
+                else:
+                    self.log(f"[WARN] [{account_name}] '{os.path.basename(posts_file)}' に有効な投稿文章がありません（全 {len(all_posts)} 件）。")
+                    if not self.var_auto_loop.get():
+                        self.root.after(0, lambda: messagebox.showinfo(
+                            "未投稿のポストが 0 件です",
+                            f"【ウィンドウが開かない原因】\n"
+                            f"投稿リスト '{os.path.basename(posts_file)}' の全ポストが「投稿完了」になっています。\n\n"
+                            "二重投稿・BAN防止のため、未投稿データがない場合はブラウザを開かずに終了します。\n\n"
+                            "【再投稿する方法】\n"
+                            "・画面の『🔁 全ポスト投稿完了後に自動で未投稿にリセットして最初から周回』にチェックを入れる\n"
+                            "・または画面上部の『🔁 未投稿にリセット』を押してください。"
+                        ))
+                _run_seq_ai_once()
                 return
 
         now_dt = datetime.now()
@@ -12142,6 +16629,7 @@ class ThreadsPosterGUI:
 
         if not theme_buckets:
             self.log(f"[WARN] [{account_name}] 現在時刻({now_dt.strftime('%Y-%m-%d %H:%M')})の実行時間・曜日に該当するテーマの未投稿ポストがないためスキップします。")
+            _run_seq_ai_once()
             return
 
         ordered_unposted = []
@@ -12169,21 +16657,12 @@ class ThreadsPosterGUI:
         unposted = ordered_unposted
 
         os.makedirs(profile_dir, exist_ok=True)
-
-        context = p.chromium.launch_persistent_context(
-            user_data_dir=profile_dir,
-            headless=False,
-            channel="chrome",
-            locale="ja-JP",
-            viewport={"width": 1280, "height": 900},
-            args=["--disable-blink-features=AutomationControlled", "--lang=ja-JP"]
-        )
-
-        if self.var_block_media.get():
-            setup_media_blocking(context, log_func=self.log)
+        proxy_str = extract_proxy_from_account(account)
+        context = safe_launch_persistent_context(p, profile_dir, headless=False, log_func=self.log, proxy_str=proxy_str)
 
         session_token = str(account.get("auth_token") or account.get("Authトークン_sessionid") or account.get("sessionid") or "").strip()
-        inject_session_cookies(context, session_token, account_name, log_func=self.log)
+        if session_token:
+            inject_session_cookies(context, session_token, account_name, log_func=self.log)
 
         page = context.pages[0] if context.pages else context.new_page()
 
@@ -12191,18 +16670,33 @@ class ThreadsPosterGUI:
             safe_goto_threads(page, context, session_token, account_name, log_func=self.log, timeout=60000)
             time.sleep(3)
 
+            is_cp_l, cp_why_l = detect_phone_checkpoint_screen(page)
+            if is_cp_l:
+                self.log(f"[WARN] 🚨 [{account_name}] 携帯電話番号（SMS）確認画面を検知したため停止します（{cp_why_l}）。")
+                capture_error_diagnostic(page, account_name, "携帯電話番号認証要求", None, self.log)
+                return
+
+            legacy_acc_state = {"name": account_name}
             is_logged_in = ensure_authenticated_session(
-                page, context, account, self.account_config_path, log_func=self.log, wait_timeout_sec=300
+                page, context, account, self.account_config_path, log_func=self.log, wait_timeout_sec=300, acc_state=legacy_acc_state
             )
             if not is_logged_in:
                 self.log(f"[ERROR] [{account_name}] ログイン認証が完了しなかったため、このアカウントの投稿をスキップします。")
                 return
+
+            if self.var_block_media.get():
+                setup_media_blocking(context, log_func=self.log)
+
+            self._process_due_deletes_in_open_page(page, context, legacy_acc_state, profile_dir, restore_home=True)
 
             consecutive_account_errors = 0
             legacy_theme_next_run_times = {}
             for post_loop_idx, post_item in enumerate(unposted):
                 if not self.is_running:
                     break
+
+                if get_due_pending_deletes(profile_dir):
+                    self._process_due_deletes_in_open_page(page, context, legacy_acc_state, profile_dir, restore_home=True)
 
                 post_sched = resolve_post_theme_schedule(post_item, theme_map, custom_settings, now_dt=datetime.now())
                 if not post_sched["is_eligible_now"]:
@@ -12213,9 +16707,11 @@ class ThreadsPosterGUI:
                     rem_wait_s = int(max(0, (t_next_legacy - datetime.now()).total_seconds()))
                     if rem_wait_s > 0:
                         self.log(f"[*] 【テーマ「{post_theme_key}」】同テーマ次回まで {rem_wait_s} 秒待機中...")
-                        for _ in range(rem_wait_s):
+                        for _w_i in range(rem_wait_s):
                             if not self.is_running:
                                 break
+                            if _w_i % 5 == 0 and get_due_pending_deletes(profile_dir):
+                                self._process_due_deletes_in_open_page(page, context, legacy_acc_state, profile_dir, restore_home=True)
                             time.sleep(1)
                         if not self.is_running:
                             break
@@ -12288,6 +16784,7 @@ class ThreadsPosterGUI:
                     update_post_status(posts_file, row_idx, status="投稿完了", finish_time=finish_time, error_msg="", sheet_name=post_item.get("_sheet_name"), applied_topic=target_topic)
                     topic_suffix = f" (トピック: 「{target_topic}」)" if target_topic else ""
                     self.log(f"[SUCCESS] [{account_name}] Post #{post_id} 投稿成功！Excel更新{topic_suffix}。")
+                    self._enqueue_delete_if_configured(profile_dir, account_name, posts_file, row_idx, post_item, post_id, text_content)
                     consecutive_account_errors = 0
 
                     wait_sec = random.randint(post_min_delay, post_max_delay)
@@ -12299,15 +16796,19 @@ class ThreadsPosterGUI:
                         for nxt_it in unposted[post_loop_idx + 1:]
                     )
                     if has_other_ready_theme:
+                        if get_due_pending_deletes(profile_dir):
+                            self._process_due_deletes_in_open_page(page, context, legacy_acc_state, profile_dir, restore_home=True)
                         self.log(f"[INFO] 🔀 時間が重複している別テーマが即実行可能なため、待機せず次のテーマを投稿します！（同テーマ「{post_theme or '基本'}」次回間隔: {wait_sec // 60}分）")
                     else:
                         if wait_sec >= 60:
                             self.log(f"[*] BAN防止のため {wait_sec} 秒 (約 {wait_sec // 60} 分) 待機中... (テーマ設定ポスト間隔: {post_interval_label})")
                         else:
                             self.log(f"[*] BAN防止のため {wait_sec} 秒待機中... (テーマ設定ポスト間隔: {post_interval_label})")
-                        for _ in range(wait_sec):
+                        for _w_i in range(wait_sec):
                             if not self.is_running:
                                 break
+                            if _w_i % 5 == 0 and get_due_pending_deletes(profile_dir):
+                                self._process_due_deletes_in_open_page(page, context, legacy_acc_state, profile_dir, restore_home=True)
                             time.sleep(1)
 
                 except Exception as post_err:
@@ -12359,7 +16860,7 @@ class ThreadsPosterGUI:
 
                     time.sleep(3)
 
-            # 全ての未投稿ポストの処理が終了した後の自動リセット判定
+            # 全ての未投稿ポストの処理が終了した後の自動リセット判定＆残余自動削除タイマー消化
             if self.is_running and self.var_auto_loop.get():
                 check_posts = read_excel_records(posts_file)
                 still_unposted = [p_it for p_it in check_posts if self._is_unposted_item(p_it)]
@@ -12367,6 +16868,21 @@ class ThreadsPosterGUI:
                     reset_cnt = reset_posts_file_silent(posts_file)
                     self.log(f"[SUCCESS] 🎉 [{account_name}] '{os.path.basename(posts_file)}' の全ポスト({reset_cnt}件)の投稿が完了しました！自動ループ機能により全件を『未投稿』にリセットし、最初から周回を継続します。")
                     self.root.after(0, self.load_excel_data)
+            elif self.is_running:
+                while self.is_running and not legacy_acc_state.get("checkpoint_paused"):
+                    rem_jobs = load_pending_deletes(profile_dir)
+                    if not rem_jobs:
+                        break
+                    due_now = get_due_pending_deletes(profile_dir)
+                    if due_now:
+                        self._process_due_deletes_in_open_page(page, context, legacy_acc_state, profile_dir, restore_home=False)
+                        continue
+                    next_ts = min(float(j.get("delete_at_ts") or time.time()) for j in rem_jobs)
+                    secs_w = max(1, min(5, int(next_ts - time.time())))
+                    for _ in range(secs_w):
+                        if not self.is_running:
+                            break
+                        time.sleep(1)
 
         except Exception as e:
             self.log(f"[ERROR] [{account_name}] 投稿処理エラー: {e}")
@@ -12375,6 +16891,8 @@ class ThreadsPosterGUI:
                 context.close()
             except Exception:
                 pass
+            time.sleep(1.0)
+            _run_seq_ai_once()
             _THREAD_LOG_LOCAL.account_name = ""
 
 if __name__ == "__main__":

@@ -15,7 +15,11 @@ Threadsのプロフィール画面（自己紹介文・アイコン画像・名�
 import os
 import sys
 import json
+import re
+import hashlib
+import platform
 import time
+import urllib.parse
 import threading
 import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext
@@ -115,13 +119,177 @@ def clean_session_id_token(token):
     return urllib.parse.unquote(t)
 
 
+def _get_current_machine_id():
+    raw = "|".join([
+        platform.node() or os.environ.get("COMPUTERNAME", ""),
+        os.environ.get("USERNAME", "") or os.environ.get("USER", ""),
+        platform.machine() or "",
+        sys.platform or "",
+    ])
+    return hashlib.sha256(raw.encode("utf-8", errors="ignore")).hexdigest()[:16]
+
+
+def parse_playwright_proxy(raw_proxy):
+    s = str(raw_proxy or "").strip()
+    if not s or s.lower() in ["nan", "none", "-", "なし"] or s.startswith(("(", "（", "※")):
+        return None
+    if not re.match(r'^(?:https?|socks5?)://', s, re.IGNORECASE):
+        m_colon = re.fullmatch(r'([^:@/\s]+):(\d{2,5}):([^:@\s]+):([^@\s]+)', s)
+        if m_colon:
+            host, port, user, pw = m_colon.groups()
+            return {"server": f"http://{host}:{port}", "username": user, "password": pw}
+        m_at = re.fullmatch(r'([^:@\s]+):([^@\s]+)@([^:@/\s]+):(\d{2,5})', s)
+        if m_at:
+            user, pw, host, port = m_at.groups()
+            return {"server": f"http://{host}:{port}", "username": user, "password": pw}
+        s = "http://" + s
+    try:
+        u = urllib.parse.urlparse(s)
+        if not u.hostname:
+            return None
+        scheme = (u.scheme or "http").lower()
+        port_part = f":{u.port}" if u.port else ""
+        cfg = {"server": f"{scheme}://{u.hostname}{port_part}"}
+        if u.username is not None:
+            cfg["username"] = urllib.parse.unquote(u.username)
+        if u.password is not None:
+            cfg["password"] = urllib.parse.unquote(u.password)
+        return cfg
+    except Exception:
+        return None
+
+
+def clear_auth_cookies_preserve_device(context, domains=None, log_func=None):
+    target_names = {"sessionid", "ds_user_id", "rur", "csrftoken"}
+    target_domains = domains or ["threads.net", "threads.com", "instagram.com"]
+    try:
+        cur = context.cookies()
+        kept = []
+        removed = 0
+        now_ts = time.time()
+        for c in cur:
+            dom = str(c.get("domain") or "").lower().lstrip(".")
+            name = str(c.get("name") or "")
+            is_meta = any(td in dom for td in target_domains)
+            if is_meta and name in target_names:
+                removed += 1
+                continue
+            c_exp = c.get("expires")
+            if isinstance(c_exp, (int, float)) and c_exp != -1 and c_exp < now_ts:
+                continue
+            kept.append(c)
+        context.clear_cookies()
+        if kept:
+            try:
+                context.add_cookies(kept)
+            except Exception:
+                for kc in kept:
+                    try:
+                        context.add_cookies([kc])
+                    except Exception:
+                        pass
+        if log_func and removed:
+            log_func(f"[INFO] 🧹 端末保護Cookie(datr/mid/ig_did)を維持しつつ認証Cookieのみ {removed} 件リセットしました。")
+    except Exception:
+        pass
+
+
+def detect_phone_checkpoint_screen(page):
+    try:
+        cur_u = (page.url or "").lower()
+    except Exception:
+        cur_u = ""
+    if any(k in cur_u for k in [
+        "/challenge/", "/checkpoint/", "auth_platform", "two_step_verification",
+        "/accounts/suspended", "add_phone", "phone_number"
+    ]):
+        return True, f"URL検知: {cur_u[:120]}"
+    try:
+        for inp_sel in ['input[name="phone_number"]', 'input[type="tel"]', 'input[name="security_code"]', 'input[name="verificationCode"]']:
+            try:
+                if page.locator(inp_sel).first.is_visible(timeout=200):
+                    return True, f"入力欄検知: {inp_sel}"
+            except Exception:
+                pass
+        body_txt = ""
+        try:
+            body_txt = (page.inner_text("body") or "")[:3000]
+        except Exception:
+            try:
+                body_txt = (page.content() or "")[:4000]
+            except Exception:
+                body_txt = ""
+        low = body_txt.lower()
+        for kw in [
+            "電話番号を入力", "携帯電話番号を入力", "電話番号を確認", "本人確認が必要",
+            "不審なログイン", "コードを入力", "認証コードを入力", "アカウントが一時的にロック",
+            "enter your mobile number", "confirm your phone", "confirm your info",
+            "check your notifications", "suspicious login", "we detected unusual"
+        ]:
+            if kw in low or kw in body_txt:
+                return True, f"画面文言検知: {kw}"
+    except Exception:
+        pass
+    return False, ""
+
+
+def detect_and_mark_host_migration(profile_dir, account_name="", log_func=None):
+    if not profile_dir or not os.path.exists(profile_dir):
+        return False
+    cur_host = _get_current_machine_id()
+    fp_path = os.path.join(profile_dir, "fingerprint.json")
+    fp = {}
+    if os.path.exists(fp_path):
+        try:
+            with open(fp_path, "r", encoding="utf-8") as f:
+                fp = json.load(f) or {}
+        except Exception:
+            fp = {}
+    prev_host = str(fp.get("last_host_id") or "").strip()
+    has_portable = os.path.exists(os.path.join(profile_dir, "portable_session.json")) or os.path.exists(os.path.join(profile_dir, "cookies.json"))
+    has_default = os.path.exists(os.path.join(profile_dir, "Default"))
+    host_changed = bool(prev_host and prev_host != cur_host)
+    legacy_migrated = bool(not prev_host and has_default and has_portable)
+    if host_changed or legacy_migrated:
+        if has_portable:
+            for rel in ["Default/Cookies", "Default/Cookies-journal", "Default/Network/Cookies", "Default/Network/Cookies-journal"]:
+                sp = os.path.join(profile_dir, rel)
+                if os.path.exists(sp):
+                    try:
+                        os.remove(sp)
+                    except Exception:
+                        pass
+            try:
+                with open(os.path.join(profile_dir, ".portable_needs_rebind"), "w", encoding="utf-8") as mf:
+                    mf.write(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+            except Exception:
+                pass
+        if host_changed:
+            fp["needs_migration_warmup"] = True
+            if log_func:
+                log_func(f"[WARN] 🌐 [{account_name}] 別PC/VPS起動を検知したためDPAPI再バインドを実施します。")
+    fp["last_host_id"] = cur_host
+    try:
+        with open(fp_path, "w", encoding="utf-8") as f:
+            json.dump(fp, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+    return host_changed
+
+
 def get_or_create_fingerprint(profile_dir):
     os.makedirs(profile_dir, exist_ok=True)
     fp_file = os.path.join(profile_dir, "fingerprint.json")
+    cur_host = _get_current_machine_id()
     if os.path.exists(fp_file):
         try:
             with open(fp_file, "r", encoding="utf-8") as f:
-                return json.load(f)
+                fp_existing = json.load(f) or {}
+            if not fp_existing.get("last_host_id"):
+                fp_existing["last_host_id"] = cur_host
+                with open(fp_file, "w", encoding="utf-8") as fw:
+                    json.dump(fp_existing, fw, ensure_ascii=False, indent=2)
+            return fp_existing
         except Exception:
             pass
 
@@ -131,7 +299,8 @@ def get_or_create_fingerprint(profile_dir):
         "timezone_id": "Asia/Tokyo",
         "viewport": {"width": 1280, "height": 850},
         "color_scheme": "light",
-        "platform": "Win32"
+        "platform": "Win32",
+        "last_host_id": cur_host,
     }
     try:
         with open(fp_file, "w", encoding="utf-8") as f:
@@ -141,7 +310,7 @@ def get_or_create_fingerprint(profile_dir):
     return fingerprint
 
 
-def safe_launch_persistent_context(p, profile_dir, headless=False, log_func=print):
+def safe_launch_persistent_context(p, profile_dir, headless=False, log_func=print, proxy_str=""):
     os.makedirs(profile_dir, exist_ok=True)
     for lk in ["SingletonLock", "SingletonCookie", "SingletonSocket"]:
         try:
@@ -151,20 +320,24 @@ def safe_launch_persistent_context(p, profile_dir, headless=False, log_func=prin
         except Exception:
             pass
 
+    detect_and_mark_host_migration(profile_dir, account_name=os.path.basename(profile_dir), log_func=log_func)
     fp = get_or_create_fingerprint(profile_dir)
     args = [
         "--lang=ja-JP",
-        "--no-sandbox",
         "--disable-dev-shm-usage"
     ]
+    if sys.platform != "win32":
+        args.append("--no-sandbox")
+    proxy_cfg = parse_playwright_proxy(proxy_str)
+    if proxy_cfg and log_func:
+        log_func(f"[INFO] 🌐 [{os.path.basename(profile_dir)}] 専用プロキシ経由で起動: {proxy_cfg['server']}")
 
     for attempt in range(1, 3):
         try:
-            context = p.chromium.launch_persistent_context(
+            lkwargs = dict(
                 user_data_dir=profile_dir,
                 headless=headless,
                 channel="chrome",
-                user_agent=fp.get("user_agent"),
                 locale=fp.get("locale", "ja-JP"),
                 timezone_id=fp.get("timezone_id", "Asia/Tokyo"),
                 viewport=fp.get("viewport", {"width": 1280, "height": 850}),
@@ -172,11 +345,11 @@ def safe_launch_persistent_context(p, profile_dir, headless=False, log_func=prin
                 args=args,
                 ignore_default_args=["--enable-automation"]
             )
+            if proxy_cfg:
+                lkwargs["proxy"] = proxy_cfg
+            context = p.chromium.launch_persistent_context(**lkwargs)
             try:
-                context.add_init_script("""
-                    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-                    window.chrome = { runtime: {} };
-                """)
+                context.add_init_script("Object.defineProperty(navigator, 'webdriver', { get: () => undefined });")
             except Exception:
                 pass
             return context
@@ -196,9 +369,17 @@ def safe_launch_persistent_context(p, profile_dir, headless=False, log_func=prin
 
 
 def inject_session_cookies(context, token, account_name, log_func=print):
-    if not token or token.lower() in ["nan", "none"] or token.startswith("ここに"):
+    if not token or str(token).lower() in ["nan", "none"] or str(token).startswith("ここに"):
         return False
     t = clean_session_id_token(token)
+    if not t:
+        return False
+    try:
+        cur_cks = context.cookies(["https://www.threads.net", "https://www.threads.com", "https://www.instagram.com"])
+        if any(c.get("name") == "sessionid" and str(c.get("value") or "").strip() == t for c in cur_cks):
+            return True
+    except Exception:
+        pass
     uid = ""
     if ":" in t:
         potential = t.split(":")[0].strip()
@@ -206,12 +387,6 @@ def inject_session_cookies(context, token, account_name, log_func=print):
             uid = potential
 
     cookie_expires = int(time.time()) + 31536000
-    import hashlib, uuid
-    csrf_val = hashlib.md5(f"csrf_{uid}_{t[:16]}".encode()).hexdigest()
-    mid_val = "Z" + hashlib.md5(f"mid_{uid}_{account_name}".encode()).hexdigest()[:23]
-    ig_did_val = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{uid}_{account_name}")).upper()
-    datr_val = hashlib.md5(f"datr_{account_name}".encode()).hexdigest()[:24]
-
     domains = [
         ".threads.net", "www.threads.net", "threads.net",
         ".threads.com", "www.threads.com", "threads.com",
@@ -223,11 +398,6 @@ def inject_session_cookies(context, token, account_name, log_func=print):
         cookies_list.append({"name": "sessionid", "value": t, "domain": d, "path": "/", "httpOnly": True, "secure": True, "sameSite": "Lax", "expires": cookie_expires})
         if uid:
             cookies_list.append({"name": "ds_user_id", "value": str(uid), "domain": d, "path": "/", "secure": True, "sameSite": "Lax", "expires": cookie_expires})
-        cookies_list.append({"name": "csrftoken", "value": csrf_val, "domain": d, "path": "/", "secure": True, "sameSite": "Lax", "expires": cookie_expires})
-        cookies_list.append({"name": "mid", "value": mid_val, "domain": d, "path": "/", "secure": True, "sameSite": "Lax", "expires": cookie_expires})
-        cookies_list.append({"name": "ig_did", "value": ig_did_val, "domain": d, "path": "/", "httpOnly": True, "secure": True, "sameSite": "Lax", "expires": cookie_expires})
-        cookies_list.append({"name": "datr", "value": datr_val, "domain": d, "path": "/", "httpOnly": True, "secure": True, "sameSite": "Lax", "expires": cookie_expires})
-        cookies_list.append({"name": "rur", "value": "RVA", "domain": d, "path": "/", "httpOnly": True, "secure": True, "sameSite": "Lax", "expires": cookie_expires})
 
     try:
         context.add_cookies(cookies_list)
@@ -249,12 +419,13 @@ def execute_id_pw_login(page, context, account_name, password, log_func=print):
 
     log_func(f"[INFO] 🔐 [{account_name}] 【ID/PW自動ログイン】を実行中（ID: @{clean_id}）...")
     try:
-        # 失効Cookieによるリダイレクトループを未然に防止
-        try:
-            context.clear_cookies()
-            time.sleep(0.5)
-        except Exception:
-            pass
+        is_cp_pre, cp_why_pre = detect_phone_checkpoint_screen(page)
+        if is_cp_pre:
+            log_func(f"[WARN] 🚨 [{account_name}] 電話番号確認画面（{cp_why_pre}）を検知したため自動ログインを停止します。")
+            return False
+        # 端末保護Cookie(datr/mid/ig_did)は維持したまま、壊れた認証Cookieのみをリセット
+        clear_auth_cookies_preserve_device(context, log_func=log_func)
+        time.sleep(0.5)
 
         cur_url = (page.url or "").lower()
         if "about:blank" in cur_url or "/login" not in cur_url:
@@ -390,6 +561,14 @@ def execute_id_pw_login(page, context, account_name, password, log_func=print):
 
 def auto_refresh_and_save_session(context, account_name, profile_dir, excel_path=None, log_func=print):
     try:
+        for pg in getattr(context, "pages", []):
+            try:
+                if not pg.is_closed():
+                    pg_u = (pg.url or "").lower()
+                    if any(k in pg_u for k in ["/challenge/", "/checkpoint/", "auth_platform", "two_step_verification", "/accounts/suspended"]):
+                        return None
+            except Exception:
+                pass
         cookies = context.cookies(["https://www.threads.net", "https://www.instagram.com", "https://www.threads.com"])
         if not cookies:
             return None
@@ -409,8 +588,7 @@ def auto_refresh_and_save_session(context, account_name, profile_dir, excel_path
         os.makedirs(profile_dir, exist_ok=True)
         pfile = os.path.join(profile_dir, "portable_session.json")
         cfile = os.path.join(profile_dir, "cookies.json")
-        with open(pfile, "w", encoding="utf-8") as f:
-            json.dump({"cookies": cookies, "origins": []}, f, ensure_ascii=False, indent=2)
+        context.storage_state(path=pfile)
         with open(cfile, "w", encoding="utf-8") as f:
             json.dump(cookies, f, ensure_ascii=False, indent=2)
 
@@ -622,6 +800,7 @@ class ProfileEditorApp:
             prof_name = clean_id
             raw_token = str(acc.get("auth_token") or acc.get("Authトークン_sessionid") or acc.get("sessionid") or "").strip()
             password_val = str(acc.get("パスワード") or acc.get("password") or acc.get("PW") or acc.get("Pass") or acc.get("暗証番号") or "").strip()
+            proxy_val = str(acc.get("プロキシ") or acc.get("proxy") or acc.get("Proxy") or acc.get("PROXY") or "").strip()
             status_val = str(acc.get("有効/無効") or acc.get("有効無効") or acc.get("ステータス") or "有効").strip()
 
             prof_dir = os.path.join(BASE_DIR, f"chrome_profiles/{prof_name}")
@@ -646,6 +825,7 @@ class ProfileEditorApp:
                 "prof_dir": prof_dir,
                 "token": raw_token,
                 "password": password_val,
+                "proxy": proxy_val,
                 "status": status_val
             }
             self.accounts_list.append((item_id, acc_obj))
@@ -715,6 +895,7 @@ class ProfileEditorApp:
         prof_dir = acc["prof_dir"]
         token = acc["token"]
         password = acc.get("password", "")
+        proxy_str = acc.get("proxy", "")
 
         self.is_browser_running = True
         self.btn_open_browser.config(state="disabled")
@@ -729,11 +910,12 @@ class ProfileEditorApp:
             try:
                 from playwright.sync_api import sync_playwright
                 with sync_playwright() as p:
-                    context = safe_launch_persistent_context(p, prof_dir, headless=False, log_func=self.log)
+                    context = safe_launch_persistent_context(p, prof_dir, headless=False, log_func=self.log, proxy_str=proxy_str)
                     self.active_context = context
 
                     # sessionid または portable_session.json からCookieを注入
                     pfile = os.path.join(prof_dir, "portable_session.json")
+                    rebind_marker = os.path.join(prof_dir, ".portable_needs_rebind")
                     if os.path.exists(pfile):
                         try:
                             with open(pfile, "r", encoding="utf-8") as pf:
@@ -744,6 +926,11 @@ class ProfileEditorApp:
                                 self.log(f"[INFO] 🍪 portable_session.json から {len(cks)} 件のCookieを完全復元しました。")
                         except Exception as ex:
                             self.log(f"[DEBUG] pfile load: {ex}")
+                    if os.path.exists(rebind_marker):
+                        try:
+                            os.remove(rebind_marker)
+                        except Exception:
+                            pass
 
                     if token:
                         inject_session_cookies(context, token, account_name, log_func=self.log)
@@ -763,9 +950,13 @@ class ProfileEditorApp:
 
                     time.sleep(2)
 
+                    is_cp_ed, cp_why_ed = detect_phone_checkpoint_screen(page)
+                    if is_cp_ed:
+                        self.log(f"[WARN] 🚨 @{account_name} に電話番号確認/本人確認画面（{cp_why_ed}）が表示されています。自動入力は行いませんので画面の案内に従って手動で確認してください。")
+
                     # ログイン画面(/login)にリダイレクトされた場合の自動復帰
                     cur_u = (page.url or "").lower()
-                    if "/login" in cur_u:
+                    if "/login" in cur_u and not is_cp_ed:
                         self.log(f"[WARN] 🚪 @{account_name} のセッションが切れているためログイン画面を検知しました。")
                         if password:
                             self.log(f"[INFO] 🔐 パスワード情報を検出。ID/PWによるプロファイル自動ログインを実行します...")

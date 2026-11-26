@@ -41,7 +41,7 @@ export const PostsTable: React.FC<PostsTableProps> = ({
   onBulkAddPosts,
 }) => {
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | '未投稿' | '投稿完了' | 'エラー'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | '未投稿' | '投稿完了' | '投稿完了(削除済)' | 'エラー'>('all');
   const [themeFilter, setThemeFilter] = useState<string>('all');
   
   // Single Add
@@ -50,6 +50,7 @@ export const PostsTable: React.FC<PostsTableProps> = ({
   const [newText, setNewText] = useState('');
   const [newTimeSlot, setNewTimeSlot] = useState('');
   const [newWeekdays, setNewWeekdays] = useState('');
+  const [newDeleteAfter, setNewDeleteAfter] = useState('');
   const [newTopic, setNewTopic] = useState('信太山新地');
   const [newImagePath, setNewImagePath] = useState('image.png');
   const [editingPost, setEditingPost] = useState<PostItem | null>(null);
@@ -59,6 +60,7 @@ export const PostsTable: React.FC<PostsTableProps> = ({
   const [bulkTheme, setBulkTheme] = useState('基本');
   const [bulkTextInput, setBulkTextInput] = useState('');
   const [bulkTopic, setBulkTopic] = useState('信太山新地');
+  const [bulkDeleteAfter, setBulkDeleteAfter] = useState('');
   const [bulkImageOption, setBulkImageOption] = useState<'none' | 'alternate' | 'image1' | 'image2'>('alternate');
   const [bulkReplace, setBulkReplace] = useState(false);
 
@@ -84,6 +86,7 @@ export const PostsTable: React.FC<PostsTableProps> = ({
         p.text.toLowerCase().includes(q) ||
         pTheme.toLowerCase().includes(q) ||
         (p.weekdays && p.weekdays.toLowerCase().includes(q)) ||
+        (p.deleteAfter && p.deleteAfter.toLowerCase().includes(q)) ||
         (p.topic && p.topic.toLowerCase().includes(q)) ||
         (p.imagePath && p.imagePath.toLowerCase().includes(q))
       );
@@ -94,6 +97,7 @@ export const PostsTable: React.FC<PostsTableProps> = ({
   const countTotal = posts.length;
   const countUnposted = posts.filter((p) => p.status === '未投稿').length;
   const countCompleted = posts.filter((p) => p.status === '投稿完了').length;
+  const countDeleted = posts.filter((p) => p.status === '投稿完了(削除済)').length;
   const countError = posts.filter((p) => p.status === 'エラー').length;
 
   const handleCreatePost = (e: React.FormEvent) => {
@@ -104,6 +108,7 @@ export const PostsTable: React.FC<PostsTableProps> = ({
       theme: newTheme.trim() || '基本',
       timeSlot: newTimeSlot.trim() || undefined,
       weekdays: newWeekdays.trim() || undefined,
+      deleteAfter: newDeleteAfter.trim() || undefined,
       topic: newTopic.trim(),
       imagePath: newImagePath.trim(),
       status: '未投稿',
@@ -111,6 +116,7 @@ export const PostsTable: React.FC<PostsTableProps> = ({
     setNewText('');
     setNewTimeSlot('');
     setNewWeekdays('');
+    setNewDeleteAfter('');
     setIsAdding(false);
   };
 
@@ -136,6 +142,7 @@ export const PostsTable: React.FC<PostsTableProps> = ({
       return {
         text,
         theme: targetTheme,
+        deleteAfter: bulkDeleteAfter.trim() || undefined,
         topic: bulkTopic.trim() || '信太山新地',
         imagePath,
         status: '未投稿',
@@ -215,6 +222,18 @@ export const PostsTable: React.FC<PostsTableProps> = ({
           >
             投稿完了: <span className="font-bold text-emerald-400">{countCompleted}</span>
           </button>
+          {countDeleted > 0 && (
+            <button
+              onClick={() => setStatusFilter('投稿完了(削除済)')}
+              className={`px-3 py-1 rounded-md font-medium transition-colors cursor-pointer ${
+                statusFilter === '投稿完了(削除済)'
+                  ? 'bg-teal-950/80 text-teal-300 border border-teal-800'
+                  : 'text-zinc-400 hover:text-teal-300'
+              }`}
+            >
+              削除済: <span className="font-bold text-teal-400">{countDeleted}</span>
+            </button>
+          )}
           {countError > 0 && (
             <button
               onClick={() => setStatusFilter('エラー')}
@@ -411,7 +430,7 @@ export const PostsTable: React.FC<PostsTableProps> = ({
               />
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
               <div>
                 <label className="text-zinc-400 block mb-1">登録先テーマ (シート名)</label>
                 <input
@@ -420,6 +439,17 @@ export const PostsTable: React.FC<PostsTableProps> = ({
                   onChange={(e) => setBulkTheme(e.target.value)}
                   placeholder="例: 基本 / お給料"
                   className="w-full bg-zinc-950 border border-zinc-700 text-white px-2.5 py-1.5 rounded focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+
+              <div>
+                <label className="text-zinc-400 block mb-1">一括設定 削除時間 (任意)</label>
+                <input
+                  type="text"
+                  value={bulkDeleteAfter}
+                  onChange={(e) => setBulkDeleteAfter(e.target.value)}
+                  placeholder="例: 30～60 / 1～3時間"
+                  className="w-full bg-zinc-950 border border-zinc-700 text-white px-2.5 py-1.5 rounded focus:outline-none focus:border-rose-500"
                 />
               </div>
 
@@ -501,9 +531,9 @@ export const PostsTable: React.FC<PostsTableProps> = ({
             className="w-full bg-zinc-900 border border-zinc-700 text-white text-xs p-2.5 rounded-lg focus:outline-none focus:border-emerald-500"
             required
           />
-          <div className="grid grid-cols-1 sm:grid-cols-5 gap-3 text-xs">
+          <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-6 gap-3 text-xs">
             <div>
-              <label className="text-zinc-400 block mb-1">投稿時間 (上の実行時間より優先)</label>
+              <label className="text-zinc-400 block mb-1">投稿時間 (上より優先)</label>
               <input
                 type="text"
                 value={newTimeSlot}
@@ -513,13 +543,23 @@ export const PostsTable: React.FC<PostsTableProps> = ({
               />
             </div>
             <div>
-              <label className="text-zinc-400 block mb-1">曜日 (上の曜日より優先)</label>
+              <label className="text-zinc-400 block mb-1">曜日 (上より優先)</label>
               <input
                 type="text"
                 value={newWeekdays}
                 onChange={(e) => setNewWeekdays(e.target.value)}
                 placeholder="例: 月 / 月～木 / 月,木,金"
                 className="w-full bg-zinc-900 border border-zinc-700 text-white text-xs px-2.5 py-1.5 rounded focus:outline-none focus:border-amber-500"
+              />
+            </div>
+            <div>
+              <label className="text-zinc-400 block mb-1">削除時間 (ランダム・任意)</label>
+              <input
+                type="text"
+                value={newDeleteAfter}
+                onChange={(e) => setNewDeleteAfter(e.target.value)}
+                placeholder="例: 30～60 / 1～3時間"
+                className="w-full bg-zinc-900 border border-zinc-700 text-white text-xs px-2.5 py-1.5 rounded focus:outline-none focus:border-rose-500"
               />
             </div>
             <div>
@@ -543,7 +583,7 @@ export const PostsTable: React.FC<PostsTableProps> = ({
               />
             </div>
             <div>
-              <label className="text-zinc-400 block mb-1">添付画像 (image.png または画像URL)</label>
+              <label className="text-zinc-400 block mb-1">添付画像</label>
               <select
                 value={newImagePath}
                 onChange={(e) => setNewImagePath(e.target.value)}
@@ -611,9 +651,9 @@ export const PostsTable: React.FC<PostsTableProps> = ({
                 />
               </div>
             </div>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-xs">
               <div>
-                <label className="text-zinc-400 block mb-1">投稿時間 (上の実行時間より優先)</label>
+                <label className="text-zinc-400 block mb-1">投稿時間 (上優先)</label>
                 <input
                   type="text"
                   value={editingPost.timeSlot || ''}
@@ -623,13 +663,23 @@ export const PostsTable: React.FC<PostsTableProps> = ({
                 />
               </div>
               <div>
-                <label className="text-zinc-400 block mb-1">曜日 (上の曜日より優先)</label>
+                <label className="text-zinc-400 block mb-1">曜日 (上優先)</label>
                 <input
                   type="text"
                   value={editingPost.weekdays || ''}
                   placeholder="例: 月 / 月～木 / 月,木,金"
                   onChange={(e) => setEditingPost({ ...editingPost, weekdays: e.target.value })}
                   className="w-full bg-zinc-950 border border-zinc-700 text-white text-xs px-2.5 py-1.5 rounded focus:outline-none focus:border-amber-500"
+                />
+              </div>
+              <div>
+                <label className="text-zinc-400 block mb-1">削除時間 (ランダム)</label>
+                <input
+                  type="text"
+                  value={editingPost.deleteAfter || ''}
+                  placeholder="例: 30～60 / 1～3時間"
+                  onChange={(e) => setEditingPost({ ...editingPost, deleteAfter: e.target.value })}
+                  className="w-full bg-zinc-950 border border-zinc-700 text-white text-xs px-2.5 py-1.5 rounded focus:outline-none focus:border-rose-500"
                 />
               </div>
               <div>
@@ -650,6 +700,7 @@ export const PostsTable: React.FC<PostsTableProps> = ({
                 >
                   <option value="未投稿">未投稿</option>
                   <option value="投稿完了">投稿完了</option>
+                  <option value="投稿完了(削除済)">投稿完了(削除済)</option>
                   <option value="エラー">エラー</option>
                 </select>
               </div>
@@ -682,6 +733,7 @@ export const PostsTable: React.FC<PostsTableProps> = ({
               <th className="py-2.5 px-3">ポスト文章 / 投稿内容</th>
               <th className="py-2.5 px-3 w-28 text-center">投稿時間</th>
               <th className="py-2.5 px-3 w-24 text-center">曜日</th>
+              <th className="py-2.5 px-3 w-28 text-center">削除時間</th>
               <th className="py-2.5 px-3 w-28">トピック</th>
               <th className="py-2.5 px-3 w-24">画像</th>
               <th className="py-2.5 px-3 w-28">ステータス</th>
@@ -692,7 +744,7 @@ export const PostsTable: React.FC<PostsTableProps> = ({
           <tbody className="divide-y divide-zinc-800/60 font-sans">
             {filteredPosts.length === 0 ? (
               <tr>
-                <td colSpan={9} className="py-12 text-center text-zinc-500">
+                <td colSpan={10} className="py-12 text-center text-zinc-500">
                   <div className="max-w-sm mx-auto space-y-2">
                     <p className="font-medium text-zinc-400">登録されているツイートはありません。</p>
                     <p className="text-[11px] text-zinc-500">
@@ -706,6 +758,7 @@ export const PostsTable: React.FC<PostsTableProps> = ({
                 const img = resolveImagePath(post.imagePath, post.text);
                 const isUnposted = post.status === '未投稿';
                 const isCompleted = post.status === '投稿完了';
+                const isDeleted = post.status === '投稿完了(削除済)';
                 const isError = post.status === 'エラー';
 
                 return (
@@ -763,6 +816,20 @@ export const PostsTable: React.FC<PostsTableProps> = ({
                       )}
                     </td>
 
+                    {/* Per-Post Auto-Delete Timer */}
+                    <td className="py-2.5 px-3 text-center">
+                      {post.deleteAfter ? (
+                        <span
+                          className="px-2 py-0.5 rounded bg-rose-950/70 text-rose-300 font-mono text-[11px] border border-rose-800/60"
+                          title="投稿後に指定ランダム時間で自動削除"
+                        >
+                          {post.deleteAfter}
+                        </span>
+                      ) : (
+                        <span className="text-zinc-500 text-[11px]">残す</span>
+                      )}
+                    </td>
+
                     {/* Topic */}
                     <td className="py-2.5 px-3 text-zinc-400">
                       {post.topic ? (
@@ -809,6 +876,11 @@ export const PostsTable: React.FC<PostsTableProps> = ({
                         {isCompleted && (
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-950/80 text-emerald-300 border border-emerald-800 text-[11px]">
                             <CheckCircle2 className="w-3 h-3" /> 投稿完了
+                          </span>
+                        )}
+                        {isDeleted && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-teal-950/80 text-teal-300 border border-teal-700 text-[11px]">
+                            <Trash2 className="w-3 h-3" /> 投稿完了(削除済)
                           </span>
                         )}
                         {isError && (

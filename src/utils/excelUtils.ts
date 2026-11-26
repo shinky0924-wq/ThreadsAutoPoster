@@ -1,7 +1,14 @@
 import * as XLSX from 'xlsx';
 import ExcelJS from 'exceljs';
-import { AccountInfo, AccountDesignProfile, PostItem, DailyGreetingSlot } from '../types';
-import { extractUserIdFromToken } from './spintax';
+import { AccountInfo, AccountDesignProfile, PostItem, DailyGreetingSlot, AiPostConfig, AiPostHistoryItem, AiPromptSections } from '../types';
+import {
+  extractUserIdFromToken,
+  createDefaultAiPostConfig,
+  createDefaultAiPromptSections,
+  AI_ENGINES_META,
+  AI_PROMPT_SECTION_META,
+  normalizeAiEngineList,
+} from './spintax';
 
 function normalizeTone(raw?: string): AccountDesignProfile['tone'] | undefined {
   if (!raw) return undefined;
@@ -62,10 +69,17 @@ function isDailyGreetingSheet(sname: string, rawRows?: any[][]): boolean {
   return sl.includes('daily') && sl.includes('post');
 }
 
+function isAiPostSheetName(sname: string): boolean {
+  const compact = String(sname || '').trim().toLowerCase().replace(/[\s　_\-]+/g, '');
+  if (!compact) return false;
+  return compact === 'aiポスト' || compact === 'aipost' || compact === 'aiposts' || compact === 'ai投稿' || compact === 'ai自動投稿';
+}
+
 function isSystemSheetName(sname: string, rawRows?: any[][]): boolean {
   const s = String(sname || '').trim();
   const sl = s.toLowerCase();
   if (!s) return true;
+  if (isAiPostSheetName(s)) return true;
   if (['設定', 'config', 'setting', '基本設定', 'テーマ設定', 'themesetting', 'themeconfig'].some((k) => sl.includes(k))) return true;
   if (isDailyGreetingSheet(s, rawRows)) return true;
   if (s.includes('設計')) return true;
@@ -167,6 +181,7 @@ async function buildStyledAccountWorkbook(
     'ポスト文章',
     '投稿時間',
     '曜日',
+    '削除時間',
     'コミュニティまたはトピック',
     '画像ファイルパス',
     'ステータス',
@@ -184,9 +199,10 @@ async function buildStyledAccountWorkbook(
       { width: 56 },
       { width: 24 },
       { width: 20 },
+      { width: 18 },
       { width: 26 },
       { width: 26 },
-      { width: 16 },
+      { width: 18 },
       { width: 22 },
       { width: 30 },
     ];
@@ -264,6 +280,9 @@ async function buildStyledAccountWorkbook(
       if (lbl === '曜日') {
         cell.note = '【各ポストの曜日指定（上の「曜日」より優先）】\n例: 月 / 月～木 / 月～金 / 月,木,金\n空欄の場合はシート上部の「曜日」設定に従います。\n（※上の曜日が「火」でも、ここが「水」なら水曜日に投稿されます）';
       }
+      if (lbl === '削除時間') {
+        cell.note = '【投稿後の自動削除タイマー（ランダム時間）】\n例: 30～60 (分) / 1～3時間 / 10～30秒 / 45分\n空欄または「0」「削除しない」でポストを削除せず残します。\n指定すると投稿完了後、指定範囲からランダムに選んだ時間後に自動削除します。';
+      }
     });
 
     // Row 5〜バッファ行 (120行以上まで色・枠線を事前配置して削除時も消えない)
@@ -281,33 +300,34 @@ async function buildStyledAccountWorkbook(
             p.text,
             p.timeSlot || '',
             p.weekdays || '',
+            p.deleteAfter || '',
             p.topic || '',
             p.imagePath || '',
             p.status,
             p.completedAt || '',
             p.errorMessage || '',
           ]
-        : ['', '', '', '', '', '', '', '', ''];
+        : ['', '', '', '', '', '', '', '', '', ''];
 
-      for (let c = 1; c <= 9; c++) {
+      for (let c = 1; c <= 10; c++) {
         const cell = row.getCell(c);
         cell.value = vals[c - 1];
         cell.border = dataBorder;
-        if (c === 3 || c === 4) {
+        if (c === 3 || c === 4 || c === 5) {
           cell.numFmt = '@';
         }
 
-        if (c === 1 || c === 3 || c === 4 || c === 7) {
+        if (c === 1 || c === 3 || c === 4 || c === 5 || c === 8) {
           cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
-        } else if (c === 2 || c === 9) {
+        } else if (c === 2 || c === 10) {
           cell.alignment = { horizontal: 'left', vertical: 'top', wrapText: true };
         } else {
           cell.alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
         }
 
-        if (c === 7 && vals[6]) {
-          const st = String(vals[6]);
-          if (st.includes('完了')) {
+        if (c === 8 && vals[7]) {
+          const st = String(vals[7]);
+          if (st.includes('完了') || st.includes('削除')) {
             cell.fill = greenFill;
             cell.font = greenFont;
           } else if (st.includes('エラー')) {
@@ -320,7 +340,7 @@ async function buildStyledAccountWorkbook(
         } else if (c === 1) {
           cell.fill = idColFill;
           cell.font = idFont;
-        } else if (c === 3 || c === 4) {
+        } else if (c === 3 || c === 4 || c === 5) {
           cell.fill = schedColFill;
           cell.font = bodyFont;
         } else {
@@ -335,11 +355,12 @@ async function buildStyledAccountWorkbook(
     // Excelネイティブ条件付き書式（セル内容を変更・削除しても色が追従）
     const cfEndRow = Math.max(endRow + 200, 500);
     ws.addConditionalFormatting({
-      ref: `G5:G${cfEndRow}`,
+      ref: `H5:H${cfEndRow}`,
       rules: [
         { type: 'cellIs', operator: 'equal', priority: 1, formulae: ['"投稿完了"'], style: { fill: greenFill, font: greenFont } },
-        { type: 'cellIs', operator: 'equal', priority: 2, formulae: ['"未投稿"'], style: { fill: amberFill, font: amberFont } },
-        { type: 'cellIs', operator: 'equal', priority: 3, formulae: ['"エラー"'], style: { fill: redFill, font: redFont } },
+        { type: 'cellIs', operator: 'equal', priority: 2, formulae: ['"投稿完了(削除済)"'], style: { fill: greenFill, font: greenFont } },
+        { type: 'cellIs', operator: 'equal', priority: 3, formulae: ['"未投稿"'], style: { fill: amberFill, font: amberFont } },
+        { type: 'cellIs', operator: 'equal', priority: 4, formulae: ['"エラー"'], style: { fill: redFill, font: redFont } },
       ],
     });
     ws.addConditionalFormatting({
@@ -351,7 +372,340 @@ async function buildStyledAccountWorkbook(
     });
   });
 
+  // 2. AIポスト専用シート（固定ポストとは完全別管理・画像レイアウト完全準拠 A:E構成）
+  const aiWs = wb.addWorksheet('AIポスト', {
+    views: [{ state: 'frozen', ySplit: 7, showGridLines: true }],
+  });
+  populateAiPostWorksheet(aiWs, account.aiPostConfig, account.aiPostHistory);
+
   return wb;
+}
+
+export function populateAiPostWorksheet(
+  aiWs: ExcelJS.Worksheet,
+  rawAiConfig?: Partial<AiPostConfig>,
+  rawAiHistory?: AiPostHistoryItem[]
+): void {
+  const aiCfg = createDefaultAiPostConfig(rawAiConfig);
+  const aiSections = createDefaultAiPromptSections(aiCfg.promptSections);
+
+  aiWs.views = [{ state: 'frozen', ySplit: 7, showGridLines: true }];
+  aiWs.columns = [
+    { width: 24 },
+    { width: 28 },
+    { width: 34 },
+    { width: 26 },
+    { width: 44 },
+  ];
+
+  const idColFill = solidFill('FFF1F5F9');
+  const oddFill = solidFill('FFFFFFFF');
+  const evenFill = solidFill('FFF8FAFC');
+  const greenFill = solidFill('FFDCFCE7');
+  const amberFill = solidFill('FFFEF3C7');
+  const redFill = solidFill('FFFEE2E2');
+
+  const hdrFont: Partial<ExcelJS.Font> = { name: FONT_NAME, size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
+  const bodyFont: Partial<ExcelJS.Font> = { name: FONT_NAME, size: 10, bold: false, color: { argb: 'FF0F172A' } };
+  const idFont: Partial<ExcelJS.Font> = { name: FONT_NAME, size: 10, bold: true, color: { argb: 'FF475569' } };
+  const greenFont: Partial<ExcelJS.Font> = { name: FONT_NAME, size: 10, bold: true, color: { argb: 'FF166534' } };
+  const amberFont: Partial<ExcelJS.Font> = { name: FONT_NAME, size: 10, bold: true, color: { argb: 'FF92400E' } };
+  const redFont: Partial<ExcelJS.Font> = { name: FONT_NAME, size: 10, bold: true, color: { argb: 'FF991B1B' } };
+
+  const aiTopPurpleHdr = solidFill('FF432889');
+  const aiMidNavyHdr = solidFill('FF231F5E');
+  const aiTblIndigoHdr = solidFill('FF312E81');
+  const aiTopValFill = solidFill('FFEDE9FE');
+  const aiMidValFill = solidFill('FFFFFFFF');
+  const aiDashedFill = solidFill('FFFAF9FF');
+
+  const topPurpleBorder = thinBorder('FF312E81');
+  const gridThinBorder = thinBorder('FFCBD5E1');
+  const dashedSide: Partial<ExcelJS.Border> = { style: 'dashed', color: { argb: 'FF94A3B8' } };
+
+  const valPurpleFont: Partial<ExcelJS.Font> = { name: FONT_NAME, size: 10, bold: true, color: { argb: 'FF4338CA' } };
+  const valMemoFont: Partial<ExcelJS.Font> = { name: FONT_NAME, size: 9, bold: false, color: { argb: 'FF4338CA' } };
+  const valNavyFont: Partial<ExcelJS.Font> = { name: FONT_NAME, size: 10, bold: true, color: { argb: 'FF312E81' } };
+  const valNormalFont: Partial<ExcelJS.Font> = { name: FONT_NAME, size: 10, bold: false, color: { argb: 'FF0F172A' } };
+  const secLabelFont: Partial<ExcelJS.Font> = { name: FONT_NAME, size: 10, bold: true, color: { argb: 'FF0F172A' } };
+  const secDescFont: Partial<ExcelJS.Font> = { name: FONT_NAME, size: 9, bold: false, color: { argb: 'FF475569' } };
+  const guideBannerFont: Partial<ExcelJS.Font> = { name: FONT_NAME, size: 9, bold: true, color: { argb: 'FF312E81' } };
+
+  // Row 1: 上段5項目ヘッダー (実行時間 / 曜日 / ポスト間隔 / 有効/無効 / メモ)
+  const row1Headers = ['実行時間', '曜日', 'ポスト間隔', '有効/無効', 'メモ'];
+  const ar1 = aiWs.getRow(1);
+  ar1.height = 28;
+  row1Headers.forEach((lbl, idx) => {
+    const cell = ar1.getCell(idx + 1);
+    cell.value = lbl;
+    cell.fill = aiTopPurpleHdr;
+    cell.font = hdrFont;
+    cell.border = topPurpleBorder;
+    cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+  });
+
+  // Row 2: 上段5項目設定値
+  const row2Vals = [
+    aiCfg.activeHours || '0:00-0:00',
+    aiCfg.weekdays || '毎日',
+    aiCfg.intervalStr || '120〜360分',
+    aiCfg.enabled ? '有効' : '無効',
+    aiCfg.memo || '',
+  ];
+  const ar2 = aiWs.getRow(2);
+  ar2.height = 38;
+  row2Vals.forEach((val, idx) => {
+    const cell = ar2.getCell(idx + 1);
+    cell.value = val;
+    cell.border = gridThinBorder;
+    if (idx <= 2) cell.numFmt = '@';
+    if (idx === 3) {
+      cell.fill = aiCfg.enabled ? greenFill : redFill;
+      cell.font = aiCfg.enabled ? greenFont : redFont;
+      cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+    } else if (idx === 4) {
+      cell.fill = aiTopValFill;
+      cell.font = valMemoFont;
+      cell.alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
+    } else {
+      cell.fill = aiTopValFill;
+      cell.font = valPurpleFont;
+      cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+    }
+  });
+
+  // Row 3: 中段5項目ヘッダー (AIエンジン / AIモデル名 / AIフォールバック候補 / AI専用ウィンドウ連携 / AI APIキー・接続URL)
+  const row3Headers = [
+    'AIエンジン',
+    'AIモデル名(空欄=既定モデル自動)',
+    'AIフォールバック候補(空欄=自動切替/off=切替なし)',
+    'AI専用ウィンドウ連携(1=ON/0=OFF)',
+    'AI APIキー / 接続URL',
+  ];
+  const ar3 = aiWs.getRow(3);
+  ar3.height = 32;
+  row3Headers.forEach((lbl, idx) => {
+    const cell = ar3.getCell(idx + 1);
+    cell.value = lbl;
+    cell.fill = aiMidNavyHdr;
+    cell.font = hdrFont;
+    cell.border = topPurpleBorder;
+    cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+    if (lbl === 'AIエンジン') {
+      cell.note = `使用可能エンジン(18種):\n${AI_ENGINES_META.map((m) => m.id).join(' / ')}\n\n※カンマ「,」区切りで複数指定可（例: duckai, talkai, deepai）\n失敗時はログイン不要サイト優先で次のAIへ自動切替します。`;
+    } else if (lbl.startsWith('AIモデル名')) {
+      cell.note = '空欄時は選択エンジンの既定モデルを自動使用。\nカンマ「,」区切りで複数指定可（例: llama-3.3-70b-versatile, gemini-2.5-flash または groq:モデル名, gemini:モデル名）';
+    } else if (lbl.startsWith('AIフォールバック候補')) {
+      cell.note = '空欄: 失敗時に他の利用可能エンジン(ログイン不要優先→全18種)へ自動切替\noff: 追加自動切替なし\nカンマ区切り指定可: 例 duckai, talkai, groq';
+    } else if (lbl.startsWith('AI専用ウィンドウ連携')) {
+      cell.note = '1: 固定AI専用Window(chrome_profiles/_ai_window)を自動連携\n0: API/接続URLのみで実行 (ブラウザAIウィンドウは使わない)';
+    } else if (lbl.startsWith('AI APIキー')) {
+      cell.note = 'カンマ「,」区切りで複数APIキー/接続URLを指定可:\n例: gsk_xxx, AIzaSy..., http://127.0.0.1:11434\n個別指定例: groq:gsk_xxx, gemini:AIzaSy...';
+    }
+  });
+
+  // Row 4: 中段5項目設定値
+  const row4Vals = [
+    normalizeAiEngineList(aiCfg.engine || 'duckai'),
+    aiCfg.modelName || '',
+    aiCfg.fallbackCandidates || '',
+    aiCfg.aiWindowSync ? '1' : '0',
+    aiCfg.apiKeyOrUrl || '',
+  ];
+  const ar4 = aiWs.getRow(4);
+  ar4.height = 32;
+  row4Vals.forEach((val, idx) => {
+    const cell = ar4.getCell(idx + 1);
+    cell.value = val;
+    cell.border = gridThinBorder;
+    cell.fill = aiMidValFill;
+    if (idx === 3) cell.numFmt = '@';
+    if (idx === 0) {
+      cell.font = valNavyFont;
+      cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+    } else if (idx === 4) {
+      cell.font = valNormalFont;
+      cell.alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
+    } else {
+      cell.font = valNormalFont;
+      cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+    }
+  });
+
+  // Row 5-6: 全18種エンジン＆カンマ複数指定 破線枠ガイド帯
+  aiWs.mergeCells('A5:E5');
+  aiWs.mergeCells('A6:E6');
+  const ar5 = aiWs.getRow(5);
+  const ar6 = aiWs.getRow(6);
+  ar5.height = 24;
+  ar6.height = 22;
+  ar5.getCell(1).value =
+    '【ログイン不要(優先): duckai / talkai / deepai / venice】 ｜ 【API・要ログイン(14種): groq / gemini / chatgpt / grok / claude / copilot / perplexity / deepseek / qwen / mistral / openrouter / ollama / lmstudio / chrome_builtin】';
+  ar6.getCell(1).value =
+    '【カンマ(,)複数指定・自動切替】例) エンジン: duckai, talkai, deepai ／ 失敗時はログイン不要サイト優先で自動切替（モデル・APIも「,」複数指定可）';
+  for (let c = 1; c <= 5; c++) {
+    const c5 = ar5.getCell(c);
+    c5.fill = aiDashedFill;
+    c5.font = guideBannerFont;
+    c5.alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
+    c5.border = {
+      top: dashedSide,
+      left: c === 1 ? dashedSide : undefined,
+      right: c === 5 ? dashedSide : undefined,
+    };
+
+    const c6 = ar6.getCell(c);
+    c6.fill = aiDashedFill;
+    c6.font = { name: FONT_NAME, size: 9, bold: false, color: { argb: 'FF312E81' } };
+    c6.alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
+    c6.border = {
+      bottom: dashedSide,
+      left: c === 1 ? dashedSide : undefined,
+      right: c === 5 ? dashedSide : undefined,
+    };
+  }
+
+  // Row 7: 構造化プロンプト見出し (A7 | B7:C7 | D7:E7)
+  aiWs.mergeCells('B7:C7');
+  aiWs.mergeCells('D7:E7');
+  const ar7 = aiWs.getRow(7);
+  ar7.height = 26;
+  const r7Items: Array<{ col: number; text: string }> = [
+    { col: 1, text: 'プロンプト項目 (【】付送信)' },
+    { col: 2, text: 'AIへ送る設定内容 (ここを編集)' },
+    { col: 4, text: '各項目の説明' },
+  ];
+  r7Items.forEach((it) => {
+    const c = ar7.getCell(it.col);
+    c.value = it.text;
+    c.font = hdrFont;
+    c.alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
+  });
+  for (let c = 1; c <= 5; c++) {
+    ar7.getCell(c).fill = aiTblIndigoHdr;
+    ar7.getCell(c).border = topPurpleBorder;
+  }
+
+  // Rows 8-15: 8項目プロンプトテーブル (キャラ設定 〜 出力ルール)
+  const sectionPalette: Array<{ left: string; mid: string }> = [
+    { left: 'FFE0EAFF', mid: 'FFF5F8FF' }, // キャラ設定
+    { left: 'FFE0F2FE', mid: 'FFF0F9FF' }, // ターゲット層
+    { left: 'FFDCFCE7', mid: 'FFF0FDF4' }, // 投稿の目的
+    { left: 'FFFEF3C7', mid: 'FFFFFBEB' }, // 口調・文体ルール
+    { left: 'FFEDE9FE', mid: 'FFF5F3FF' }, // プロンプト
+    { left: 'FFFCE7F3', mid: 'FFFDF2F8' }, // お手本サンプル
+    { left: 'FFFFE4E6', mid: 'FFFFF1F2' }, // NGルール
+    { left: 'FFF1F5F9', mid: 'FFF8FAFC' }, // 出力ルール
+  ];
+
+  AI_PROMPT_SECTION_META.forEach((secDef, idx) => {
+    const rNum = 8 + idx;
+    const row = aiWs.getRow(rNum);
+    aiWs.mergeCells(`B${rNum}:C${rNum}`);
+    aiWs.mergeCells(`D${rNum}:E${rNum}`);
+
+    const pal = sectionPalette[idx] || sectionPalette[0];
+    const secVal = aiSections[secDef.key] ?? secDef.defaultValue;
+
+    const cLbl = row.getCell(1);
+    cLbl.value = secDef.label;
+    cLbl.fill = solidFill(pal.left);
+    cLbl.font = secLabelFont;
+    cLbl.border = gridThinBorder;
+    cLbl.alignment = { horizontal: 'left', vertical: 'top', wrapText: true };
+
+    const cVal = row.getCell(2);
+    cVal.value = secVal;
+    cVal.font = valNormalFont;
+    cVal.alignment = { horizontal: 'left', vertical: 'top', wrapText: true };
+    for (let c = 2; c <= 3; c++) {
+      row.getCell(c).fill = solidFill(pal.mid);
+      row.getCell(c).border = gridThinBorder;
+    }
+
+    const cDesc = row.getCell(4);
+    cDesc.value = secDef.description;
+    cDesc.font = secDescFont;
+    cDesc.alignment = { horizontal: 'left', vertical: 'top', wrapText: true };
+    for (let c = 4; c <= 5; c++) {
+      row.getCell(c).fill = solidFill('FFFFFFFF');
+      row.getCell(c).border = gridThinBorder;
+    }
+
+    row.height = Math.max(42, estimateRowHeight(secVal, 44, 42, 130));
+  });
+
+  // Row 16 spacer & Row 17+: AI生成ポスト履歴ログ（過去互換・実績記録用）
+  aiWs.getRow(16).height = 12;
+  const histHdrs = ['ID', '生成されたポスト文章', '使用AIエンジン', 'ステータス', '投稿完了日時 / エラー'];
+  const ar17 = aiWs.getRow(17);
+  ar17.height = 24;
+  histHdrs.forEach((lbl, idx) => {
+    const c = ar17.getCell(idx + 1);
+    c.value = lbl;
+    c.fill = aiTblIndigoHdr;
+    c.font = hdrFont;
+    c.border = topPurpleBorder;
+    c.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+  });
+
+  const historyRows: AiPostHistoryItem[] = [...(rawAiHistory || [])];
+  const histEndRow = Math.max(17 + historyRows.length + 10, 32);
+  for (let rIdx = 18; rIdx <= histEndRow; rIdx++) {
+    const hIdx = rIdx - 18;
+    const item = hIdx < historyRows.length ? historyRows[hIdx] : null;
+    const row = aiWs.getRow(rIdx);
+    const baseFill = rIdx % 2 === 0 ? oddFill : evenFill;
+    const vals: (string | number)[] = item
+      ? [
+          item.id ?? hIdx + 1,
+          item.generatedText || item.prompt || '',
+          item.engineUsed || '',
+          item.status || '指示待機',
+          [item.postedAt, item.deleteAfter ? `削除:${item.deleteAfter}` : '', item.errorMessage].filter(Boolean).join(' / '),
+        ]
+      : ['', '', '', '', ''];
+    for (let c = 1; c <= 5; c++) {
+      const cell = row.getCell(c);
+      cell.value = vals[c - 1];
+      cell.border = gridThinBorder;
+      cell.alignment = c === 1 || c === 3 || c === 4
+        ? { horizontal: 'center', vertical: 'middle', wrapText: true }
+        : { horizontal: 'left', vertical: 'top', wrapText: true };
+      if (c === 4 && vals[3]) {
+        const st = String(vals[3]);
+        if (st.includes('完了') || st.includes('削除')) {
+          cell.fill = greenFill; cell.font = greenFont;
+        } else if (st.includes('エラー')) {
+          cell.fill = redFill; cell.font = redFont;
+        } else {
+          cell.fill = amberFill; cell.font = amberFont;
+        }
+      } else if (c === 1) {
+        cell.fill = idColFill; cell.font = idFont;
+      } else {
+        cell.fill = baseFill; cell.font = bodyFont;
+      }
+    }
+    row.height = item ? estimateRowHeight(String(vals[1] || ''), 36, 28, 110) : 22;
+  }
+
+  aiWs.addConditionalFormatting({
+    ref: 'D2',
+    rules: [
+      { type: 'cellIs', operator: 'equal', priority: 1, formulae: ['"有効"'], style: { fill: greenFill, font: greenFont } },
+      { type: 'cellIs', operator: 'equal', priority: 2, formulae: ['"無効"'], style: { fill: redFill, font: redFont } },
+    ],
+  });
+  aiWs.addConditionalFormatting({
+    ref: 'D18:D300',
+    rules: [
+      { type: 'cellIs', operator: 'equal', priority: 1, formulae: ['"投稿完了"'], style: { fill: greenFill, font: greenFont } },
+      { type: 'cellIs', operator: 'equal', priority: 2, formulae: ['"投稿完了(削除済)"'], style: { fill: greenFill, font: greenFont } },
+      { type: 'cellIs', operator: 'equal', priority: 3, formulae: ['"指示待機"'], style: { fill: amberFill, font: amberFont } },
+      { type: 'cellIs', operator: 'equal', priority: 4, formulae: ['"エラー"'], style: { fill: redFill, font: redFont } },
+    ],
+  });
 }
 
 /**
@@ -395,7 +749,8 @@ export async function exportAccountsConfigWorkbook(accounts: AccountInfo[]): Pro
     { width: 22 },
     { width: 45 },
     { width: 14 },
-    { width: 40 },
+    { width: 34 },
+    { width: 34 },
   ];
 
   const hdrFill = solidFill('FF1E293B');
@@ -410,7 +765,7 @@ export async function exportAccountsConfigWorkbook(accounts: AccountInfo[]): Pro
   const greenFont: Partial<ExcelJS.Font> = { name: FONT_NAME, size: 10, bold: true, color: { argb: 'FF166534' } };
   const redFont: Partial<ExcelJS.Font> = { name: FONT_NAME, size: 10, bold: true, color: { argb: 'FF991B1B' } };
 
-  const headers = ['アカウントID', 'パスワード', 'sessionid', '有効/無効', '備考'];
+  const headers = ['アカウントID', 'パスワード', 'sessionid', '有効/無効', '備考', 'プロキシ'];
   const r1 = ws.getRow(1);
   r1.height = 28;
   headers.forEach((lbl, idx) => {
@@ -420,6 +775,9 @@ export async function exportAccountsConfigWorkbook(accounts: AccountInfo[]): Pro
     cell.font = hdrFont;
     cell.border = hdrBorder;
     cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+    if (lbl === 'プロキシ') {
+      cell.note = '【任意・Hyonix/別VPS移行ロック対策】\n例: http://user:pass@ip:port / socks5://user:pass@ip:port / ip:port:user:pass / ip:port\n別VPSへ移行する際、住宅IP等の固定プロキシを設定するとIP変更による電話番号確認を強力に防止します。';
+    }
   });
 
   const endRow = Math.max(1 + accounts.length + 30, 80);
@@ -435,10 +793,11 @@ export async function exportAccountsConfigWorkbook(accounts: AccountInfo[]): Pro
           acc.authToken || '',
           acc.enabled !== false ? '有効' : '無効',
           acc.notes || '',
+          acc.proxy || '',
         ]
-      : ['', '', '', '', ''];
+      : ['', '', '', '', '', ''];
 
-    for (let c = 1; c <= 5; c++) {
+    for (let c = 1; c <= 6; c++) {
       const cell = row.getCell(c);
       cell.value = vals[c - 1];
       cell.border = dataBorder;
@@ -477,6 +836,8 @@ export async function parseExcelFile(
   posts?: PostItem[];
   dailySlots?: DailyGreetingSlot[];
   settings?: Partial<AccountInfo>;
+  aiPostConfig?: AiPostConfig;
+  aiPostHistory?: AiPostHistoryItem[];
   fileName: string;
 }> {
   return new Promise((resolve, reject) => {
@@ -490,6 +851,8 @@ export async function parseExcelFile(
           posts?: PostItem[];
           dailySlots?: DailyGreetingSlot[];
           settings?: Partial<AccountInfo>;
+          aiPostConfig?: AiPostConfig;
+          aiPostHistory?: AiPostHistoryItem[];
           fileName: string;
         } = { fileName: file.name };
 
@@ -516,6 +879,7 @@ export async function parseExcelFile(
             const sessionCol = headers.findIndex((h) => h.toLowerCase().includes('sessionid') || h.includes('auth_token') || h.includes('トークン'));
             const enabledCol = headers.findIndex((h) => h.includes('有効') || h.includes('ステータス') || h.includes('状態'));
             const notesCol = headers.findIndex((h) => h.includes('備考') || h.includes('note'));
+            const proxyCol = headers.findIndex((h) => h.includes('プロキシ') || h.toLowerCase().includes('proxy'));
 
             const getCell = (row: any[], idx: number) =>
               idx !== -1 && row[idx] !== undefined && row[idx] !== null ? String(row[idx]).trim() : '';
@@ -530,6 +894,7 @@ export async function parseExcelFile(
               const tokenVal = getCell(row, sessionCol);
               const statusStr = getCell(row, enabledCol) || '有効';
               const isEnabled = !['無効', '停止', 'off', 'OFF', '0', 'false', '停止 (要電話番号認証)'].includes(statusStr);
+              const proxyVal = getCell(row, proxyCol);
 
               parsedAccounts.push({
                 id: accId,
@@ -540,6 +905,7 @@ export async function parseExcelFile(
                 profileDir: `chrome_profiles/${accId}`,
                 enabled: isEnabled,
                 notes: getCell(row, notesCol),
+                proxy: proxyVal || undefined,
               });
             }
             if (parsedAccounts.length > 0) {
@@ -633,8 +999,9 @@ export async function parseExcelFile(
           const textCol = headers.findIndex((h) => h.includes('ポスト文章') || h.includes('投稿本文') || h.includes('ツイート文章') || h.includes('ポスト内容') || h.includes('投稿内容') || h.includes('本文'));
           const topicCol = headers.findIndex((h) => (h.includes('トピック') || h.includes('コミュニティ')) && !h.includes('適用'));
           const imgCol = headers.findIndex((h) => h.includes('画像') || h.toLowerCase().includes('image'));
-          const slotCol = headers.findIndex((h) => (h.includes('投稿時間') || h.includes('投稿時刻') || h.includes('実行時間') || h.includes('時間帯')) && !h.includes('完了') && !h.includes('最終'));
+          const slotCol = headers.findIndex((h) => (h.includes('投稿時間') || h.includes('投稿時刻') || h.includes('実行時間') || h.includes('時間帯')) && !h.includes('完了') && !h.includes('最終') && !h.includes('削除'));
           const wdCol = headers.findIndex((h) => h.includes('曜日') || h.toLowerCase().includes('weekday'));
+          const delCol = headers.findIndex((h) => (h.includes('削除時間') || h.includes('自動削除') || h.includes('削除タイマー') || h.includes('削除まで') || h.toLowerCase().includes('deleteafter')) && !h.includes('済') && !h.includes('完了') && !h.includes('日時'));
           const statusCol = headers.findIndex((h) => h.includes('ステータス') || h.toLowerCase().includes('status'));
           const finishCol = headers.findIndex((h) => h.includes('完了日時') || h.includes('投稿完了日時'));
           const errCol = headers.findIndex((h) => h.includes('エラー'));
@@ -647,7 +1014,8 @@ export async function parseExcelFile(
 
             const statusRaw = statusCol !== -1 && row[statusCol] ? String(row[statusCol]).trim() : '未投稿';
             let status: PostItem['status'] = '未投稿';
-            if (statusRaw.includes('完了')) status = '投稿完了';
+            if (statusRaw.includes('削除') && statusRaw.includes('完了')) status = '投稿完了(削除済)';
+            else if (statusRaw.includes('完了')) status = '投稿完了';
             else if (statusRaw.includes('中')) status = '投稿中';
             else if (statusRaw.includes('エラー')) status = 'エラー';
 
@@ -662,6 +1030,7 @@ export async function parseExcelFile(
               themeWeekdays: sheetWeekdays || undefined,
               timeSlot: slotCol !== -1 && row[slotCol] ? String(row[slotCol]).trim() : undefined,
               weekdays: wdCol !== -1 && row[wdCol] ? String(row[wdCol]).trim() : undefined,
+              deleteAfter: delCol !== -1 && row[delCol] ? String(row[delCol]).trim() : undefined,
               intervalStr: sheetIntervalStr || undefined,
               mode: sheetMode,
               topic: topicCol !== -1 && row[topicCol] ? String(row[topicCol]).trim() : '',
@@ -703,6 +1072,124 @@ export async function parseExcelFile(
             if (slots.length > 0) {
               result.dailySlots = slots;
             }
+          }
+        }
+
+        // Check for AIポスト sheet (完全分離)
+        const aiSheetName = wb.SheetNames.find((name) => isAiPostSheetName(name));
+        if (aiSheetName) {
+          const ws = wb.Sheets[aiSheetName];
+          const rawRows = XLSX.utils.sheet_to_json<any[]>(ws, { header: 1 });
+          if (rawRows.length >= 2) {
+            const cfg = createDefaultAiPostConfig();
+            const applyHeaderPair = (hdrRow: any[], valRow: any[]) => {
+              hdrRow.slice(0, 10).forEach((rawLbl, idx) => {
+                const lbl = String(rawLbl ?? '').trim();
+                const v = valRow[idx] !== undefined && valRow[idx] !== null ? String(valRow[idx]).trim() : '';
+                if (!lbl) return;
+                if (lbl.includes('実行時間')) cfg.activeHours = v || '0:00-0:00';
+                else if (lbl.includes('曜日')) cfg.weekdays = v || '毎日';
+                else if (lbl.includes('間隔')) cfg.intervalStr = v || '120〜360分';
+                else if (lbl.includes('有効') || lbl.includes('状態')) cfg.enabled = !['無効', '停止', 'off', 'OFF', '0', 'false'].includes(v);
+                else if (lbl.includes('メモ') || lbl.includes('備考')) cfg.memo = v;
+                else if (lbl.includes('AIエンジン') || lbl === 'エンジン') {
+                  cfg.engine = v ? normalizeAiEngineList(v) : 'duckai';
+                } else if (lbl.includes('モデル')) cfg.modelName = v;
+                else if (lbl.includes('フォールバック')) cfg.fallbackCandidates = v;
+                else if (lbl.includes('ウィンドウ')) cfg.aiWindowSync = !['0', 'off', 'OFF', 'false', '無効', 'なし'].includes(v);
+                else if (lbl.includes('APIキー') || lbl.includes('接続URL') || lbl.includes('URL')) cfg.apiKeyOrUrl = v;
+              });
+            };
+
+            applyHeaderPair(rawRows[0] || [], rawRows[1] || []);
+            const row3Text = (rawRows[2] || []).map((c) => String(c ?? '')).join(' ');
+            const isTwoBlockTop = rawRows.length >= 4 && (row3Text.includes('AIエンジン') || row3Text.includes('AIモデル'));
+            if (isTwoBlockTop) {
+              applyHeaderPair(rawRows[2] || [], rawRows[3] || []);
+            }
+
+            // 8項目構造化プロンプト (キャラ設定 / ターゲット層 / 投稿の目的 / 口調・文体ルール / プロンプト / お手本サンプル / NGルール / 出力ルール)
+            const sections: AiPromptSections = createDefaultAiPromptSections();
+            const labelToKey: Record<string, keyof AiPromptSections> = {
+              'キャラ設定': 'character',
+              'ターゲット層': 'target',
+              '投稿の目的': 'purpose',
+              '口調・文体ルール': 'toneRule',
+              'プロンプト': 'prompt',
+              'お手本サンプル': 'samples',
+              'NGルール': 'ngRules',
+              '出力ルール': 'outputRule',
+            };
+            let foundSectionRows = false;
+            for (let r = 4; r < Math.min(20, rawRows.length); r++) {
+              const row = rawRows[r] || [];
+              const kLbl = String(row[0] ?? '').trim();
+              const secKey = labelToKey[kLbl];
+              if (secKey) {
+                foundSectionRows = true;
+                const valB = row[1] !== undefined && row[1] !== null ? String(row[1]).trim() : '';
+                sections[secKey] = valB;
+              }
+            }
+            if (foundSectionRows) {
+              cfg.promptSections = sections;
+              if (sections.prompt) cfg.promptTemplate = sections.prompt;
+            }
+
+            const aiHistory: AiPostHistoryItem[] = [];
+            let tblHdrIdx = -1;
+            for (let r = 2; r < Math.min(25, rawRows.length); r++) {
+              const rowArr = (rawRows[r] || []).map((c) => String(c ?? '').trim());
+              const rowStr = rowArr.join(' ');
+              if (rowStr.includes('生成されたポスト') || rowStr.includes('AI指示プロンプト・テーマ')) {
+                tblHdrIdx = r;
+                break;
+              }
+            }
+            if (tblHdrIdx !== -1) {
+              const th = (rawRows[tblHdrIdx] || []).map((c) => String(c ?? '').trim());
+              const idC = th.findIndex((h) => h.toUpperCase() === 'ID');
+              const pC = th.findIndex((h) => h.includes('プロンプト') || h.includes('指示'));
+              const topC = th.findIndex((h) => h.includes('トピック'));
+              const delC = th.findIndex((h) => h.includes('削除時間'));
+              const genC = th.findIndex((h) => h.includes('生成された'));
+              const engC = th.findIndex((h) => h.includes('使用AI') || h.includes('エンジン'));
+              const stC = th.findIndex((h) => h.includes('ステータス'));
+              const dtC = th.findIndex((h) => h.includes('完了日時'));
+              const errC = th.findIndex((h) => h.includes('エラー'));
+
+              for (let r = tblHdrIdx + 1; r < rawRows.length; r++) {
+                const row = rawRows[r];
+                if (!row) continue;
+                const promptVal = pC !== -1 && row[pC] ? String(row[pC]).trim() : '';
+                const genVal = genC !== -1 && row[genC] ? String(row[genC]).trim() : '';
+                if (!promptVal && !genVal) continue;
+                const stRaw = stC !== -1 && row[stC] ? String(row[stC]).trim() : '指示待機';
+                let st: AiPostHistoryItem['status'] = '指示待機';
+                if (stRaw.includes('削除') && stRaw.includes('完了')) st = '投稿完了(削除済)';
+                else if (stRaw.includes('完了')) st = '投稿完了';
+                else if (stRaw.includes('エラー')) st = 'エラー';
+                const topVal = topC !== -1 && row[topC] ? String(row[topC]).trim() : '';
+                const delVal = delC !== -1 && row[delC] ? String(row[delC]).trim() : '';
+                if (!cfg.promptTemplate && promptVal) cfg.promptTemplate = promptVal;
+                if (!cfg.topic && topVal) cfg.topic = topVal;
+                if (!cfg.deleteAfter && delVal) cfg.deleteAfter = delVal;
+                aiHistory.push({
+                  id: idC !== -1 && row[idC] ? Number(row[idC]) || (r - tblHdrIdx) : (r - tblHdrIdx),
+                  prompt: promptVal || genVal,
+                  generatedText: genVal || undefined,
+                  topic: topVal || undefined,
+                  deleteAfter: delVal || undefined,
+                  engineUsed: engC !== -1 && row[engC] ? String(row[engC]).trim() : undefined,
+                  status: st,
+                  postedAt: dtC !== -1 && row[dtC] ? String(row[dtC]).trim() : undefined,
+                  errorMessage: errC !== -1 && row[errC] ? String(row[errC]).trim() : undefined,
+                });
+              }
+            }
+            result.aiPostConfig = cfg;
+            result.aiPostHistory = aiHistory;
+            result.settings = { ...(result.settings || {}), aiPostConfig: cfg, aiPostHistory: aiHistory };
           }
         }
 

@@ -39,6 +39,7 @@ export const AccountSelector: React.FC<AccountSelectorProps> = ({
   const [isAddingAccount, setIsAddingAccount] = useState(false);
   const [newAccountId, setNewAccountId] = useState('');
   const [newPassword, setNewPassword] = useState('');
+  const [newProxy, setNewProxy] = useState('');
   const [showCheckpointModal, setShowCheckpointModal] = useState(false);
   const [showRedirectModal, setShowRedirectModal] = useState(false);
 
@@ -84,10 +85,12 @@ export const AccountSelector: React.FC<AccountSelectorProps> = ({
       topics: ['信太山新地', '大阪求人'],
       currentTopicIndex: 0,
       enabled: true,
+      proxy: newProxy.trim() || undefined,
     };
     onAddAccount(newAcc);
     setNewAccountId('');
     setNewPassword('');
+    setNewProxy('');
     setIsAddingAccount(false);
   };
 
@@ -223,7 +226,7 @@ export const AccountSelector: React.FC<AccountSelectorProps> = ({
               </span>
             </span>
             <p className="text-zinc-400 text-[11px] mt-0.5">
-              「携帯電話番号を入力」画面を検知すると、即座にブラウザを終了し「アカウント情報.xlsx」の【有効/無効】を「無効」に自動更新して安全停止します。
+              「携帯電話番号を入力」画面を検知すると、即座にブラウザを終了し「アカウント情報.xlsx」の【有効/無効】を「無効」に自動更新して安全停止します（別PC/Hyonix VPS間の移行時はIP変化によるロック防止のため固定プロキシ設定＋PC変更自動再バインドが動作します）。
             </p>
           </div>
         </div>
@@ -386,6 +389,13 @@ export const AccountSelector: React.FC<AccountSelectorProps> = ({
             onChange={(e) => setNewPassword(e.target.value)}
             className="bg-zinc-900 border border-zinc-700 text-xs text-white px-2.5 py-1.5 rounded focus:outline-none focus:border-emerald-500 flex-1 min-w-[200px]"
           />
+          <input
+            type="text"
+            placeholder="プロキシ任意 (例: http://user:pass@ip:port)"
+            value={newProxy}
+            onChange={(e) => setNewProxy(e.target.value)}
+            className="bg-zinc-900 border border-zinc-700 text-xs text-white px-2.5 py-1.5 rounded focus:outline-none focus:border-emerald-500 flex-1 min-w-[210px] font-mono"
+          />
           <button
             type="submit"
             className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded cursor-pointer"
@@ -422,8 +432,10 @@ export const AccountSelector: React.FC<AccountSelectorProps> = ({
                 {currentAccount.profileDir || `chrome_profiles/${currentAccount.id}`}
               </span>
             </div>
-            <div className="text-[11px] text-zinc-400 mt-1">
-              sessionidから自動生成 (HTTP 429回避・永続保持)
+            <div className="text-[11px] text-zinc-400 mt-1 truncate">
+              {currentAccount.proxy
+                ? `Proxy固定: ${currentAccount.proxy.replace(/:[^:@]+@/, ':***@')}`
+                : 'sessionid連携・別PC移行自動再バインド対応'}
             </div>
           </div>
 
@@ -520,6 +532,18 @@ export const AccountSelector: React.FC<AccountSelectorProps> = ({
                 <option value={1}>1: ランダム順序で投稿</option>
                 <option value={0}>0: 投稿リストの上から順に投稿</option>
               </select>
+            </div>
+            <div className="md:col-span-2">
+              <label className="text-zinc-400 font-medium block mb-1">
+                プロキシ固定 (Hyonix等 別VPS・他PC移行時の電話番号確認ロック対策・任意)
+              </label>
+              <input
+                type="text"
+                value={tempAccount.proxy || ''}
+                onChange={(e) => setTempAccount({ ...tempAccount, proxy: e.target.value })}
+                placeholder="例: http://user:pass@ip:port または ip:port:user:pass または socks5://..."
+                className="w-full bg-zinc-900 border border-zinc-700 text-white text-xs px-2.5 py-1.5 rounded focus:outline-none focus:border-emerald-500 font-mono"
+              />
             </div>
           </div>
 

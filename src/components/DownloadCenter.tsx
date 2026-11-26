@@ -24,7 +24,7 @@ import {
   RAW_BUILD_CHROME_LAUNCHER_BAT,
   RAW_BUILD_EXE_BAT
 } from '../data/rawScript';
-import { RAW_PROFILE_LAUNCHER_PY } from '../data/rawProfileLauncher';
+import { RAW_PROFILE_LAUNCHER_PY, RAW_PROFILE_EDITOR_PY } from '../data/rawProfileLauncher';
 import { AccountInfo } from '../types';
 import { exportAccountsConfigWorkbook } from '../utils/excelUtils';
 import { createZipBlob, ZipInputFile } from '../utils/zipUtils';
@@ -114,6 +114,8 @@ export const DownloadCenter: React.FC<DownloadCenterProps> = ({ accounts = [] })
       const files: ZipInputFile[] = [
         { name: 'threads_gui_app.py', content: RAW_THREADS_GUI_APP_PY },
         { name: 'threads_auto_poster_cli.py', content: RAW_THREADS_CLI_PY },
+        { name: 'profile_launcher.py', content: RAW_PROFILE_LAUNCHER_PY },
+        { name: 'profile_editor.py', content: RAW_PROFILE_EDITOR_PY },
         { name: 'chrome_launcher.py', content: RAW_CHROME_LAUNCHER_PY },
         { name: 'ChromeLauncher.cs', content: RAW_CHROME_LAUNCHER_CS },
         { name: 'chrome_launcher.bat', content: RAW_CHROME_LAUNCHER_BAT },
@@ -434,8 +436,8 @@ export const DownloadCenter: React.FC<DownloadCenterProps> = ({ accounts = [] })
                 </span>
               </div>
               <p className="text-zinc-400 text-[11px]">
-                列構成: <code className="text-white">['アカウントID', 'パスワード', 'sessionid', '有効/無効', '備考']</code>。<br />
-                プロファイル名は不要となり、アカウントIDでプロファイルフォルダが完全自動生成されます。
+                列構成: <code className="text-white">['アカウントID', 'パスワード', 'sessionid', '有効/無効', '備考', 'プロキシ']</code>。<br />
+                プロファイルフォルダはアカウントIDで自動生成され、任意で【プロキシ】列に固定IPを設定できます。
               </p>
             </div>
             <div className="flex justify-end pt-2 border-t border-zinc-800/80">
@@ -532,6 +534,15 @@ export const DownloadCenter: React.FC<DownloadCenterProps> = ({ accounts = [] })
             <strong className="text-white">Q. 「後ほどもう一度実行してください コミュニティを守るため、特定のアクティビティは禁止されています」が出た理由は？</strong><br />
             VPS（データセンターIP）からのThreads直接ログインフォームへのアクセスに対し、Metaが一時制限をかけている状態です。<br />
             最新版の <code className="text-violet-300 font-mono">profile_launcher.py</code> では、警告バナーフラグを完全撤廃し、「<strong>📸 Instagramログイン（Metaブロック回避）</strong>」ボタンを追加しました。Instagram経由でログインするとこのエラーを100%回避できます。
+          </p>
+          <p>
+            <strong className="text-white">Q. Hyonixなど別のVPSで起動したときに「電話番号確認のロック」がかかった理由は？</strong><br />
+            別のHyonixサーバーへ移すとグローバルIPアドレス（別のデータセンターIP）とWindows DPAPI環境が一気に変わるため、Meta側が「別拠点への不正アクセス」と判定しやすくなります。<br />
+            最新版の防御策：
+            ①「<code className="text-sky-300 font-mono">アカウント情報.xlsx</code>」に<strong>【プロキシ】列</strong>を追加し、住宅/ISP固定プロキシで全VPSから同じIPで接続可能に。
+            ② 実ブラウザのデバイスCookie（datr/mid/ig_did）を保持し、疑似MD5 Cookie生成と不要な全Cookie削除を撤廃。
+            ③ 別PC移行時は古いSQLite Cookieのみを自動クリアして安全再バインド＋初回フィード閲覧ウォームアップを実行。
+            ④ 万一のSMS認証画面検知時は即停止し、連打による凍結を防止します。
           </p>
         </div>
       </div>
