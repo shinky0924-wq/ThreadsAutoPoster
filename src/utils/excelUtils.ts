@@ -586,11 +586,13 @@ export function populateAiPostWorksheet(
     ar7.getCell(c).border = topPurpleBorder;
   }
 
-  // Rows 8-15: 8項目プロンプトテーブル (キャラ設定 〜 出力ルール)
+  // Rows 8-17: 10項目プロンプトテーブル (キャラ設定 〜 出力ルール)
   const sectionPalette: Array<{ left: string; mid: string }> = [
     { left: 'FFE0EAFF', mid: 'FFF5F8FF' }, // キャラ設定
     { left: 'FFE0F2FE', mid: 'FFF0F9FF' }, // ターゲット層
-    { left: 'FFDCFCE7', mid: 'FFF0FDF4' }, // 投稿の目的
+    { left: 'FFCCFBF1', mid: 'FFF0FDFA' }, // 自店の強み・アピールポイント（USP）
+    { left: 'FFE0E7FF', mid: 'FFEEF2FF' }, // 投稿テーマ（切り口）
+    { left: 'FFDCFCE7', mid: 'FFF0FDF4' }, // 具体的なCTA（行動喚起）
     { left: 'FFFEF3C7', mid: 'FFFFFBEB' }, // 口調・文体ルール
     { left: 'FFEDE9FE', mid: 'FFF5F3FF' }, // プロンプト
     { left: 'FFFCE7F3', mid: 'FFFDF2F8' }, // お手本サンプル
@@ -635,13 +637,13 @@ export function populateAiPostWorksheet(
     row.height = Math.max(42, estimateRowHeight(secVal, 44, 42, 130));
   });
 
-  // Row 16 spacer & Row 17+: AI生成ポスト履歴ログ（過去互換・実績記録用）
-  aiWs.getRow(16).height = 12;
+  // Row 18 spacer & Row 19+: AI生成ポスト履歴ログ（過去互換・実績記録用）
+  aiWs.getRow(18).height = 12;
   const histHdrs = ['ID', '生成されたポスト文章', '使用AIエンジン', 'ステータス', '投稿完了日時 / エラー'];
-  const ar17 = aiWs.getRow(17);
-  ar17.height = 24;
+  const ar19 = aiWs.getRow(19);
+  ar19.height = 24;
   histHdrs.forEach((lbl, idx) => {
-    const c = ar17.getCell(idx + 1);
+    const c = ar19.getCell(idx + 1);
     c.value = lbl;
     c.fill = aiTblIndigoHdr;
     c.font = hdrFont;
@@ -650,9 +652,9 @@ export function populateAiPostWorksheet(
   });
 
   const historyRows: AiPostHistoryItem[] = [...(rawAiHistory || [])];
-  const histEndRow = Math.max(17 + historyRows.length + 10, 32);
-  for (let rIdx = 18; rIdx <= histEndRow; rIdx++) {
-    const hIdx = rIdx - 18;
+  const histEndRow = Math.max(19 + historyRows.length + 10, 34);
+  for (let rIdx = 20; rIdx <= histEndRow; rIdx++) {
+    const hIdx = rIdx - 20;
     const item = hIdx < historyRows.length ? historyRows[hIdx] : null;
     const row = aiWs.getRow(rIdx);
     const baseFill = rIdx % 2 === 0 ? oddFill : evenFill;
@@ -698,7 +700,7 @@ export function populateAiPostWorksheet(
     ],
   });
   aiWs.addConditionalFormatting({
-    ref: 'D18:D300',
+    ref: 'D20:D300',
     rules: [
       { type: 'cellIs', operator: 'equal', priority: 1, formulae: ['"投稿完了"'], style: { fill: greenFill, font: greenFont } },
       { type: 'cellIs', operator: 'equal', priority: 2, formulae: ['"投稿完了(削除済)"'], style: { fill: greenFill, font: greenFont } },
@@ -1108,12 +1110,18 @@ export async function parseExcelFile(
               applyHeaderPair(rawRows[2] || [], rawRows[3] || []);
             }
 
-            // 8項目構造化プロンプト (キャラ設定 / ターゲット層 / 投稿の目的 / 口調・文体ルール / プロンプト / お手本サンプル / NGルール / 出力ルール)
+            // 10項目構造化プロンプト (キャラ設定 / ターゲット層 / 自店の強み・USP / 投稿テーマ / 具体的なCTA / 口調・文体ルール / プロンプト / お手本サンプル / NGルール / 出力ルール)
             const sections: AiPromptSections = createDefaultAiPromptSections();
             const labelToKey: Record<string, keyof AiPromptSections> = {
               'キャラ設定': 'character',
               'ターゲット層': 'target',
-              '投稿の目的': 'purpose',
+              '自店の強み・アピールポイント（USP）': 'usp',
+              '自店の強み・アピールポイント(USP)': 'usp',
+              '投稿テーマ（切り口）': 'theme',
+              '投稿テーマ(切り口)': 'theme',
+              '具体的なCTA（行動喚起）': 'cta',
+              '具体的なCTA(行動喚起)': 'cta',
+              '投稿の目的': 'cta',
               '口調・文体ルール': 'toneRule',
               'プロンプト': 'prompt',
               'お手本サンプル': 'samples',
@@ -1121,8 +1129,12 @@ export async function parseExcelFile(
               '出力ルール': 'outputRule',
             };
             let foundSectionRows = false;
-            for (let r = 4; r < Math.min(20, rawRows.length); r++) {
+            for (let r = 4; r < Math.min(25, rawRows.length); r++) {
               const row = rawRows[r] || [];
+              const rowJoined = row.map((c) => String(c ?? '').trim()).join(' ');
+              if (rowJoined.includes('生成されたポスト') || rowJoined.includes('AI指示プロンプト・テーマ')) {
+                break;
+              }
               const kLbl = String(row[0] ?? '').trim();
               const secKey = labelToKey[kLbl];
               if (secKey) {
@@ -1138,7 +1150,7 @@ export async function parseExcelFile(
 
             const aiHistory: AiPostHistoryItem[] = [];
             let tblHdrIdx = -1;
-            for (let r = 2; r < Math.min(25, rawRows.length); r++) {
+            for (let r = 2; r < Math.min(30, rawRows.length); r++) {
               const rowArr = (rawRows[r] || []).map((c) => String(c ?? '').trim());
               const rowStr = rowArr.join(' ');
               if (rowStr.includes('生成されたポスト') || rowStr.includes('AI指示プロンプト・テーマ')) {

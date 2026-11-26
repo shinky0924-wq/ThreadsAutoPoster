@@ -133,9 +133,11 @@ FIXED_AI_SYSTEM_PROMPT = (
 AI_PROMPT_SECTION_META = [
     ("character", "キャラ設定", "あなたはThreads(スレッズ)で役立つ発信をする親しみやすく魅力的なユーザーです。"),
     ("target", "ターゲット層", "日々の暮らしや仕事を少し良くしたいと思っている20〜40代のユーザー。小さな悩みや気づきに共感しやすい層。"),
-    ("purpose", "投稿の目的", "読者の共感や「なるほど」を引き出し、いいね・保存・プロフィール閲覧やリプライにつなげること。"),
+    ("usp", "自店の強み・アピールポイント（USP）", "・初めての方でも不安なく一歩を踏み出せる丁寧な事前サポート\n・自分のペースで無理なく続けやすい柔軟な環境と安心感\n・プライバシーへの配慮と相談しやすい雰囲気"),
+    ("theme", "投稿テーマ（切り口）", "読者が日常でふと感じる小さな疑問や不安への共感と、安心感につながる視点の共有"),
+    ("cta", "具体的なCTA（行動喚起）", "押し売り感は出さず、興味を持った読者が自然に保存・リプライ・プロフィールの案内ページ確認をしたくなる一言で締めくくること。"),
     ("tone_rule", "口調・文体ルール", "一人称は使わず自然なです・ます調で、親しみやすく柔らかい文体にしてください。絵文字は文末に0〜1個まで、感嘆符（！）の連続は控えてください。"),
-    ("prompt", "プロンプト", "ターゲット層の悩みや関心に寄り添った、思わず共感や保存をしたくなる自然な日本語のThreadsポストを作成してください。ハッシュタグや絵文字の多用は控えてください。"),
+    ("prompt", "プロンプト", "ターゲット層の悩みや関心に寄り添い、自店の強みやテーマの切り口を自然に織り交ぜながら、思わず共感や保存をしたくなる日本語のThreadsポストを作成してください。ハッシュタグや絵文字の多用は控えてください。"),
     ("samples", "お手本サンプル", "例1: 朝のたった5分で今日やることを3つだけ書き出すようにしたら、1日の焦りが驚くほど減りました。全部完璧にやろうとしない方が案外うまくいきますよね✨\n例2: 「あとでやろう」はだいたい忘れるので、2分で終わることはその場で片付けるようにしています。小さなストレスが溜まらなくておすすめです。"),
     ("ng_rules", "NGルール", "・「素晴らしいですね！」「応援しています！」などの定型的なお世辞やAIっぽい表現は禁止\n・宣伝・営業・勧誘・過度なハッシュタグ（#）は禁止"),
     ("output_rule", "出力ルール", "※出力は投稿するメッセージ本文のみ（140〜400文字以内）で返してください。挨拶や前置き（例：「了解しました」「投稿案:」）や引用符などの余計な注釈は一切含めないでください。"),
@@ -606,7 +608,7 @@ def _strip_prompt_fragments(raw_text, prompt_text=""):
     if not t:
         return ""
     prompt_header_re = re.compile(
-        r'^【(?:作成方針（自動選定）|キャラ設定|ターゲット層|投稿の目的|口調・文体ルール|プロンプト|お手本サンプル|NGルール|出力ルール|今回の個別作成指示・テーマ)】'
+        r'^【(?:作成方針（自動選定）|キャラ設定|ターゲット層|自店の強み・アピールポイント（USP）|自店の強み・アピールポイント\(USP\)|投稿テーマ（切り口）|投稿テーマ\(切り口\)|具体的なCTA（行動喚起）|具体的なCTA\(行動喚起\)|投稿の目的|口調・文体ルール|プロンプト|お手本サンプル|NGルール|出力ルール|今回の個別作成指示・テーマ)】'
     )
     compact_p = re.sub(r'\s+', '', str(prompt_text or ""))
     if prompt_text:
@@ -1101,7 +1103,7 @@ def _generate_via_fixed_ai_window(playwright_obj, engine, prompt_text, base_dir=
                 const promptCompact = promptFull.replace(/\\s+/g, '');
                 const promptLines = promptFull.split(/\\r?\\n/).map(x => x.trim()).filter(Boolean);
                 const promptLineSet = new Set(promptLines);
-                const promptHeaderRe = /^【(?:作成方針（自動選定）|キャラ設定|ターゲット層|投稿の目的|口調・文体ルール|プロンプト|お手本サンプル|NGルール|出力ルール|今回の個別作成指示・テーマ)】/;
+                const promptHeaderRe = /^【(?:作成方針（自動選定）|キャラ設定|ターゲット層|自店の強み・アピールポイント（USP）|自店の強み・アピールポイント\(USP\)|投稿テーマ（切り口）|投稿テーマ\(切り口\)|具体的なCTA（行動喚起）|具体的なCTA\(行動喚起\)|投稿の目的|口調・文体ルール|プロンプト|お手本サンプル|NGルール|出力ルール|今回の個別作成指示・テーマ)】/;
                 const endMarker = '選んだ1つのポストの本文のみを出力してください。';
                 const uiNoise = new Set([
                     'copy', 'コピー', 'コピーしました', 'copied', 'regenerate', '再生成',
@@ -1671,15 +1673,24 @@ def read_ai_post_config_from_xlsx(filepath):
             _apply_pair(all_rows[2], all_rows[3])
 
         label_to_key = {s_lbl: s_key for s_key, s_lbl, _d in AI_PROMPT_SECTION_META}
-        for r_cand in all_rows[4:20]:
+        label_to_key.update({
+            "自店の強み・アピールポイント(USP)": "usp",
+            "投稿テーマ(切り口)": "theme",
+            "具体的なCTA(行動喚起)": "cta",
+            "投稿の目的": "cta",
+        })
+        for r_cand in all_rows[4:25]:
             if not r_cand:
                 continue
+            r_join = " ".join(str(c or "") for c in r_cand)
+            if "生成されたポスト" in r_join or "AI指示プロンプト・テーマ" in r_join:
+                break
             s_key = label_to_key.get(str(r_cand[0] or "").strip())
             if s_key:
                 cfg["prompt_sections"][s_key] = "" if len(r_cand) < 2 or r_cand[1] is None else str(r_cand[1]).strip()
 
         tbl_hdr_idx = next(
-            (r_i for r_i, r in enumerate(all_rows[:25], start=1) if r and ("生成されたポスト" in " ".join(str(c or "") for c in r) or "AI指示プロンプト・テーマ" in " ".join(str(c or "") for c in r))),
+            (r_i for r_i, r in enumerate(all_rows[:30], start=1) if r and ("生成されたポスト" in " ".join(str(c or "") for c in r) or "AI指示プロンプト・テーマ" in " ".join(str(c or "") for c in r))),
             None,
         )
         if tbl_hdr_idx and tbl_hdr_idx < len(all_rows):
@@ -1720,17 +1731,21 @@ def record_ai_post_result_in_xlsx(filepath, row_idx=None, prompt_text="", topic=
         r7_txt = " ".join(str(ws.cell(row=7, column=c).value or "") for c in range(1, 6))
         is_new = ("AIエンジン" in r3_txt) or ("プロンプト項目" in r7_txt)
         if is_new:
-            last_used = 17
+            hdr_r = next(
+                (r for r in range(15, min(28, (ws.max_row or 25) + 1)) if "生成されたポスト" in " ".join(str(ws.cell(row=r, column=c).value or "") for c in range(1, 6))),
+                19,
+            )
+            last_used = hdr_r
             max_id = 0
-            for r in range(18, ws.max_row + 1):
+            for r in range(hdr_r + 1, ws.max_row + 1):
                 if str(ws.cell(row=r, column=2).value or "").strip() or str(ws.cell(row=r, column=4).value or "").strip():
                     last_used = r
                     try:
                         max_id = max(max_id, int(str(ws.cell(row=r, column=1).value).strip()))
                     except Exception:
                         pass
-            target_row = row_idx if (row_idx and row_idx >= 18) else (last_used + 1)
-            if not row_idx or row_idx < 18:
+            target_row = row_idx if (row_idx and row_idx >= (hdr_r + 1)) else (last_used + 1)
+            if not row_idx or row_idx < (hdr_r + 1):
                 ws.cell(row=target_row, column=1, value=max_id + 1)
             ws.cell(row=target_row, column=2, value=generated_text or prompt_text)
             ws.cell(row=target_row, column=3, value=engine_used)

@@ -208,7 +208,7 @@ export const AI_PROMPT_SECTION_META: AiPromptSectionDef[] = [
     key: 'character',
     label: 'キャラ設定',
     defaultValue: 'あなたはThreads(スレッズ)で役立つ発信をする親しみやすく魅力的なユーザーです。',
-    description: '年齢層・立場・発信ジャンル・運用目的など、アカウントの人物像を設定します（空欄で省略可）',
+    description: '年齢層・立場・発信ジャンル・店舗の雰囲気など、発信者の人物像を設定します（空欄で省略可）',
   },
   {
     key: 'target',
@@ -217,10 +217,22 @@ export const AI_PROMPT_SECTION_META: AiPromptSectionDef[] = [
     description: '「誰に届けるか」の指定です。発信側の「キャラ設定」とは別に、読者の属性・悩み・興味関心をAIに伝えます（空欄で省略可）',
   },
   {
-    key: 'purpose',
-    label: '投稿の目的',
-    defaultValue: '読者の共感や「なるほど」を引き出し、いいね・保存・プロフィール閲覧やリプライにつなげること。',
-    description: 'プロフィール画面への誘導、リンクのクリック、リプライの獲得など、読者に最終的にどう行動してほしいかの着地点です（空欄で省略可）',
+    key: 'usp',
+    label: '自店の強み・アピールポイント（USP）',
+    defaultValue: '・初めての方でも不安なく一歩を踏み出せる丁寧な事前サポート\n・自分のペースで無理なく続けやすい柔軟な環境と安心感\n・プライバシーへの配慮と相談しやすい雰囲気',
+    description: '他店・他アカウントにはない自店ならではの強みやメリット・差別化ポイントを記述します（空欄で省略可）',
+  },
+  {
+    key: 'theme',
+    label: '投稿テーマ（切り口）',
+    defaultValue: '読者が日常でふと感じる小さな疑問や不安への共感と、安心感につながる視点の共有',
+    description: '今回どんな切り口・話題で書くか（例: 不安解消・体験談風・1日の流れ・Q&A・豆知識など）を指定します（空欄で省略可）',
+  },
+  {
+    key: 'cta',
+    label: '具体的なCTA（行動喚起）',
+    defaultValue: '押し売り感は出さず、興味を持った読者が自然に保存・リプライ・プロフィールの案内ページ確認をしたくなる一言で締めくくること。',
+    description: '投稿の最後に読者に取ってほしい具体的な行動（プロフィールの案内確認・DM/LINE相談・保存・リプライ等）を指定します（空欄で省略可）',
   },
   {
     key: 'toneRule',
@@ -231,7 +243,7 @@ export const AI_PROMPT_SECTION_META: AiPromptSectionDef[] = [
   {
     key: 'prompt',
     label: 'プロンプト',
-    defaultValue: 'ターゲット層の悩みや関心に寄り添った、思わず共感や保存をしたくなる自然な日本語のThreadsポストを作成してください。ハッシュタグや絵文字の多用は控えてください。',
+    defaultValue: 'ターゲット層の悩みや関心に寄り添い、自店の強みやテーマの切り口を自然に織り交ぜながら、思わず共感や保存をしたくなる日本語のThreadsポストを作成してください。ハッシュタグや絵文字の多用は控えてください。',
     description: '内容の作り方・文字数目安など具体的な作成指示を記述してください（改行を保持したままAIへ送信されます）',
   },
   {
@@ -260,16 +272,18 @@ export const AI_PROMPT_SECTION_META: AiPromptSectionDef[] = [
 export function createDefaultAiPromptSections(
   overrides?: Partial<AiPromptSections>
 ): AiPromptSections {
+  const ov = (overrides || {}) as Partial<AiPromptSections> & { purpose?: string };
   return {
-    character: AI_PROMPT_SECTION_META[0].defaultValue,
-    target: AI_PROMPT_SECTION_META[1].defaultValue,
-    purpose: AI_PROMPT_SECTION_META[2].defaultValue,
-    toneRule: AI_PROMPT_SECTION_META[3].defaultValue,
-    prompt: AI_PROMPT_SECTION_META[4].defaultValue,
-    samples: AI_PROMPT_SECTION_META[5].defaultValue,
-    ngRules: AI_PROMPT_SECTION_META[6].defaultValue,
-    outputRule: AI_PROMPT_SECTION_META[7].defaultValue,
-    ...(overrides || {}),
+    character: ov.character ?? AI_PROMPT_SECTION_META[0].defaultValue,
+    target: ov.target ?? AI_PROMPT_SECTION_META[1].defaultValue,
+    usp: ov.usp ?? AI_PROMPT_SECTION_META[2].defaultValue,
+    theme: ov.theme ?? AI_PROMPT_SECTION_META[3].defaultValue,
+    cta: ov.cta ?? ov.purpose ?? AI_PROMPT_SECTION_META[4].defaultValue,
+    toneRule: ov.toneRule ?? AI_PROMPT_SECTION_META[5].defaultValue,
+    prompt: ov.prompt ?? AI_PROMPT_SECTION_META[6].defaultValue,
+    samples: ov.samples ?? AI_PROMPT_SECTION_META[7].defaultValue,
+    ngRules: ov.ngRules ?? AI_PROMPT_SECTION_META[8].defaultValue,
+    outputRule: ov.outputRule ?? AI_PROMPT_SECTION_META[9].defaultValue,
   };
 }
 

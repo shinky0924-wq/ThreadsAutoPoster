@@ -53,7 +53,9 @@ interface AiPostStudioProps {
 const SECTION_BADGE_STYLES: Record<keyof AiPromptSections, string> = {
   character: 'bg-blue-950/70 text-blue-200 border-blue-700/70',
   target: 'bg-sky-950/70 text-sky-200 border-sky-700/70',
-  purpose: 'bg-emerald-950/70 text-emerald-200 border-emerald-700/70',
+  usp: 'bg-teal-950/70 text-teal-200 border-teal-700/70',
+  theme: 'bg-indigo-950/70 text-indigo-200 border-indigo-700/70',
+  cta: 'bg-emerald-950/70 text-emerald-200 border-emerald-700/70',
   toneRule: 'bg-amber-950/70 text-amber-200 border-amber-700/70',
   prompt: 'bg-violet-950/70 text-violet-200 border-violet-700/70',
   samples: 'bg-pink-950/70 text-pink-200 border-pink-700/70',
@@ -217,7 +219,7 @@ export const AiPostStudio: React.FC<AiPostStudioProps> = ({
               </span>
             </div>
             <p className="text-xs text-zinc-300 leading-relaxed">
-              固定ポスト（基本・各テーマシート）とは独立したスケジュール＆8項目【】プロンプトで動作します。
+              固定ポスト（基本・各テーマシート）とは独立したスケジュール＆10項目【】プロンプトで動作します。
               <span className="text-indigo-300 font-semibold">
                 「AI専用ウィンドウ連携 = 1 (ON)」
               </span>
@@ -630,13 +632,13 @@ export const AiPostStudio: React.FC<AiPostStudioProps> = ({
         </div>
       </div>
 
-      {/* 8-Row Structured Prompt Table matching Excel Rows 7-15 */}
+      {/* 10-Row Structured Prompt Table matching Excel Rows 7-17 */}
       <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
         <div className="flex items-center justify-between flex-wrap gap-2 px-4 py-3 bg-indigo-950/80 border-b border-indigo-900">
           <div>
             <h4 className="text-xs font-bold text-white flex items-center gap-1.5">
               <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-              プロンプト項目 (【】付送信) — AIポストシート 7〜15行目と完全同期
+              プロンプト項目 (【】付送信) — AIポストシート 7〜17行目と完全同期
             </h4>
             <p className="text-[11px] text-indigo-200/80 mt-0.5">
               入力されている項目だけが「【項目名】内容」として固定プロンプトの下へ順番に送信されます（空欄項目は省略）。
@@ -705,16 +707,16 @@ export const AiPostStudio: React.FC<AiPostStudioProps> = ({
         </div>
       </div>
 
-      {/* Optional Spot Instruction & Generation History (Excel Row 17+) */}
+      {/* Optional Spot Instruction & Generation History (Excel Row 19+) */}
       <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 space-y-3">
         <div className="flex items-center justify-between flex-wrap gap-2">
           <div>
             <h4 className="text-xs font-bold text-white flex items-center gap-1.5">
               <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
-              生成ポスト履歴 ＆ 個別指示（AIポストシート 17行目〜）
+              生成ポスト履歴 ＆ 個別指示（AIポストシート 19行目〜）
             </h4>
             <p className="text-[11px] text-zinc-400 mt-0.5">
-              上の8項目が設定されていれば追加指示なしでも自動生成＆投稿でき、生成された文章と使用エンジンはここに自動記録されます。
+              上の10項目が設定されていれば追加指示なしでも自動生成＆投稿でき、生成された文章と使用エンジンはここに自動記録されます。
             </p>
           </div>
         </div>
@@ -727,7 +729,7 @@ export const AiPostStudio: React.FC<AiPostStudioProps> = ({
             type="text"
             value={newPrompt}
             onChange={(e) => setNewPrompt(e.target.value)}
-            placeholder="個別追加テーマ / 指示 (任意・空のままでも上の8項目で自動稼働します)"
+            placeholder="個別追加テーマ / 指示 (任意・空のままでも上の10項目で自動稼働します)"
             className="md:col-span-6 px-3 py-1.5 bg-zinc-900 border border-zinc-700 rounded-lg text-white focus:outline-none focus:border-indigo-500"
           />
           <input
@@ -775,7 +777,7 @@ export const AiPostStudio: React.FC<AiPostStudioProps> = ({
                     <div className="flex flex-col items-center gap-1">
                       <AlertCircle className="w-4 h-4 text-zinc-600" />
                       <span>
-                        履歴はまだありません（有効にすると上の8項目をもとに自動生成・投稿＆ここへ記録されます）
+                        履歴はまだありません（有効にすると上の10項目をもとに自動生成・投稿＆ここへ記録されます）
                       </span>
                     </div>
                   </td>

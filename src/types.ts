@@ -44,7 +44,9 @@ export type AiEngineId =
 export interface AiPromptSections {
   character: string; // キャラ設定
   target: string; // ターゲット層
-  purpose: string; // 投稿の目的
+  usp: string; // 自店の強み・アピールポイント（USP）
+  theme: string; // 投稿テーマ（切り口）
+  cta: string; // 具体的なCTA（行動喚起）
   toneRule: string; // 口調・文体ルール
   prompt: string; // プロンプト
   samples: string; // お手本サンプル
@@ -63,7 +65,7 @@ export interface AiPostConfig {
   fallbackCandidates: string; // AIフォールバック候補(空欄=自動切替 / off=切替なし / カンマ区切り複数指定可)
   aiWindowSync: boolean; // AI専用ウィンドウ連携(1=ON/0=OFF)
   apiKeyOrUrl: string; // AI APIキー / 接続URL (カンマ区切り・engine:key形式可)
-  promptSections?: AiPromptSections; // 8項目構造化プロンプト (【】付送信)
+  promptSections?: AiPromptSections; // 10項目構造化プロンプト (【】付送信)
   promptTemplate?: string; // 指示プロンプト
   topic?: string; // デフォルトトピック
   deleteAfter?: string; // 削除時間 (ランダム自動削除)

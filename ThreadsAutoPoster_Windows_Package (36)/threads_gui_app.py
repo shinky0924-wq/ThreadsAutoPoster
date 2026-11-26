@@ -8106,7 +8106,7 @@ AI_PROMPT_SECTION_META = [
         "character",
         "キャラ設定",
         "あなたはThreads(スレッズ)で役立つ発信をする親しみやすく魅力的なユーザーです。",
-        "年齢層・立場・発信ジャンル・運用目的など、アカウントの人物像を設定します（空欄で省略可）",
+        "年齢層・立場・発信ジャンル・店舗の雰囲気など、発信者の人物像を設定します（空欄で省略可）",
     ),
     (
         "target",
@@ -8115,10 +8115,22 @@ AI_PROMPT_SECTION_META = [
         "「誰に届けるか」の指定です。発信側の「キャラ設定」とは別に、読者の属性・悩み・興味関心をAIに伝えます（空欄で省略可）",
     ),
     (
-        "purpose",
-        "投稿の目的",
-        "読者の共感や「なるほど」を引き出し、いいね・保存・プロフィール閲覧やリプライにつなげること。",
-        "プロフィール画面への誘導、リンクのクリック、リプライの獲得など、読者に最終的にどう行動してほしいかの着地点です（空欄で省略可）",
+        "usp",
+        "自店の強み・アピールポイント（USP）",
+        "・初めての方でも不安なく一歩を踏み出せる丁寧な事前サポート\n・自分のペースで無理なく続けやすい柔軟な環境と安心感\n・プライバシーへの配慮と相談しやすい雰囲気",
+        "他店・他アカウントにはない自店ならではの強みやメリット・差別化ポイントを記述します（空欄で省略可）",
+    ),
+    (
+        "theme",
+        "投稿テーマ（切り口）",
+        "読者が日常でふと感じる小さな疑問や不安への共感と、安心感につながる視点の共有",
+        "今回どんな切り口・話題で書くか（例: 不安解消・体験談風・1日の流れ・Q&A・豆知識など）を指定します（空欄で省略可）",
+    ),
+    (
+        "cta",
+        "具体的なCTA（行動喚起）",
+        "押し売り感は出さず、興味を持った読者が自然に保存・リプライ・プロフィールの案内ページ確認をしたくなる一言で締めくくること。",
+        "投稿の最後に読者に取ってほしい具体的な行動（プロフィールの案内確認・DM/LINE相談・保存・リプライ等）を指定します（空欄で省略可）",
     ),
     (
         "tone_rule",
@@ -8129,7 +8141,7 @@ AI_PROMPT_SECTION_META = [
     (
         "prompt",
         "プロンプト",
-        "ターゲット層の悩みや関心に寄り添った、思わず共感や保存をしたくなる自然な日本語のThreadsポストを作成してください。ハッシュタグや絵文字の多用は控えてください。",
+        "ターゲット層の悩みや関心に寄り添い、自店の強みやテーマの切り口を自然に織り交ぜながら、思わず共感や保存をしたくなる日本語のThreadsポストを作成してください。ハッシュタグや絵文字の多用は控えてください。",
         "内容の作り方・文字数目安など具体的な作成指示を記述してください（改行を保持したままAIへ送信されます）",
     ),
     (
@@ -8557,7 +8569,7 @@ def _strip_prompt_fragments(raw_text, prompt_text=""):
     if not t:
         return ""
     prompt_header_re = re.compile(
-        r'^【(?:作成方針（自動選定）|キャラ設定|ターゲット層|投稿の目的|口調・文体ルール|プロンプト|お手本サンプル|NGルール|出力ルール|今回の個別作成指示・テーマ)】'
+        r'^【(?:作成方針（自動選定）|キャラ設定|ターゲット層|自店の強み・アピールポイント（USP）|自店の強み・アピールポイント\(USP\)|投稿テーマ（切り口）|投稿テーマ\(切り口\)|具体的なCTA（行動喚起）|具体的なCTA\(行動喚起\)|投稿の目的|口調・文体ルール|プロンプト|お手本サンプル|NGルール|出力ルール|今回の個別作成指示・テーマ)】'
     )
     compact_p = re.sub(r'\s+', '', str(prompt_text or ""))
     if prompt_text:
@@ -9105,7 +9117,7 @@ def _generate_via_fixed_ai_window(playwright_obj, engine, prompt_text, model_nam
                 const promptCompact = promptFull.replace(/\\s+/g, '');
                 const promptLines = promptFull.split(/\\r?\\n/).map(x => x.trim()).filter(Boolean);
                 const promptLineSet = new Set(promptLines);
-                const promptHeaderRe = /^【(?:作成方針（自動選定）|キャラ設定|ターゲット層|投稿の目的|口調・文体ルール|プロンプト|お手本サンプル|NGルール|出力ルール|今回の個別作成指示・テーマ)】/;
+                const promptHeaderRe = /^【(?:作成方針（自動選定）|キャラ設定|ターゲット層|自店の強み・アピールポイント（USP）|自店の強み・アピールポイント\(USP\)|投稿テーマ（切り口）|投稿テーマ\(切り口\)|具体的なCTA（行動喚起）|具体的なCTA\(行動喚起\)|投稿の目的|口調・文体ルール|プロンプト|お手本サンプル|NGルール|出力ルール|今回の個別作成指示・テーマ)】/;
                 const endMarker = '選んだ1つのポストの本文のみを出力してください。';
                 const uiNoise = new Set([
                     'copy', 'コピー', 'コピーしました', 'copied', 'regenerate', '再生成',
@@ -9806,7 +9818,7 @@ def _clear_stale_ai_merges_and_cols(ws):
 
 
 def style_ai_post_worksheet(ws):
-    """「AIポスト」シートを画像仕様(A1:E15＋Row17履歴ログ、F列以降空白)として配色整形"""
+    """「AIポスト」シートを画像仕様(A1:E17＋Row19履歴ログ、F列以降空白)として配色整形"""
     try:
         from openpyxl.styles import PatternFill, Font, Border, Side, Alignment
         from openpyxl.formatting.rule import CellIsRule
@@ -9860,7 +9872,7 @@ def style_ai_post_worksheet(ws):
         align_l = Alignment(horizontal="left", vertical="center", wrap_text=True)
         align_lt = Alignment(horizontal="left", vertical="top", wrap_text=True)
 
-        col_widths = {"A": 22, "B": 26, "C": 30, "D": 22, "E": 38}
+        col_widths = {"A": 24, "B": 26, "C": 30, "D": 22, "E": 38}
         for c_let, c_w in col_widths.items():
             ws.column_dimensions[c_let].width = c_w
 
@@ -9961,16 +9973,18 @@ def style_ai_post_worksheet(ws):
             c7.border = border_top_indigo
             c7.alignment = align_l
 
-        # Rows 8-15: 8項目プロンプトテーブル (パステル行)
+        # Rows 8-17: 10項目プロンプトテーブル (パステル行)
         sec_palette = [
-            ("E0EAFF", "F5F8FF"),
-            ("E0F2FE", "F0F9FF"),
-            ("DCFCE7", "F0FDF4"),
-            ("FEF3C7", "FFFBEB"),
-            ("EDE9FE", "F5F3FF"),
-            ("FCE7F3", "FDF2F8"),
-            ("FFE4E6", "FFF1F2"),
-            ("F1F5F9", "F8FAFC"),
+            ("E0EAFF", "F5F8FF"),  # キャラ設定
+            ("E0F2FE", "F0F9FF"),  # ターゲット層
+            ("CCFBF1", "F0FDFA"),  # 自店の強み・アピールポイント（USP）
+            ("E0E7FF", "EEF2FF"),  # 投稿テーマ（切り口）
+            ("DCFCE7", "F0FDF4"),  # 具体的なCTA（行動喚起）
+            ("FEF3C7", "FFFBEB"),  # 口調・文体ルール
+            ("EDE9FE", "F5F3FF"),  # プロンプト
+            ("FCE7F3", "FDF2F8"),  # お手本サンプル
+            ("FFE4E6", "FFF1F2"),  # NGルール
+            ("F1F5F9", "F8FAFC"),  # 出力ルール
         ]
         for idx_s, (s_key, s_lbl, s_def, s_desc) in enumerate(AI_PROMPT_SECTION_META):
             r_num = 8 + idx_s
@@ -10008,18 +10022,18 @@ def style_ai_post_worksheet(ws):
             line_cnt = max(2, len(cur_v.splitlines()), int(len(cur_v) / 38) + 1)
             ws.row_dimensions[r_num].height = max(42, min(130, 14 + line_cnt * 15))
 
-        # Row 16 spacer & Row 17+: 実行履歴ログ
-        ws.row_dimensions[16].height = 12
-        ws.row_dimensions[17].height = 24
+        # Row 18 spacer & Row 19+: 実行履歴ログ
+        ws.row_dimensions[18].height = 12
+        ws.row_dimensions[19].height = 24
         for idx_h, h_txt in enumerate(AI_HISTORY_HEADERS, start=1):
-            c17 = ws.cell(row=17, column=idx_h, value=h_txt)
-            c17.fill = fill_tbl_hdr
-            c17.font = font_hdr
-            c17.border = border_top_indigo
-            c17.alignment = align_c
+            c19 = ws.cell(row=19, column=idx_h, value=h_txt)
+            c19.fill = fill_tbl_hdr
+            c19.font = font_hdr
+            c19.border = border_top_indigo
+            c19.alignment = align_c
 
-        end_r = max(ws.max_row + 8, 32)
-        for r_h in range(18, end_r + 1):
+        end_r = max(ws.max_row + 8, 34)
+        for r_h in range(20, end_r + 1):
             row_fill = fill_even if (r_h % 2 == 0) else fill_white
             has_txt = False
             for c_h in range(1, 6):
@@ -10053,17 +10067,17 @@ def style_ai_post_worksheet(ws):
             pass
         ws.conditional_formatting.add("D2", CellIsRule(operator="equal", formula=['"有効"'], fill=fill_green, font=font_green))
         ws.conditional_formatting.add("D2", CellIsRule(operator="equal", formula=['"無効"'], fill=fill_red, font=font_red))
-        ws.conditional_formatting.add(f"D18:D{max(end_r + 100, 300)}", CellIsRule(operator="equal", formula=['"投稿完了"'], fill=fill_green, font=font_green))
-        ws.conditional_formatting.add(f"D18:D{max(end_r + 100, 300)}", CellIsRule(operator="equal", formula=['"投稿完了(削除済)"'], fill=fill_green, font=font_green))
-        ws.conditional_formatting.add(f"D18:D{max(end_r + 100, 300)}", CellIsRule(operator="equal", formula=['"指示待機"'], fill=fill_amber, font=font_amber))
-        ws.conditional_formatting.add(f"D18:D{max(end_r + 100, 300)}", CellIsRule(operator="equal", formula=['"エラー"'], fill=fill_red, font=font_red))
+        ws.conditional_formatting.add(f"D20:D{max(end_r + 100, 300)}", CellIsRule(operator="equal", formula=['"投稿完了"'], fill=fill_green, font=font_green))
+        ws.conditional_formatting.add(f"D20:D{max(end_r + 100, 300)}", CellIsRule(operator="equal", formula=['"投稿完了(削除済)"'], fill=fill_green, font=font_green))
+        ws.conditional_formatting.add(f"D20:D{max(end_r + 100, 300)}", CellIsRule(operator="equal", formula=['"指示待機"'], fill=fill_amber, font=font_amber))
+        ws.conditional_formatting.add(f"D20:D{max(end_r + 100, 300)}", CellIsRule(operator="equal", formula=['"エラー"'], fill=fill_red, font=font_red))
     except Exception:
         pass
 
 
 def _write_new_layout_ai_defaults(ws, cfg=None, sections=None, history_rows=None):
     _clear_stale_ai_merges_and_cols(ws)
-    for r_clr in range(1, max(ws.max_row or 20, 20) + 1):
+    for r_clr in range(1, max(ws.max_row or 24, 24) + 1):
         for c_clr in range(1, 6):
             ws.cell(row=r_clr, column=c_clr, value=None)
 
@@ -10094,11 +10108,11 @@ def _write_new_layout_ai_defaults(ws, cfg=None, sections=None, history_rows=None
         ws.cell(row=r_num, column=4, value=s_desc)
 
     for c_i, h_lbl in enumerate(AI_HISTORY_HEADERS, start=1):
-        ws.cell(row=17, column=c_i, value=h_lbl)
+        ws.cell(row=19, column=c_i, value=h_lbl)
 
     if history_rows:
         for idx_h, item in enumerate(history_rows, start=1):
-            r_dst = 17 + idx_h
+            r_dst = 19 + idx_h
             ws.cell(row=r_dst, column=1, value=item.get("id") or idx_h)
             ws.cell(row=r_dst, column=2, value=str(item.get("generated_text") or item.get("prompt") or "").strip())
             ws.cell(row=r_dst, column=3, value=str(item.get("engine_used") or "").strip())
@@ -10113,58 +10127,138 @@ def _write_new_layout_ai_defaults(ws, cfg=None, sections=None, history_rows=None
             ws.cell(row=r_dst, column=5, value=meta_str)
 
 
+def _ai_section_label_map():
+    m = {s_lbl: s_key for s_key, s_lbl, _d, _ds in AI_PROMPT_SECTION_META}
+    m.update({
+        "自店の強み・アピールポイント(USP)": "usp",
+        "投稿テーマ(切り口)": "theme",
+        "具体的なCTA(行動喚起)": "cta",
+        "投稿の目的": "cta",
+    })
+    return m
+
+
+def _extract_ai_sheet_state_from_ws(ws):
+    default_sections = {k: d for k, _lbl, d, _desc in AI_PROMPT_SECTION_META}
+    cfg = {
+        "time_slot": "0:00-0:00",
+        "weekdays": "毎日",
+        "interval_str": "120〜360分",
+        "enabled": False,
+        "memo": AI_DEFAULT_MEMO,
+        "engine": "duckai",
+        "model_name": "",
+        "fallback_candidates": "",
+        "ai_window_sync": True,
+        "api_key_or_url": "",
+    }
+    all_r = list(ws.iter_rows(values_only=True))
+
+    def _apply_pair(h_r, v_r):
+        hdr1 = [str(c or "").strip() for c in (h_r or [])[:10]]
+        val2 = v_r or []
+        for idx, lbl in enumerate(hdr1):
+            raw_v = val2[idx] if idx < len(val2) else ""
+            v = raw_v.strftime("%H:%M") if hasattr(raw_v, "strftime") else ("" if raw_v is None else str(raw_v).strip())
+            if not lbl:
+                continue
+            if "実行時間" in lbl and v:
+                cfg["time_slot"] = v
+            elif "曜日" in lbl and v:
+                cfg["weekdays"] = v
+            elif "間隔" in lbl and v:
+                cfg["interval_str"] = v
+            elif "有効" in lbl or "状態" in lbl:
+                cfg["enabled"] = bool(v) and v not in ["無効", "停止", "OFF", "off", "0", "false"]
+            elif "メモ" in lbl:
+                cfg["memo"] = v
+            elif "エンジン" in lbl and v:
+                cfg["engine"] = _normalize_engine_list_str(v, default_fallback="duckai")
+            elif "モデル" in lbl:
+                cfg["model_name"] = v
+            elif "フォールバック" in lbl:
+                cfg["fallback_candidates"] = v
+            elif "ウィンドウ" in lbl:
+                cfg["ai_window_sync"] = v.lower() not in ["0", "off", "false", "無効", "なし"]
+            elif "API" in lbl.upper() or "URL" in lbl.upper() or "キー" in lbl:
+                cfg["api_key_or_url"] = v
+
+    if len(all_r) >= 2:
+        _apply_pair(all_r[0], all_r[1])
+    r3_s = " ".join(str(c or "") for c in (all_r[2] or [])) if len(all_r) >= 4 else ""
+    if len(all_r) >= 4 and ("AIエンジン" in r3_s or "AIモデル" in r3_s):
+        _apply_pair(all_r[2], all_r[3])
+
+    sections = dict(default_sections)
+    lbl_map = _ai_section_label_map()
+    for r_cand in all_r[4:25]:
+        if not r_cand:
+            continue
+        r_join = " ".join(str(c or "") for c in r_cand)
+        if "生成されたポスト" in r_join or "AI指示プロンプト・テーマ" in r_join:
+            break
+        s_key = lbl_map.get(str(r_cand[0] or "").strip())
+        if s_key:
+            sections[s_key] = "" if len(r_cand) < 2 or r_cand[1] is None else str(r_cand[1]).strip()
+
+    hist_rows = []
+    tbl_hdr_idx = None
+    for r_i, row in enumerate(all_r[:30], start=1):
+        row_txt = " ".join(str(c or "") for c in (row or []))
+        if "生成されたポスト" in row_txt or "AI指示プロンプト・テーマ" in row_txt:
+            tbl_hdr_idx = r_i
+            break
+    if tbl_hdr_idx and tbl_hdr_idx < len(all_r):
+        th = [str(c or "").strip() for c in all_r[tbl_hdr_idx - 1]]
+        col_id = next((i for i, h in enumerate(th) if h.upper() == "ID"), 0)
+        col_pr = next((i for i, h in enumerate(th) if "プロンプト" in h or "指示" in h), -1)
+        col_tp = next((i for i, h in enumerate(th) if "トピック" in h), -1)
+        col_dl = next((i for i, h in enumerate(th) if "削除時間" in h), -1)
+        col_gn = next((i for i, h in enumerate(th) if "生成された" in h), 1)
+        col_eg = next((i for i, h in enumerate(th) if "使用AI" in h or "エンジン" in h), 2)
+        col_st = next((i for i, h in enumerate(th) if "ステータス" in h or "状態" in h), 3)
+        col_dt = next((i for i, h in enumerate(th) if "完了日時" in h), 4)
+        col_er = next((i for i, h in enumerate(th) if "エラー" in h), 4)
+        for r_num, row in enumerate(all_r[tbl_hdr_idx:], start=tbl_hdr_idx + 1):
+            if not row:
+                continue
+            pr_v = str(row[col_pr] or "").strip() if col_pr != -1 and col_pr < len(row) else ""
+            gn_v = str(row[col_gn] or "").strip() if col_gn != -1 and col_gn < len(row) else ""
+            if not pr_v and not gn_v:
+                continue
+            hist_rows.append({
+                "_row_idx": r_num,
+                "id": (str(row[col_id]).strip() if col_id < len(row) and row[col_id] is not None else str(r_num - tbl_hdr_idx)),
+                "prompt": pr_v,
+                "topic": str(row[col_tp] or "").strip() if col_tp != -1 and col_tp < len(row) else "",
+                "delete_after": str(row[col_dl] or "").strip() if col_dl != -1 and col_dl < len(row) else "",
+                "generated_text": gn_v,
+                "engine_used": str(row[col_eg] or "").strip() if col_eg != -1 and col_eg < len(row) else "",
+                "status": (str(row[col_st] or "").strip() if col_st != -1 and col_st < len(row) else "") or "指示待機",
+                "posted_at": str(row[col_dt] or "").strip() if col_dt != -1 and col_dt < len(row) else "",
+                "error_msg": str(row[col_er] or "").strip() if col_er != -1 and col_er < len(row) else "",
+            })
+    return cfg, sections, hist_rows, (tbl_hdr_idx or 0)
+
+
 def ensure_ai_post_sheet_in_wb(wb):
-    """ワークブック内に『AIポスト』シートがなければ標準構成で追加し、旧10列形式なら新形式(A1:E15+履歴)へ自動変換する"""
+    """ワークブック内に『AIポスト』シートがなければ標準構成で追加し、旧形式/旧8項目形式なら新10項目形式(A1:E17+履歴Row19〜)へ自動変換する"""
+    expected_labels = [s_lbl for _k, s_lbl, _d, _ds in AI_PROMPT_SECTION_META]
     for sname in wb.sheetnames:
         if _is_ai_post_sheet_name(sname):
             ws = wb[sname]
-            if not _is_new_layout_ai_sheet(ws):
-                # 旧10列シートから新レイアウトへ値と履歴を引き継いで移行
-                legacy_cfg = {
-                    "time_slot": "0:00-0:00",
-                    "weekdays": "毎日",
-                    "interval_str": "120〜360分",
-                    "enabled": False,
-                    "memo": AI_DEFAULT_MEMO,
-                    "engine": "duckai",
-                    "model_name": "",
-                    "fallback_candidates": "",
-                    "ai_window_sync": True,
-                    "api_key_or_url": "",
-                }
-                all_r = list(ws.iter_rows(values_only=True))
-                if len(all_r) >= 2:
-                    hdr1 = [str(c or "").strip() for c in (all_r[0] or [])[:10]]
-                    val2 = all_r[1] or []
-                    for idx, lbl in enumerate(hdr1):
-                        v = "" if idx >= len(val2) or val2[idx] is None else str(val2[idx]).strip()
-                        if "実行時間" in lbl and v:
-                            legacy_cfg["time_slot"] = v
-                        elif "曜日" in lbl and v:
-                            legacy_cfg["weekdays"] = v
-                        elif "間隔" in lbl and v:
-                            legacy_cfg["interval_str"] = v
-                        elif "有効" in lbl:
-                            legacy_cfg["enabled"] = bool(v) and v not in ["無効", "停止", "OFF", "off", "0", "false"]
-                        elif "メモ" in lbl and v:
-                            legacy_cfg["memo"] = v
-                        elif "エンジン" in lbl and v:
-                            legacy_cfg["engine"] = _normalize_engine_list_str(v, default_fallback="duckai")
-                        elif "モデル" in lbl:
-                            legacy_cfg["model_name"] = v
-                        elif "フォールバック" in lbl:
-                            legacy_cfg["fallback_candidates"] = v
-                        elif "ウィンドウ" in lbl:
-                            legacy_cfg["ai_window_sync"] = v.lower() not in ["0", "off", "false", "無効", "なし"]
-                        elif "API" in lbl.upper() or "URL" in lbl.upper():
-                            legacy_cfg["api_key_or_url"] = v
-                _write_new_layout_ai_defaults(ws, cfg=legacy_cfg)
+            cur_labels = [str(ws.cell(row=8 + idx_s, column=1).value or "").strip() for idx_s in range(len(expected_labels))]
+            r19_txt = " ".join(str(ws.cell(row=19, column=c).value or "") for c in range(1, 6))
+            needs_layout_upgrade = (not _is_new_layout_ai_sheet(ws)) or (cur_labels != expected_labels) or ("生成されたポスト" not in r19_txt)
+            if needs_layout_upgrade:
+                legacy_cfg, legacy_sections, legacy_hist, _old_hdr = _extract_ai_sheet_state_from_ws(ws)
+                _write_new_layout_ai_defaults(ws, cfg=legacy_cfg, sections=legacy_sections, history_rows=legacy_hist)
             else:
                 for c_i, h_lbl in enumerate(AI_TOP_ROW1_HEADERS, start=1):
                     ws.cell(row=1, column=c_i, value=h_lbl)
                 for c_i, h_lbl in enumerate(AI_TOP_ROW3_HEADERS, start=1):
                     ws.cell(row=3, column=c_i, value=h_lbl)
-                for idx_s, (s_key, s_lbl, s_def, _desc) in enumerate(AI_PROMPT_SECTION_META):
+                for idx_s, (_s_key, s_lbl, _s_def, _desc) in enumerate(AI_PROMPT_SECTION_META):
                     r_n = 8 + idx_s
                     if not str(ws.cell(row=r_n, column=1).value or "").strip():
                         ws.cell(row=r_n, column=1, value=s_lbl)
@@ -10178,7 +10272,7 @@ def ensure_ai_post_sheet_in_wb(wb):
 
 
 def read_ai_post_config_from_xlsx(filepath):
-    """<アカウント名>.xlsx の『AIポスト』シートからAI設定・8項目プロンプト・履歴ログを読み取る"""
+    """<アカウント名>.xlsx の『AIポスト』シートからAI設定・10項目プロンプト・履歴ログを読み取る"""
     default_sections = {k: d for k, _lbl, d, _desc in AI_PROMPT_SECTION_META}
     cfg = {
         "exists": False,
@@ -10274,11 +10368,14 @@ def read_ai_post_config_from_xlsx(filepath):
         if len(all_rows) >= 4 and ("AIエンジン" in row3_str or "AIモデル" in row3_str):
             _apply_header_pair(all_rows[2], all_rows[3])
 
-        label_to_key = {s_lbl: s_key for s_key, s_lbl, _d, _ds in AI_PROMPT_SECTION_META}
+        label_to_key = _ai_section_label_map()
         found_sections = False
-        for r_cand in all_rows[4:20]:
+        for r_cand in all_rows[4:25]:
             if not r_cand:
                 continue
+            r_join = " ".join(str(c or "") for c in r_cand)
+            if "生成されたポスト" in r_join or "AI指示プロンプト・テーマ" in r_join:
+                break
             k_lbl = str(r_cand[0] or "").strip()
             s_key = label_to_key.get(k_lbl)
             if s_key:
@@ -10288,7 +10385,7 @@ def read_ai_post_config_from_xlsx(filepath):
         cfg["is_new_layout"] = found_sections or ("AIエンジン" in row3_str)
 
         tbl_hdr_idx = None
-        for r_i, row in enumerate(all_rows[:25], start=1):
+        for r_i, row in enumerate(all_rows[:30], start=1):
             row_txt = " ".join(str(c or "") for c in (row or []))
             if "生成されたポスト" in row_txt or "AI指示プロンプト・テーマ" in row_txt:
                 tbl_hdr_idx = r_i
@@ -10337,7 +10434,11 @@ def read_ai_post_config_from_xlsx(filepath):
 
 
 def save_ai_post_config_to_xlsx(filepath, account_id, ai_cfg, prompt_rows=None):
-    """<アカウント名>.xlsx の『AIポスト』シートに新レイアウト(A1:E15＋履歴)で保存"""
+    """<アカウント名>.xlsx の『AIポスト』シートに新レイアウト(A1:E17＋履歴)で保存"""
+    existing_hist = prompt_rows
+    if existing_hist is None:
+        existing_hist = read_ai_post_config_from_xlsx(filepath).get("rows") or []
+
     wb = ensure_account_workbook(filepath, account_id)
     ws, _ = ensure_ai_post_sheet_in_wb(wb)
 
@@ -10354,10 +10455,6 @@ def save_ai_post_config_to_xlsx(filepath, account_id, ai_cfg, prompt_rows=None):
             cur_v = ws.cell(row=8 + idx_s, column=2).value
             sections[s_key] = s_def if cur_v is None else str(cur_v)
 
-    existing_hist = prompt_rows
-    if existing_hist is None:
-        existing_hist = read_ai_post_config_from_xlsx(filepath).get("rows") or []
-
     _write_new_layout_ai_defaults(ws, cfg=norm_cfg, sections=sections, history_rows=existing_hist)
     style_ai_post_worksheet(ws)
     wb.save(filepath)
@@ -10366,15 +10463,27 @@ def save_ai_post_config_to_xlsx(filepath, account_id, ai_cfg, prompt_rows=None):
 
 
 def record_ai_post_result_in_xlsx(filepath, row_idx=None, prompt_text="", topic="", delete_after="", generated_text="", engine_used="", status="投稿完了", finish_time=None, error_msg=""):
-    """『AIポスト』シートにAI生成＆投稿実績を安全に記録する（新形式はRow18〜へ追記しRows1〜15を保護）"""
+    """『AIポスト』シートにAI生成＆投稿実績を安全に記録する（新形式はRow20〜へ追記しRows1〜17を保護）"""
     if not filepath or not os.path.exists(filepath):
         return None
     try:
         wb = openpyxl.load_workbook(filepath)
+        old_hdr_r = None
+        for sname in wb.sheetnames:
+            if _is_ai_post_sheet_name(sname):
+                ws_pre = wb[sname]
+                for r_chk in range(15, min(26, (ws_pre.max_row or 25) + 1)):
+                    r_s = " ".join(str(ws_pre.cell(row=r_chk, column=c).value or "") for c in range(1, 6))
+                    if "生成されたポスト" in r_s or "AI指示プロンプト・テーマ" in r_s:
+                        old_hdr_r = r_chk
+                        break
+                break
         ws, _ = ensure_ai_post_sheet_in_wb(wb)
-        last_used = 17
+        if row_idx and old_hdr_r and old_hdr_r < 19:
+            row_idx = row_idx + (19 - old_hdr_r)
+        last_used = 19
         max_id = 0
-        for r in range(18, ws.max_row + 1):
+        for r in range(20, ws.max_row + 1):
             g_v = str(ws.cell(row=r, column=2).value or "").strip()
             s_v = str(ws.cell(row=r, column=4).value or "").strip()
             id_v = ws.cell(row=r, column=1).value
@@ -10384,8 +10493,8 @@ def record_ai_post_result_in_xlsx(filepath, row_idx=None, prompt_text="", topic=
                     max_id = max(max_id, int(str(id_v).strip()))
                 except Exception:
                     pass
-        target_row = row_idx if (row_idx and row_idx >= 18) else (last_used + 1)
-        if not row_idx or row_idx < 18:
+        target_row = row_idx if (row_idx and row_idx >= 20) else (last_used + 1)
+        if not row_idx or row_idx < 20:
             ws.cell(row=target_row, column=1, value=max_id + 1)
         ws.cell(row=target_row, column=2, value=generated_text or prompt_text)
         ws.cell(row=target_row, column=3, value=engine_used)
@@ -10407,7 +10516,7 @@ def record_ai_post_result_in_xlsx(filepath, row_idx=None, prompt_text="", topic=
 
 
 def reset_ai_post_rows_silent(filepath):
-    """『AIポスト』シート内の個別指示待機行（18行目以降）のみ必要時にリセット"""
+    """『AIポスト』シート内の個別指示待機行（履歴データ行）のみ必要時にリセット"""
     if not filepath or not os.path.exists(filepath):
         return 0
     cnt = 0
@@ -10416,9 +10525,15 @@ def reset_ai_post_rows_silent(filepath):
         for sname in wb.sheetnames:
             if _is_ai_post_sheet_name(sname):
                 ws = wb[sname]
-                start_r = 18 if _is_new_layout_ai_sheet(ws) else 5
+                hdr_r = None
+                for r_chk in range(15, min(28, (ws.max_row or 25) + 1)):
+                    r_s = " ".join(str(ws.cell(row=r_chk, column=c).value or "") for c in range(1, 6))
+                    if "生成されたポスト" in r_s:
+                        hdr_r = r_chk
+                        break
+                start_r = (hdr_r + 1) if hdr_r else (20 if _is_new_layout_ai_sheet(ws) else 5)
                 for r in range(start_r, ws.max_row + 1):
-                    st_col = 4 if start_r == 18 else 7
+                    st_col = 4 if start_r >= 18 else 7
                     p_v = str(ws.cell(row=r, column=2).value or "").strip()
                     st_v = str(ws.cell(row=r, column=st_col).value or "").strip()
                     if p_v and st_v == "エラー":
@@ -14680,7 +14795,7 @@ class ThreadsPosterGUI:
                 command=lambda e_val=eid: _toggle_eng_chip(e_val),
             ).pack(side="left", padx=1, pady=1)
 
-        # 下段: 左(タブ: 8項目プロンプト表 & 生成履歴) + 右(固定プロンプト & テスト生成)
+        # 下段: 左(タブ: 10項目プロンプト表 & 生成履歴) + 右(固定プロンプト & テスト生成)
         split = tk.Frame(body, bg="#18181b")
         split.pack(fill="both", expand=True)
         split.columnconfigure(0, weight=3)
@@ -14692,8 +14807,8 @@ class ThreadsPosterGUI:
 
         tab_sec = tk.Frame(nb_left, bg="#18181b")
         tab_hist = tk.Frame(nb_left, bg="#18181b", padx=6, pady=6)
-        nb_left.add(tab_sec, text="📝 8項目プロンプト設定 (【】付送信 / 8〜15行目)")
-        nb_left.add(tab_hist, text="📜 生成ポスト履歴 / 個別指示 (17行目〜)")
+        nb_left.add(tab_sec, text="📝 10項目プロンプト設定 (【】付送信 / 8〜17行目)")
+        nb_left.add(tab_hist, text="📜 生成ポスト履歴 / 個別指示 (19行目〜)")
 
         sec_canvas = tk.Canvas(tab_sec, bg="#18181b", highlightthickness=0)
         sec_scroll = ttk.Scrollbar(tab_sec, orient="vertical", command=sec_canvas.yview)
@@ -14906,7 +15021,7 @@ class ThreadsPosterGUI:
 
         tk.Button(row_btns, text="➕ スポット追加", bg="#2563eb", fg="#ffffff", font=("Segoe UI", 8, "bold"), padx=8, pady=4, relief="flat", cursor="hand2", command=lambda: _add_or_update_row(as_new=True)).pack(side="left", padx=(0, 4))
         tk.Button(row_btns, text="🗑 履歴行削除", bg="#991b1b", fg="#ffffff", font=("Segoe UI", 8, "bold"), padx=8, pady=4, relief="flat", cursor="hand2", command=_delete_row).pack(side="left", padx=(0, 4))
-        tk.Button(row_btns, text="↺ 8項目を標準へ", bg="#4f46e5", fg="#ffffff", font=("Segoe UI", 8, "bold"), padx=8, pady=4, relief="flat", cursor="hand2", command=_reset_sections_defaults).pack(side="left")
+        tk.Button(row_btns, text="↺ 10項目を標準へ", bg="#4f46e5", fg="#ffffff", font=("Segoe UI", 8, "bold"), padx=8, pady=4, relief="flat", cursor="hand2", command=_reset_sections_defaults).pack(side="left")
 
         tk.Label(right_f, text="生成プレビュー / テスト結果:", font=("Segoe UI", 8, "bold"), fg="#e4e4e7", bg="#18181b").pack(anchor="w", pady=(2, 0))
         txt_preview = scrolledtext.ScrolledText(right_f, height=6, wrap="word", bg="#0a0a0a", fg="#34d399", insertbackground="#ffffff", font=("Segoe UI", 9), relief="flat")
@@ -16309,7 +16424,7 @@ class ThreadsPosterGUI:
             (chosen_row.get("prompt") if chosen_row else "")
             or str(sections.get("prompt") or "").strip()
             or str(ai_cfg.get("memo") or "").strip()
-            or "8項目プロンプト設定に沿ったThreads投稿"
+            or "10項目プロンプト設定に沿ったThreads投稿"
         )
         raw_topic = (chosen_row.get("topic") if chosen_row else "") or ""
         del_spec = (chosen_row.get("delete_after") if chosen_row else "") or ""
